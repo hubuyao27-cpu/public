@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scientific PDF Parsing and Case Result Schemas",
+  "parsed_document_contract": {
+    "required_top_keys": [
+      "metadata",
+      "page_count",
+      "backend_used",
+      "pages",
+      "sections",
+      "tables",
+      "merged_tables",
+      "figures",
+      "equations",
+      "footnotes",
+      "references",
+      "headers_footers",
+      "quality_metrics",
+      "uncertainty"
+    ],
+    "block_keys": [
+      "block_id",
+      "page",
+      "printed_page",
+      "bbox",
+      "column",
+      "role",
+      "raw_text",
+      "text",
+      "garble_ratio"
+    ]
+  },
+  "case_result_envelope": {
+    "required_fields": [
+      "case_id",
+      "status",
+      "sources",
+      "uncertainty",
+      "change_records"
+    ],
+    "allowed_status": [
+      "completed",
+      "partial",
+      "unanswerable",
+      "failed"
+    ],
+    "source_entry_schema": {
+      "claim_or_field": "string - output field name or claim summary",
+      "page": "integer - 1-based physical PDF page number",
+      "printed_page": "string or null - printed page label if present",
+      "block_id": "string or list[string] - block_id / table_id / eq_id from parsed_document.json",
+      "section": "string or null - section path",
+      "quote": "string - exact short verbatim snippet from source"
+    },
+    "uncertainty_entry_schema": {
+      "target": "string - field, page, table, or equation affected",
+      "reason": "string - scanned_no_text_layer | garbled_font | complex_layout | not_reported_in_source | conflict_in_source | missing_tool",
+      "details": "string - concrete observed limitation",
+      "human_handoff": "string - exact page/bbox/file for human verification"
+    }
+  }
+}
