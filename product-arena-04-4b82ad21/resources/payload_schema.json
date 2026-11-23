@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sci-intro-rw-writer section payload schema",
+  "description": "Structured payload written to /app/work/section_payload.json by the agent before running verify_intro_rw.py and assemble_deliverables.py.",
+  "type": "object",
+  "required": [
+    "case_id",
+    "status",
+    "language",
+    "citation_style",
+    "manuscript_markdown",
+    "research_background",
+    "related_work_groups",
+    "comparison_matrix",
+    "research_gaps",
+    "contributions",
+    "claim_citation_map",
+    "references",
+    "conflicts",
+    "author_confirmation_items",
+    "change_records",
+    "uncertainty"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "description": "Exact case_id copied from /input/case.json"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "insufficient_material"],
+      "description": "Honest execution status; never set 'completed' if literature or own evidence is empty or unreadable."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["zh", "en", "bilingual"]
+    },
+    "citation_style": {
+      "type": "string",
+      "enum": ["ieee_numeric", "gbt7714", "apa_author_year", "nature_numeric", "bibtex_latex", "unspecified"]
+    },
+    "title": {
+      "type": "string"
+    },
+    "manuscript_markdown": {
+      "type": "string",
+      "description": "Publication-ready Introduction & Related Work text with explicit headings, anchored inline citations, [作者判断]/[AUTHOR_JUDGMENT] where judgment is used, and [待作者确认: GAP-XX]/[AUTHOR_CONFIRM: GAP-XX] markers."
+    },
+    "research_background": {
+      "type": "object",
+      "required": ["domain_lineage", "concrete_problem", "technical_constraints", "why_now", "evidence_locators", "citation_ids"],
+      "properties": {
+        "domain_lineage": { "type": "string" },
+        "concrete_problem": { "type": "string" },
+        "technical_constraints": { "type": "array", "items": { "type": "string" } },
+        "why_now": { "type": "string" },
+        "evidence_locators": { "type": "array", "items": { "type": "string" } },
+        "citation_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "related_work_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["group_id", "route_name", "grouping_axis", "comparison_dimensions", "works_covered", "route_tradeoff_summary"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "route_name": { "type": "string" },
+          "grouping_axis": { "type": "string" },
+          "comparison_dimensions": { "type": "array", "items": { "type": "string" } },
+          "works_covered": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["ref_id", "core_conclusion", "applicability_conditions", "limitations", "source_locator"],
+              "properties": {
+                "ref_id": { "type": "string" },
+                "core_conclusion": { "type": "string" },
+                "applicability_conditions": { "type": "string" },
+                "limitations": { "type": "string" },
+                "source_locator": { "type": "string" }
+              }
+            }
+          },
+          "route_tradeoff_summary": { "type": "string" }
+        }
+      }
+    },
+    "comparison_matrix": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_id", "route", "problem_setting", "method_route", "dataset_and_eval", "key_result", "applicability_conditions", "limitations", "source_locator"],
+        "properties": {
+          "ref_id": { "type": "string" },
+          "route": { "type": "string" },
+          "problem_setting": { "type": "string" },
+          "method_route": { "type": "string" },
+          "dataset_and_eval": { "type": "string" },
+          "key_result": { "type": "string" },
+          "applicability_conditions": { "type": "string" },
+          "limitations": { "type": "string" },
+          "source_locator": { "type": "string" }
+        }
+      }
+    },
+    "research_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap_id", "gap_statement", "derivation_type", "supporting_ref_ids", "supporting_evidence_locators", "how_this_work_addresses", "attribution"],
+        "properties": {
+          "gap_id": { "type": "string" },
+          "gap_statement": { "type": "string" },
+          "derivation_type": { "type": "string", "enum": ["shared_limitation", "uncovered_scenario", "inter_study_conflict", "author_judgment"] },
+          "supporting_ref_ids": { "type": "array", "items": { "type": "string" } },
+          "supporting_evidence_locators": { "type": "array", "items": { "type": "string" } },
+          "how_this_work_addresses": { "type": "string" },
+          "attribution": { "type": "string", "enum": ["literature_derived", "author_judgment"] }
+        }
+      }
+    },
+    "contributions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["contrib_id", "claim_text", "scope_qualification", "linked_methods", "linked_figures_tables", "linked_metrics", "own_evidence_locators", "verification_status"],
+        "properties": {
+          "contrib_id": { "type": "string" },
+          "claim_text": { "type": "string" },
+          "scope_qualification": { "type": "string" },
+          "linked_methods": { "type": "array", "items": { "type": "string" } },
+          "linked_figures_tables": { "type": "array", "items": { "type": "string" } },
+          "linked_metrics": { "type": "array", "items": { "type": "string" } },
+          "own_evidence_locators": { "type": "array", "items": { "type": "string" } },
+          "verification_status": { "type": "string", "enum": ["verified", "partial_evidence", "author_confirm_required"] }
+        }
+      }
+    },
+    "claim_citation_map": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "section", "claim_excerpt", "citation_ids", "source_locators", "attribution_type"],
+        "properties": {
+          "claim_id": { "type": "string" },
+          "section": { "type": "string" },
+          "claim_excerpt": { "type": "string" },
+          "citation_ids": { "type": "array", "items": { "type": "string" } },
+          "source_locators": { "type": "array", "items": { "type": "string" } },
+          "attribution_type": { "type": "string", "enum": ["cited_fact", "own_result", "author_judgment", "author_confirm"] }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_id", "cite_key", "authors", "year", "title", "venue", "doi_or_id", "recency_role", "source_locator", "verification_status", "formatted_citation"],
+        "properties": {
+          "ref_id": { "type": "string" },
+          "cite_key": { "type": "string" },
+          "authors": { "type": "string" },
+          "year": { "type": "string" },
+          "title": { "type": "string" },
+          "venue": { "type": "string" },
+          "doi_or_id": { "type": "string" },
+          "recency_role": { "type": "string", "enum": ["foundational", "representative", "recent"] },
+          "source_locator": { "type": "string" },
+          "verification_status": { "type": "string", "enum": ["verified", "partial_metadata", "unverified_source", "metadata_conflict"] },
+          "formatted_citation": { "type": "string" }
+        }
+      }
+    },
+    "excluded_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_id", "cite_key", "reason"],
+        "properties": {
+          "ref_id": { "type": "string" },
+          "cite_key": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["conflict_id", "item", "sources_compared", "adopted_value_or_status", "rationale", "needs_author_confirmation"],
+        "properties": {
+          "conflict_id": { "type": "string" },
+          "item": { "type": "string" },
+          "sources_compared": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_locator": { "type": "string" },
+                "source_tier": { "type": "string" },
+                "value": { "type": "string" }
+              }
+            }
+          },
+          "adopted_value_or_status": { "type": "string" },
+          "rationale": { "type": "string" },
+          "needs_author_confirmation": { "type": "boolean" }
+        }
+      }
+    },
+    "author_confirmation_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap_id", "severity", "location_in_draft", "issue_type", "question", "what_was_checked"],
+        "properties": {
+          "gap_id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "important", "recommended"] },
+          "location_in_draft": { "type": "string" },
+          "issue_type": { "type": "string" },
+          "question": { "type": "string" },
+          "what_was_checked": { "type": "string" }
+        }
+      }
+    },
+    "change_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["change_id", "target", "action", "before", "after", "basis_locator"],
+        "properties": {
+          "change_id": { "type": "string" },
+          "target": { "type": "string" },
+          "action": { "type": "string" },
+          "before": { "type": "string" },
+          "after": { "type": "string" },
+          "basis_locator": { "type": "string" }
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "contract_overrides": {
+      "type": "object",
+      "description": "Optional explicit key-value map matching exact custom output_contract field names in /input/case.json."
+    }
+  }
+}

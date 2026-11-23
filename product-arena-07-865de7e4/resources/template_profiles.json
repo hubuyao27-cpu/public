@@ -1,0 +1,207 @@
+{
+  "schema_version": "1.0",
+  "profiles": {
+    "IEEEtran": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "IEEEtran",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\maketitle",
+        "\\begin{abstract}...\\end{abstract}",
+        "\\begin{IEEEkeywords}...\\end{IEEEkeywords}"
+      ],
+      "pitfalls": [
+        "Do NOT load subcaption (clashes with IEEEtran caption format); use \\usepackage[caption=false,font=footnotesize]{subfig} instead.",
+        "Do NOT load geometry or alter two-column margins.",
+        "Table captions MUST go ABOVE tabular; figure captions go BELOW graphic.",
+        "Use \\cite{a,b} with \\usepackage{cite} (or natbib with [numbers,sort&compress]), never biblatex unless explicitly requested.",
+        "Keep \\IEEEpeerreviewmaketitle when using peerreview options."
+      ]
+    },
+    "acmart": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "ACM-Reference-Format",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\affiliation{...}",
+        "\\begin{abstract}...\\end{abstract}",
+        "\\ccsdesc{...} or \\keywords{...}",
+        "\\maketitle"
+      ],
+      "pitfalls": [
+        "acmart already loads booktabs, hyperref, xcolor, amsmath, natbib (or biblatex if bibstyle option used) — avoid duplicate loading with conflicting options.",
+        "In acmart, \\begin{abstract} and \\keywords MUST appear BEFORE \\maketitle.",
+        "Accessibility: figures benefit from \\Description{...} inside figure environments."
+      ]
+    },
+    "elsarticle": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "elsarticle-num",
+      "required_elements": [
+        "\\begin{frontmatter}",
+        "\\title{...}",
+        "\\author{...}",
+        "\\begin{abstract}...\\end{abstract}",
+        "\\begin{keyword}...\\end{keyword}",
+        "\\end{frontmatter}"
+      ],
+      "pitfalls": [
+        "All front-matter metadata (title, author, affiliation, abstract, keyword) must sit inside \\begin{frontmatter}...\\end{frontmatter}.",
+        "elsarticle loads natbib automatically; pass options via \\documentclass[numbers,sort&compress]{elsarticle} rather than reloading natbib."
+      ]
+    },
+    "llncs": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "splncs04",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\institute{...}",
+        "\\maketitle",
+        "\\begin{abstract}...\\end{abstract}",
+        "\\keywords{...}"
+      ],
+      "pitfalls": [
+        "\\keywords{...} goes INSIDE the abstract environment in llncs.",
+        "Use splncs04.bst and \\usepackage{cite}; avoid loading amsthm because llncs defines proof/theorem environments."
+      ]
+    },
+    "sn-jnl": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "sn-mathphys-num",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\abstract{...}",
+        "\\keywords{...}",
+        "\\maketitle"
+      ],
+      "pitfalls": [
+        "sn-jnl uses \\abstract{...} and \\keywords{...} BEFORE \\maketitle (command syntax, not environment).",
+        "Keep \\usepackage{manyfoot} / class-bundled packages intact; check sn-*.bst path."
+      ]
+    },
+    "neurips": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "plainnat",
+      "required_elements": [
+        "\\usepackage{neurips_...}",
+        "\\title{...}",
+        "\\author{...}",
+        "\\maketitle",
+        "\\begin{abstract}...\\end{abstract}"
+      ],
+      "pitfalls": [
+        "Check [preprint] vs [final] vs anonymized submission option on neurips style.",
+        "NeurIPS checklist section may be required in full papers."
+      ]
+    },
+    "icml": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "icml2024",
+      "required_elements": [
+        "\\icmltitle{...}",
+        "\\begin{icmlauthorlist}...\\end{icmlauthorlist}",
+        "\\begin{abstract}...\\end{abstract}"
+      ],
+      "pitfalls": [
+        "icml uses \\twocolumn[...] wrapper around \\icmltitle and authorlist.",
+        "icml style requires natbib and sets hyperref options; do not reload hyperref with conflicting options."
+      ]
+    },
+    "ctexart": {
+      "recommended_engine": "xelatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "gbt7714-numerical",
+      "required_elements": [
+        "\\documentclass[UTF8]{ctexart}",
+        "\\title{...}",
+        "\\author{...}",
+        "\\maketitle"
+      ],
+      "pitfalls": [
+        "Always compile with xelatex (or lualatex), NEVER pdflatex.",
+        "On Linux containers without Windows fonts (SimSun/SimHei), set fontset=fandol or explicitly check fc-list :lang=zh and configure fontset=none with installed Noto/Fandol fonts.",
+        "Avoid loading inputenc/fontenc alongside ctex."
+      ]
+    },
+    "ctexbook": {
+      "recommended_engine": "xelatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "biber",
+      "recommended_bst": "gb7714-2015",
+      "required_elements": [
+        "\\documentclass[UTF8]{ctexbook}",
+        "\\title{...}",
+        "\\author{...}",
+        "\\maketitle"
+      ],
+      "pitfalls": [
+        "Use xelatex; verify CJK font availability via fc-list.",
+        "Long theses with \\include files: keep chapter files encoding UTF-8 without BOM and compile from root main.tex."
+      ]
+    },
+    "revtex4-2": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "apsrev4-2",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\begin{abstract}...\\end{abstract}",
+        "\\maketitle"
+      ],
+      "pitfalls": [
+        "In revtex4-2, \\begin{abstract} precedes \\maketitle.",
+        "Do NOT load caption/subcaption packages; revtex4-2 is incompatible with caption package and warns/breaks table alignment."
+      ]
+    },
+    "beamer": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "plain",
+      "required_elements": [
+        "\\title{...}",
+        "\\author{...}",
+        "\\begin{frame}"
+      ],
+      "pitfalls": [
+        "Verbatim/listings inside beamer frames REQUIRE [fragile] option on \\begin{frame}[fragile].",
+        "Beamer loads hyperref, xcolor, amsmath automatically; do not reload with conflicting options."
+      ]
+    },
+    "article": {
+      "recommended_engine": "pdflatex",
+      "cjk_engine": "xelatex",
+      "bib_backend": "bibtex",
+      "recommended_bst": "plain",
+      "required_elements": [
+        "\\begin{document}",
+        "\\end{document}"
+      ],
+      "pitfalls": [
+        "Switch to xelatex + xeCJK/ctex whenever source text contains CJK characters.",
+        "Load geometry, booktabs, amsmath, graphicx explicitly before hyperref."
+      ]
+    }
+  }
+}

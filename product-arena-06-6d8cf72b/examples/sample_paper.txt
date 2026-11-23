@@ -1,0 +1,23 @@
+# Demo Study: Low-Temperature CO2 Methanation over Ru/CeO2-Al2O3 Catalysts (Illustrative Example Only)
+
+## Abstract
+Ruthenium catalysts supported on ceria-modified alumina (Ru/CeO2-Al2O3) were evaluated for low-temperature CO2 methanation at atmospheric pressure. Under 15 wt% CeO2 loading and 1.2 wt% Ru dispersion, CO2 conversion reached 78.4% with 99.1% CH4 selectivity at 260 °C and GHSV = 12,000 h^-1. Apparent activation energy decreased from 84.2 kJ/mol on Ru/Al2O3 to 61.5 kJ/mol on Ru/CeO2-Al2O3 due to oxygen vacancy promotion.
+
+## 1. Introduction
+Industrial carbon dioxide hydrogenation to synthetic natural gas offers a practical route for renewable hydrogen storage. However, traditional Ni-based catalysts typically require temperatures above 320 °C, which thermodynamically limits equilibrium conversion. Lowering the operating window below 280 °C while suppressing CO byproduct formation remains a central kinetic challenge.
+
+## 2. Experimental Methods
+Catalysts were prepared by sequential wet impregnation using aqueous RuCl3·xH2O (nominal Ru = 1.2 wt%) onto gamma-Al2O3 modified with 15 wt% CeO2, followed by calcination in air at 450 °C for 4 h and reduction in 10% H2/Ar at 350 °C for 2 h. Activity tests were carried out in a fixed-bed quartz reactor (i.d. 8 mm) using 200 mg catalyst (40–60 mesh) and a feed gas ratio of H2/CO2/N2 = 4:1:1 at 0.1 MPa. Notice that long-term sulfur poisoning resistance and 1,000-hour stability were not evaluated in this study.
+
+Table 1. Textural properties and kinetic parameters at 260 °C and 0.1 MPa (H2/CO2 = 4:1, GHSV = 12,000 h^-1).
+Catalyst | BET Area (m^2/g) | CO2 Conversion (%) | CH4 Selectivity (%) | Ea (kJ/mol)
+Ru/Al2O3 | 162 | 41.2 | 94.8 | 84.2
+Ru/CeO2-Al2O3 | 148 | 78.4 | 99.1 | 61.5
+
+## 3. Results and Discussion
+In-situ DRIFTS spectra indicated that surface oxygen vacancies on CeO2 accelerate formate intermediate dissociation, shifting the light-off temperature downward by 55 °C relative to unpromoted Ru/Al2O3. These high selectivity values hold specifically under sulfur-free stoichiometric feed (H2/CO2 = 4:1) and space velocity <= 12,000 h^-1; increasing GHSV to 30,000 h^-1 dropped CO2 conversion to 52.0%.
+
+Fig. 1. CO2 conversion and CH4 selectivity as a function of reaction temperature (180–340 °C, 0.1 MPa, 200 mg catalyst).
+
+## 4. Conclusions and Limitations
+CeO2 modification effectively lowers the apparent activation energy of Ru-catalyzed CO2 methanation to 61.5 kJ/mol and enables 99.1% CH4 selectivity at 260 °C. Key limitations include the absence of impurity tolerance tests (e.g., H2S or O2 traces) and reliance on lab-scale 200 mg fixed-bed tests without adiabatic heat-management modeling.

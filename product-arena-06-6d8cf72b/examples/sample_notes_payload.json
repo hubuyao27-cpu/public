@@ -1,0 +1,373 @@
+{
+  "executive_summary": "本示例笔记整理了 Ru/CeO2-Al2O3 催化剂低温 CO2 甲烷化研究的全部章节与核心前提条件：15 wt% CeO2 助剂将表观活化能由 84.2 kJ/mol 降至 61.5 kJ/mol，在 260 °C、0.1 MPa、GHSV=12,000 h^-1 条件下实现 78.4% CO2 转化率与 99.1% CH4 选择性；结论仅在无硫、H2/CO2=4:1 化学计量比及 GHSV <= 12,000 h^-1 条件下成立。",
+  "task_responses": [
+    {
+      "question_id": "Q1",
+      "question": "Compared with Ru/Al2O3, how much does CeO2 promotion change activation energy and under what operating conditions?",
+      "answer": "加入 15 wt% CeO2 将表观活化能从 84.2 kJ/mol 降低至 61.5 kJ/mol；该对比基于 260 °C、0.1 MPa、200 mg 催化剂、H2/CO2/N2 = 4:1:1 及 GHSV = 12,000 h^-1 的固定床实验条件。",
+      "status": "answered",
+      "boundaries_or_assumptions": "需满足无硫进料及 GHSV <= 12,000 h^-1；若空速升至 30,000 h^-1，转化率降至 52.0%。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P002",
+          "page": null,
+          "section": "S01",
+          "quote": "Apparent activation energy decreased from 84.2 kJ/mol on Ru/Al2O3 to 61.5 kJ/mol on Ru/CeO2-Al2O3"
+        },
+        {
+          "anchor_id": "P004",
+          "page": null,
+          "section": "S03",
+          "quote": "using 200 mg catalyst (40–60 mesh) and a feed gas ratio of H2/CO2/N2 = 4:1:1 at 0.1 MPa"
+        }
+      ]
+    },
+    {
+      "question_id": "Q2",
+      "question": "Did the paper report catalyst cost or 1,000-hour stability?",
+      "answer": "not_reported: 原文未报告催化剂经济成本，且明确说明未开展耐硫中毒及 1,000 小时长期稳定性测试。",
+      "status": "not_reported",
+      "boundaries_or_assumptions": "需后续补充长周期与含杂质实验。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P004",
+          "page": null,
+          "section": "S03",
+          "quote": "long-term sulfur poisoning resistance and 1,000-hour stability were not evaluated in this study."
+        }
+      ]
+    }
+  ],
+  "paper_card": {
+    "bibliographic": {
+      "title": "Demo Study: Low-Temperature CO2 Methanation over Ru/CeO2-Al2O3 Catalysts (Illustrative Example Only)",
+      "authors": "not_reported",
+      "year": "not_reported",
+      "venue_or_doi": "Illustrative sample_paper.txt"
+    },
+    "research_question": {
+      "summary": "如何在低于 280 °C 的温度窗口内降低 CO2 甲烷化反应温度并抑制 CO 副产物生成。",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P003",
+          "page": null,
+          "section": "S02",
+          "quote": "Lowering the operating window below 280 °C while suppressing CO byproduct formation remains a central kinetic challenge."
+        }
+      ]
+    },
+    "data_or_samples": {
+      "summary": "两组浸渍法制备催化剂样品：Ru/Al2O3（BET 比表面积 162 m^2/g）与 Ru/CeO2-Al2O3（15 wt% CeO2、1.2 wt% Ru、BET 比表面积 148 m^2/g），40–60 目，每次测试装填 200 mg。",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P004",
+          "page": null,
+          "section": "S03",
+          "quote": "nominal Ru = 1.2 wt%) onto gamma-Al2O3 modified with 15 wt% CeO2"
+        },
+        {
+          "anchor_id": "TAB:Table 1",
+          "page": null,
+          "section": "S03",
+          "quote": "Ru/CeO2-Al2O3 | 148 | 78.4 | 99.1 | 61.5"
+        }
+      ]
+    },
+    "methodology_and_conditions": {
+      "summary": "分步湿法浸渍（450 °C 空气焙烧 4 h，350 °C 10% H2/Ar 还原 2 h）；8 mm 内径石英固定床，H2/CO2/N2 = 4:1:1，常压 0.1 MPa，180–340 °C，GHSV = 12,000 h^-1；辅以原位 DRIFTS 表征。",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P004",
+          "page": null,
+          "section": "S03",
+          "quote": "calcination in air at 450 °C for 4 h and reduction in 10% H2/Ar at 350 °C for 2 h."
+        },
+        {
+          "anchor_id": "P006",
+          "page": null,
+          "section": "S04",
+          "quote": "In-situ DRIFTS spectra indicated that surface oxygen vacancies on CeO2 accelerate formate intermediate dissociation"
+        },
+        {
+          "anchor_id": "FIG:Fig. 1",
+          "page": null,
+          "section": "S04",
+          "quote": "reaction temperature (180–340 °C, 0.1 MPa, 200 mg catalyst)."
+        }
+      ]
+    },
+    "key_findings": [
+      {
+        "statement": "在 260 °C、0.1 MPa、GHSV = 12,000 h^-1 下，Ru/CeO2-Al2O3 的 CO2 转化率达 78.4%、CH4 选择性达 99.1%（未修饰 Ru/Al2O3 分别为 41.2% 和 94.8%）。",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "machine_verifiable",
+        "evidence": [
+          {
+            "anchor_id": "TAB:Table 1",
+            "page": null,
+            "section": "S03",
+            "quote": "Ru/CeO2-Al2O3 | 148 | 78.4 | 99.1 | 61.5"
+          },
+          {
+            "anchor_id": "P005",
+            "page": null,
+            "section": "S03",
+            "quote": "Ru/Al2O3 | 162 | 41.2 | 94.8 | 84.2"
+          }
+        ]
+      },
+      {
+        "statement": "CeO2 引入将起燃温度降低 55 °C，并将表观活化能由 84.2 kJ/mol 降至 61.5 kJ/mol。",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "machine_verifiable",
+        "evidence": [
+          {
+            "anchor_id": "P006",
+            "page": null,
+            "section": "S04",
+            "quote": "shifting the light-off temperature downward by 55 °C relative to unpromoted Ru/Al2O3."
+          },
+          {
+            "anchor_id": "P002",
+            "page": null,
+            "section": "S01",
+            "quote": "decreased from 84.2 kJ/mol on Ru/Al2O3 to 61.5 kJ/mol on Ru/CeO2-Al2O3"
+          }
+        ]
+      }
+    ],
+    "preconditions": [
+      {
+        "statement": "高转化率与 99.1% 高选择性依赖无硫洁净 H2/CO2 = 4:1 化学计量进料及空速 GHSV <= 12,000 h^-1（当空速提至 30,000 h^-1 时转化率跌至 52.0%）。",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "machine_verifiable",
+        "evidence": [
+          {
+            "anchor_id": "P006",
+            "page": null,
+            "section": "S04",
+            "quote": "hold specifically under sulfur-free stoichiometric feed (H2/CO2 = 4:1) and space velocity <= 12,000 h^-1; increasing GHSV to 30,000 h^-1 dropped CO2 conversion to 52.0%."
+          },
+          {
+            "anchor_id": "P002",
+            "page": null,
+            "section": "S01",
+            "quote": "CO2 conversion reached 78.4% with 99.1% CH4 selectivity at 260 °C and GHSV = 12,000 h^-1."
+          }
+        ]
+      }
+    ],
+    "conclusions": {
+      "summary": "CeO2 修饰通过表面氧空位促进甲酸盐中间体解离，将 Ru 催化 CO2 甲烷化活化能降至 61.5 kJ/mol，实现 260 °C 下 99.1% 的 CH4 选择性。",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P008",
+          "page": null,
+          "section": "S05",
+          "quote": "enables 99.1% CH4 selectivity at 260 °C."
+        }
+      ]
+    },
+    "limitations": [
+      {
+        "statement": "缺少含 H2S 或痕量 O2 杂质的抗中毒测试及 1,000 小时长期稳定性数据。",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "human_review_required",
+        "evidence": [
+          {
+            "anchor_id": "P004",
+            "page": null,
+            "section": "S03",
+            "quote": "long-term sulfur poisoning resistance and 1,000-hour stability were not evaluated in this study."
+          },
+          {
+            "anchor_id": "P008",
+            "page": null,
+            "section": "S05",
+            "quote": "absence of impurity tolerance tests (e.g., H2S or O2 traces)"
+          }
+        ]
+      },
+      {
+        "statement": "仅在实验室 200 mg 固定床条件下验证，未建立绝热反应器移热放大模型。",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "human_review_required",
+        "evidence": [
+          {
+            "anchor_id": "P008",
+            "page": null,
+            "section": "S05",
+            "quote": "reliance on lab-scale 200 mg fixed-bed tests without adiabatic heat-management modeling."
+          }
+        ]
+      }
+    ]
+  },
+  "section_summaries": [
+    {
+      "section_id": "S01",
+      "title": "Abstract",
+      "page_range": "",
+      "transition_from_prev": "全文开篇，总括研究体系与核心定量指标。",
+      "purpose": "概述 Ru/CeO2-Al2O3 低温 CO2 甲烷化性能提升。",
+      "methods": "对比 15 wt% CeO2 负载与 1.2 wt% Ru 在常压 260 °C、GHSV = 12,000 h^-1 条件下的性能。",
+      "results": "CO2 转化率 78.4%，CH4 选择性 99.1%，活化能由 84.2 kJ/mol 降至 61.5 kJ/mol。",
+      "conclusion": "氧空位促进是低温活性提升主因。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P002",
+          "page": null,
+          "section": "S01",
+          "quote": "CO2 conversion reached 78.4% with 99.1% CH4 selectivity at 260 °C and GHSV = 12,000 h^-1."
+        }
+      ]
+    },
+    {
+      "section_id": "S02",
+      "title": "1. Introduction",
+      "page_range": "",
+      "transition_from_prev": "从摘要总结切入背景痛点：解释为何需突破传统 Ni 基催化剂 320 °C 温区限制。",
+      "purpose": "提出在 280 °C 以下实现高转化并抑制 CO 副产物的动力学难题。",
+      "methods": "文献与热力学/动力学背景对比。",
+      "results": "传统 Ni 基催化剂需 > 320 °C，受热力学平衡限制。",
+      "conclusion": "需要低温高效催化剂，引出下节 Ru/CeO2-Al2O3 制备与评价方案。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P003",
+          "page": null,
+          "section": "S02",
+          "quote": "traditional Ni-based catalysts typically require temperatures above 320 °C"
+        }
+      ]
+    },
+    {
+      "section_id": "S03",
+      "title": "2. Experimental Methods",
+      "page_range": "",
+      "transition_from_prev": "承接引言提出的低温催化需求，给出具体催化剂合成、反应器构型与对照测试参数。",
+      "purpose": "规定材料制备流程与评价基准，并交代未测边界。",
+      "methods": "分步湿法浸渍（450 °C 焙烧 4 h + 350 °C 还原 2 h）；8 mm 石英固定床，200 mg，H2/CO2/N2 = 4:1:1，0.1 MPa。",
+      "results": "Table 1 汇总比表面积（162 vs 148 m^2/g）及 260 °C 活性与活化能对比。",
+      "conclusion": "明确实验基准与未测试项目（抗硫与千小时稳定性），为下节机理讨论提供数据基础。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P004",
+          "page": null,
+          "section": "S03",
+          "quote": "fixed-bed quartz reactor (i.d. 8 mm) using 200 mg catalyst (40–60 mesh)"
+        }
+      ]
+    },
+    {
+      "section_id": "S04",
+      "title": "3. Results and Discussion",
+      "page_range": "",
+      "transition_from_prev": "基于实验部分获得的 Table 1 动力学数据，进一步通过原位谱学揭示机理并划定空速边界。",
+      "purpose": "阐明 CeO2 降低活化能的机理并检验操作空速敏感性。",
+      "methods": "原位 DRIFTS 光谱与变温/变空速测试（180–340 °C，12,000 vs 30,000 h^-1）。",
+      "results": "起燃温度下降 55 °C；但 GHSV 增至 30,000 h^-1 时转化率下降至 52.0%。",
+      "conclusion": "验证氧空位加速甲酸盐解离机理，同时限定了高选择性成立的操作窗口。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P006",
+          "page": null,
+          "section": "S04",
+          "quote": "increasing GHSV to 30,000 h^-1 dropped CO2 conversion to 52.0%."
+        }
+      ]
+    },
+    {
+      "section_id": "S05",
+      "title": "4. Conclusions and Limitations",
+      "page_range": "",
+      "transition_from_prev": "汇总机理与动力学结论，并正视工程放大与杂质耐受缺失。",
+      "purpose": "总结核心贡献与工程应用边界。",
+      "methods": "定性总结。",
+      "results": "确认 61.5 kJ/mol 活化能与 99.1% 选择性，明确缺少 H2S/O2 杂质与绝热移热模型。",
+      "conclusion": "指出走向工业放大前必须补足的抗毒化与热管理研究方向。",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P008",
+          "page": null,
+          "section": "S05",
+          "quote": "absence of impurity tolerance tests (e.g., H2S or O2 traces) and reliance on lab-scale 200 mg fixed-bed tests"
+        }
+      ]
+    }
+  ],
+  "knowledge_items": [
+    {
+      "item_id": "K001",
+      "kind": "variable",
+      "canonical_term": "Apparent Activation Energy",
+      "aliases": ["Ea"],
+      "statement": "表观活化能：Ru/Al2O3 为 84.2 kJ/mol，Ru/CeO2-Al2O3 降至 61.5 kJ/mol。",
+      "preconditions": ["260 °C, 0.1 MPa, H2/CO2 = 4:1, GHSV = 12,000 h^-1"],
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "TAB:Table 1",
+          "page": null,
+          "section": "S03",
+          "quote": "Ea (kJ/mol)"
+        },
+        {
+          "anchor_id": "P002",
+          "page": null,
+          "section": "S01",
+          "quote": "decreased from 84.2 kJ/mol on Ru/Al2O3 to 61.5 kJ/mol"
+        }
+      ]
+    },
+    {
+      "item_id": "K002",
+      "kind": "method",
+      "canonical_term": "In-situ DRIFTS",
+      "aliases": ["DRIFTS"],
+      "statement": "原位漫反射傅里叶变换红外光谱，用于监测 CeO2 表面氧空位促进甲酸盐中间体解离。",
+      "preconditions": ["低温 CO2 甲烷化反应原位条件"],
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P006",
+          "page": null,
+          "section": "S04",
+          "quote": "In-situ DRIFTS spectra indicated that surface oxygen vacancies on CeO2 accelerate formate intermediate dissociation"
+        }
+      ]
+    }
+  ],
+  "not_reported_and_conflicts": {
+    "not_reported": [
+      "催化剂贵金属 Ru 的实际 ICP 测定负载量（仅报告名义负载量 1.2 wt%）",
+      "1,000 小时长期稳定性与抗硫（H2S）/痕量 O2 耐受数据",
+      "作者列表、发表年份与催化剂经济成本"
+    ],
+    "unable_to_determine": [
+      "180–340 °C 完整曲线各温度点精确数值（仅引用 Fig. 1 且未在正文表格列出逐点数据）"
+    ],
+    "conflicts": []
+  },
+  "manual_takeover_points": [],
+  "contract_overrides": {}
+}

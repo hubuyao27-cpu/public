@@ -1,0 +1,151 @@
+{
+  "executive_summary": "Concise synthesis preserving original argumentation arc, key conditions, and scope.",
+  "task_responses": [
+    {
+      "question_id": "Q1",
+      "question": "Original question from task.md or case.json",
+      "answer": "Grounded answer or explicit 'not_reported' / 'unable_to_determine'",
+      "status": "answered",
+      "boundaries_or_assumptions": "Conditions under which this answer holds",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        {
+          "anchor_id": "P001",
+          "page": 1,
+          "section": "S01 Abstract",
+          "quote": "Exact verbatim excerpt copied from anchored_paper.md"
+        }
+      ]
+    }
+  ],
+  "paper_card": {
+    "bibliographic": {
+      "title": "Paper Title",
+      "authors": "Author List or not_reported",
+      "year": "2026 or not_reported",
+      "venue_or_doi": "Journal/Conference or not_reported"
+    },
+    "research_question": {
+      "summary": "What problem or hypothesis is addressed",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        { "anchor_id": "P001", "page": 1, "section": "S01", "quote": "verbatim excerpt" }
+      ]
+    },
+    "data_or_samples": {
+      "summary": "Dataset/material/sample composition, sizes, splits, or not_reported",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        { "anchor_id": "P002", "page": 1, "section": "S02", "quote": "verbatim excerpt" }
+      ]
+    },
+    "methodology_and_conditions": {
+      "summary": "Models, experimental setup, operating parameters, baselines, metrics",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        { "anchor_id": "P003", "page": 2, "section": "S02", "quote": "verbatim excerpt" }
+      ]
+    },
+    "key_findings": [
+      {
+        "statement": "Quantitative finding with exact units and comparison baseline",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "machine_verifiable",
+        "evidence": [
+          { "anchor_id": "P004", "page": 3, "section": "S03", "quote": "verbatim excerpt" }
+        ]
+      }
+    ],
+    "preconditions": [
+      {
+        "statement": "Regime, operating window, or assumption required for findings/conclusions to hold",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "machine_verifiable",
+        "evidence": [
+          { "anchor_id": "P004", "page": 3, "section": "S03", "quote": "verbatim excerpt" }
+        ]
+      }
+    ],
+    "conclusions": {
+      "summary": "Main conclusions reported by authors",
+      "status": "reported",
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        { "anchor_id": "P005", "page": 4, "section": "S04", "quote": "verbatim excerpt" }
+      ]
+    },
+    "limitations": [
+      {
+        "statement": "Author-stated limitation or unverified boundary",
+        "attribution": "author_stated",
+        "status": "reported",
+        "verification_mode": "human_review_required",
+        "evidence": [
+          { "anchor_id": "P005", "page": 4, "section": "S04", "quote": "verbatim excerpt" }
+        ]
+      }
+    ]
+  },
+  "section_summaries": [
+    {
+      "section_id": "S01",
+      "title": "Exact Section Title from section_outline.json",
+      "page_range": "1-1",
+      "transition_from_prev": "Opening section establishing the problem statement.",
+      "purpose": "Objective of this section",
+      "methods": "Analytical or experimental approach described here (or not_applicable)",
+      "results": "Core observations/data reported in this section",
+      "conclusion": "Takeaway bridging to the next section",
+      "verification_mode": "machine_verifiable",
+      "key_points": [
+        {
+          "claim": "Specific atomic claim from this section",
+          "verification_mode": "machine_verifiable",
+          "evidence": [
+            { "anchor_id": "P001", "page": 1, "section": "S01", "quote": "verbatim excerpt" }
+          ]
+        }
+      ],
+      "evidence": [
+        { "anchor_id": "P001", "page": 1, "section": "S01", "quote": "verbatim excerpt" }
+      ]
+    }
+  ],
+  "knowledge_items": [
+    {
+      "item_id": "K001",
+      "kind": "concept|variable|method|finding|precondition|limitation",
+      "canonical_term": "Standardized Term Name",
+      "aliases": ["Abbrev", "Synonym"],
+      "statement": "Concise definition, formula, or empirical relation with units",
+      "preconditions": ["Applicable condition or domain"],
+      "verification_mode": "machine_verifiable",
+      "evidence": [
+        { "anchor_id": "P001", "page": 1, "section": "S01", "quote": "verbatim excerpt" }
+      ]
+    }
+  ],
+  "not_reported_and_conflicts": {
+    "not_reported": [
+      "Explicit list of standard or requested items absent from the source material"
+    ],
+    "unable_to_determine": [
+      "Items blocked by unreadable pages, missing plots, or unstated derivations"
+    ],
+    "conflicts": [
+      {
+        "topic": "Subject of internal or cross-document discrepancy",
+        "source_a": { "anchor_id": "P003", "page": 2, "claim": "..." },
+        "source_b": { "anchor_id": "TAB:Table 1", "page": 4, "claim": "..." },
+        "resolution_status": "unresolved_requires_human_review"
+      }
+    ]
+  },
+  "manual_takeover_points": [],
+  "contract_overrides": {}
+}

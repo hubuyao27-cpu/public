@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeliverablePayload",
+  "description": "Structured authoring/repair payload consumed by verify_deliverable.py and assemble_deliverables.py.",
+  "type": "object",
+  "required": [
+    "case_id",
+    "status",
+    "summary",
+    "primary_tex_path",
+    "output_files",
+    "sources",
+    "change_records",
+    "uncertainty",
+    "author_confirmation_items",
+    "limitations"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "description": "Exact case_id from /input/case.json"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "unable_to_determine"],
+      "description": "Honest execution status based on actual build & verification outcome."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Concise factual summary of completed work, compile outcome, and any unresolved gaps."
+    },
+    "primary_tex_path": {
+      "type": "string",
+      "description": "Relative path (inside output directory) to the main compilable .tex entry point."
+    },
+    "output_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "role"],
+        "properties": {
+          "path": { "type": "string" },
+          "role": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "template_compliance": {
+      "type": "object",
+      "properties": {
+        "template_name": { "type": "string" },
+        "engine": { "type": "string" },
+        "bib_tool": { "type": "string" },
+        "required_fields_checked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["field", "status"],
+            "properties": {
+              "field": { "type": "string" },
+              "status": { "type": "string", "enum": ["present", "missing_flagged", "not_applicable"] },
+              "locator": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fact_or_target", "source_locator"],
+        "properties": {
+          "id": { "type": "string" },
+          "fact_or_target": { "type": "string" },
+          "source_locator": { "type": "string" },
+          "target_locator": { "type": "string" },
+          "verification_status": { "type": "string", "enum": ["verified", "needs_author_confirmation", "conflicting_sources"] }
+        }
+      }
+    },
+    "change_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "change_type", "description", "reason"],
+        "properties": {
+          "file": { "type": "string" },
+          "locator": { "type": "string" },
+          "change_type": { "type": "string" },
+          "before": { "type": "string" },
+          "after": { "type": "string" },
+          "description": { "type": "string" },
+          "reason": { "type": "string" },
+          "source_locator": { "type": "string" }
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "description", "impact"],
+        "properties": {
+          "id": { "type": "string" },
+          "category": { "type": "string" },
+          "description": { "type": "string" },
+          "impact": { "type": "string" },
+          "source_locator": { "type": "string" }
+        }
+      }
+    },
+    "author_confirmation_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap_id", "question", "target_file", "suggested_action"],
+        "properties": {
+          "gap_id": { "type": "string" },
+          "question": { "type": "string" },
+          "target_file": { "type": "string" },
+          "target_locator": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "suggested_action": { "type": "string" }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scenario", "cause", "scope"],
+        "properties": {
+          "scenario": { "type": "string" },
+          "cause": { "type": "string" },
+          "scope": { "type": "string" }
+        }
+      }
+    },
+    "contract_overrides": {
+      "type": "object",
+      "description": "Explicit values for custom keys required by /input/case.json output_contract."
+    }
+  }
+}

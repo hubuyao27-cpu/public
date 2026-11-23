@@ -1,0 +1,306 @@
+{
+  "schema_version": "1.0",
+  "description": "Structured TeX/LaTeX/BibTeX/Biber error and warning taxonomy for root-cause clustering and deterministic remediation.",
+  "rules": [
+    {
+      "id": "ERR-UNCLOSED-BRACE",
+      "pattern": "Runaway argument\\?|File ended while scanning use of",
+      "category": "syntax_balance",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-UNCLOSED-ENV", "ERR-EMERGENCY-STOP"],
+      "root_cause": "An opening '{' or delimited macro argument was never closed before the end of a paragraph or file.",
+      "fix_recipe": "Run analyze_latex.py brace-stack detector to jump directly to the unclosed opening '{' line rather than fixing at EOF.",
+      "fallback": "If external macro breaks across paragraphs, replace \\par/blank line inside short-arg command or supply missing '}'."
+    },
+    {
+      "id": "ERR-EXTRA-RBRACE",
+      "pattern": "Too many \\}'s|Argument of .* has an extra \\}",
+      "category": "syntax_balance",
+      "severity": "error",
+      "cascading_followups": ["ERR-UNDEFINED-CS"],
+      "root_cause": "Extra closing brace '}' or fragile macro inside a moving argument (e.g., section/caption) without \\protect.",
+      "fix_recipe": "Balance braces around the flagged line or prepend \\protect before fragile commands in captions/headings.",
+      "fallback": "Move complex formatting out of \\caption[short]{long} optional TOC argument."
+    },
+    {
+      "id": "ERR-ENV-MISMATCH",
+      "pattern": "\\\\begin\\{([^}]+)\\}.*ended by \\\\end\\{([^}]+)\\}|Environment ([^ ]+) undefined",
+      "category": "syntax_balance",
+      "severity": "error",
+      "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-EMERGENCY-STOP"],
+      "root_cause": "Mismatched \\begin{env}/\\end{env} nesting or missing package providing that environment (e.g., amsmath for align, booktabs/longtable).",
+      "fix_recipe": "Verify environment pairing via stack trace and confirm required package is loaded in preamble.",
+      "fallback": "Check \\usepackage order if environment depends on class/package initialization."
+    },
+    {
+      "id": "ERR-MISSING-STY-CLS",
+      "pattern": "LaTeX Error: File `([^']+\\.(?:sty|cls|def|clo|bst))' not found",
+      "category": "missing_dependency",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-UNDEFINED-CS", "ERR-ENV-MISMATCH", "ERR-EMERGENCY-STOP"],
+      "root_cause": "Required class/package/style file is absent from both working directory and kpsewhich TEXMF tree.",
+      "fix_recipe": "Locate file in /input subdirectories and copy/add TEXINPUTS, or replace optional aesthetic package with TeX Live equivalent if non-mandatory.",
+      "fallback": "If a mandatory publisher .cls (e.g., proprietary template) is genuinely absent, report partial/blocked status and list exact missing filename in author_confirmation_items."
+    },
+    {
+      "id": "ERR-MISSING-ASSET",
+      "pattern": "LaTeX Error: File `([^']+)' not found|Unable to load picture or PDF file",
+      "category": "missing_asset",
+      "severity": "error",
+      "cascading_followups": ["ERR-EMERGENCY-STOP"],
+      "root_cause": "Graphic, \\input, or \\include target path is misspelled, uses wrong relative directory, or file is missing from /input.",
+      "fix_recipe": "Resolve actual path relative to main .tex (or configure \\graphicspath{{./figures/}}). Strip spaces/non-ASCII from paths if needed.",
+      "fallback": "If figure file is absent in /input, do NOT fabricate binary images; temporarily guard with draft/placeholder note and flag GAP-XX."
+    },
+    {
+      "id": "ERR-OPTION-CLASH",
+      "pattern": "LaTeX Error: Option clash for package ([^.]+)",
+      "category": "package_conflict",
+      "severity": "error",
+      "cascading_followups": ["ERR-UNDEFINED-CS"],
+      "root_cause": "A package (commonly xcolor, hyperref, graphicx, geometry, natbib) was loaded implicitly by the class or another package before an explicit \\usepackage[opts]{pkg}.",
+      "fix_recipe": "Pass options via \\PassOptionsToPackage{opts}{pkg} BEFORE \\documentclass or merge options with the earlier loader.",
+      "fallback": "Remove redundant \\usepackage{pkg} and apply \\hypersetup{...} or \\captionsetup{...} after loading."
+    },
+    {
+      "id": "ERR-CMD-ALREADY-DEFINED",
+      "pattern": "LaTeX Error: Command (\\\\[^ ]+) already defined",
+      "category": "package_conflict",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "Two loaded packages define the same macro (e.g., \\Bbbk, \\proof, \\openbox, \\degree, \\iint) or \\newcommand collides with existing macro.",
+      "fix_recipe": "Check package_conflicts.json; reorder packages (e.g., amsmath before txfonts/amssymb) or use \\let\\oldcmd\\undefined / \\renewcommand intentionally.",
+      "fallback": "Rename user custom macro instead of overwriting kernel/class commands."
+    },
+    {
+      "id": "ERR-UNDEFINED-CS",
+      "pattern": "Undefined control sequence",
+      "category": "macro_or_package",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "Typo in command name, missing \\usepackage (e.g., \\toprule->booktabs, \\SI->siunitx, \\mathbb->amssymb, \\cref->cleveref), or wrong TeX engine.",
+      "fix_recipe": "Inspect token immediately before newline in .log; add missing package or fix typo. Never treat downstream Undefined CS caused by missing .cls as independent.",
+      "fallback": "If command belongs to an unavailable package, rewrite with standard LaTeX2e macro."
+    },
+    {
+      "id": "ERR-MATH-DOLLAR",
+      "pattern": "Missing \\$ inserted|Display math should end with \\$\\$|Bad math environment delimiter",
+      "category": "math_syntax",
+      "severity": "error",
+      "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-UNDEFINED-CS"],
+      "root_cause": "Unescaped '_' or '^' in text mode (e.g., file_name, F1_score), math command like \\alpha outside $...$, or blank line inside equation/align.",
+      "fix_recipe": "Escape literal '_' as '\\_' (or wrap in \\texttt{} with escaped underscores), remove blank lines inside display math, and close delimiters cleanly.",
+      "fallback": "Use \\detokenize{...} or \\url{...} for long identifiers/URLs containing '_' or '%'."
+    },
+    {
+      "id": "ERR-ALIGN-TAB",
+      "pattern": "Extra alignment tab has been changed to \\\\cr",
+      "category": "table_or_math",
+      "severity": "error",
+      "cascading_followups": ["ERR-MISPLACED-NOALIGN"],
+      "root_cause": "More '&' separators in a tabular/align row than declared columns, often from an unescaped '&' in cell text or missing '\\\\' at row end.",
+      "fix_recipe": "Count columns in tabular spec or align columns; escape literal '&' as '\\&' and add missing row break '\\\\'.",
+      "fallback": "Verify \\multicolumn span sums equal declared column count."
+    },
+    {
+      "id": "ERR-MISPLACED-NOALIGN",
+      "pattern": "Misplaced \\\\noalign|Misplaced \\\\omit|Misplaced \\\\cr",
+      "category": "table_syntax",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "\\hline, \\toprule, \\midrule, \\bottomrule, or \\multicolumn used without terminating the preceding row with '\\\\', or outside tabular.",
+      "fix_recipe": "Ensure the line immediately before \\midrule/\\bottomrule/\\hline ends with '\\\\', and \\multicolumn is the very first token in its cell.",
+      "fallback": "Avoid mixing \\hline and booktabs rules in the same table."
+    },
+    {
+      "id": "ERR-BAD-COL-CHAR",
+      "pattern": "LaTeX Error: Illegal character in array arg",
+      "category": "table_syntax",
+      "severity": "error",
+      "cascading_followups": ["ERR-ALIGN-TAB"],
+      "root_cause": "Used column specifier 'X' without tabularx, 'S' without siunitx, or 'P'/'L' custom column without \\newcolumntype (array package).",
+      "fix_recipe": "Load array/tabularx/siunitx or replace unsupported column specifier with p{width}/l/c/r.",
+      "fallback": "Check typo in column specification string."
+    },
+    {
+      "id": "ERR-ILLEGAL-PARAM",
+      "pattern": "Illegal parameter number in definition of|You can't use `macro parameter character #' in",
+      "category": "syntax_escaping",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "Unescaped '#' in prose/URL/caption/table, or wrong nesting of '#1' inside \\newcommand.",
+      "fix_recipe": "Escape literal '#' as '\\#' (or wrap URL in \\url{...}); double to '##' inside nested macro definitions.",
+      "fallback": "Check macro argument count [n] matches #k."
+    },
+    {
+      "id": "ERR-UTF8-INPUTENC",
+      "pattern": "Package inputenc Error: Unicode character|LaTeX Error: Unicode character .* not set up for use with LaTeX",
+      "category": "encoding_engine",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "Unicode characters (CJK, Greek αβγ, ≤, ≥, ±, –, —, smart quotes) compiled with pdflatex without mapping or under wrong engine.",
+      "fix_recipe": "Switch CJK/Unicode documents to xelatex/lualatex with xeCJK/ctex/fontspec, OR replace stray Unicode symbols in English pdflatex docs with LaTeX commands ($\\le$, $\\ge$, $\\pm$, --, ---).",
+      "fallback": "Use \\DeclareUnicodeCharacter mappings only for minor symbols when pdflatex is mandatory."
+    },
+    {
+      "id": "ERR-FONT-NOT-FOUND",
+      "pattern": "Package fontspec Error: The font \"([^\"]+)\" cannot be found|Font .* not loadable: Metric \\(TFM\\) file not found",
+      "category": "font_environment",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-MISSING-CHAR"],
+      "root_cause": "Hardcoded Windows/macOS font name (e.g., SimSun, Microsoft YaHei, Times New Roman) missing in Linux TeX Live container.",
+      "fix_recipe": "Query fc-list output from case_plan.json and map to verified installed font (e.g., Noto Serif CJK SC / FandolSong / TeX Gyre Termes), or use ctex default fontset=fandol/ubuntu.",
+      "fallback": "If zero CJK fonts exist on host, report font gap honestly and avoid silent tofu glyphs."
+    },
+    {
+      "id": "ERR-MISSING-CHAR",
+      "pattern": "Missing character: There is no (.+) in font",
+      "category": "glyph_loss",
+      "severity": "warning_escalated",
+      "cascading_followups": [],
+      "root_cause": "Selected font lacks specific CJK/Greek/math glyph, producing invisible blanks or boxes in the PDF even though exit code may be 0.",
+      "fix_recipe": "Treat as critical quality defect: switch CJK fontset (Noto Serif CJK SC / Fandol) or move math symbols into math mode ($...$).",
+      "fallback": "Check every missing codepoint against font coverage before final assembly."
+    },
+    {
+      "id": "ERR-UNDEF-CITATION",
+      "pattern": "Citation `([^']+)' on page [0-9]+ undefined|Empty bibliography",
+      "category": "bibliography",
+      "severity": "warning_escalated",
+      "cascading_followups": ["ERR-RERUN-NEEDED"],
+      "root_cause": "Citation key missing or misspelled in .bib, bibliography pass (bibtex/biber) not run, or bibtex/biber engine mismatch (natbib vs biblatex).",
+      "fix_recipe": "Align \\cite{key} with .bib keys, match bib tool (biber for biblatex, bibtex for \\bibliographystyle), and run engine -> bib -> engine -> engine.",
+      "fallback": "If citation is missing from input materials, NEVER invent bib metadata; flag [AUTHOR_CONFIRM: GAP-XX]."
+    },
+    {
+      "id": "ERR-UNDEF-REF",
+      "pattern": "Reference `([^']+)' on page [0-9]+ undefined|There were undefined references",
+      "category": "cross_reference",
+      "severity": "warning_escalated",
+      "cascading_followups": ["ERR-RERUN-NEEDED"],
+      "root_cause": "\\label typo, \\label placed inside unnumbered environment or before \\caption, or insufficient compilation passes.",
+      "fix_recipe": "Ensure \\label{...} follows \\caption{...}, verify spelling across files, and run extra LaTeX pass until converged.",
+      "fallback": "Check for duplicate \\label definitions causing Multiply defined labels warnings."
+    },
+    {
+      "id": "ERR-MULTIPLY-LABEL",
+      "pattern": "LaTeX Warning: Label `([^']+)' multiply defined",
+      "category": "cross_reference",
+      "severity": "warning",
+      "cascading_followups": [],
+      "root_cause": "Duplicate \\label{...} across sections, copied tables, or \\input files.",
+      "fix_recipe": "Give each figure/table/equation/section a unique semantic label (e.g., fig:overview, tab:ablation).",
+      "fallback": "None."
+    },
+    {
+      "id": "ERR-BIBTEX-SYNTAX",
+      "pattern": "I found no \\\\bibdata command|I found no \\\\bibstyle command|Repeated entry|Illegal end of database file|found at line ([0-9]+) of file",
+      "category": "bibliography",
+      "severity": "error",
+      "cascading_followups": ["ERR-UNDEF-CITATION"],
+      "root_cause": "Missing comma/brace in .bib entry, missing \\bibliographystyle/\\bibliography in .tex, or duplicate BibTeX keys.",
+      "fix_recipe": "Fix .bib syntax at reported line, deduplicate keys, and verify \\bibliography{name_without_ext} matches actual .bib filename.",
+      "fallback": "Ensure no unescaped '&' or '%' in .bib title/journal fields."
+    },
+    {
+      "id": "ERR-BIBER-CONTROL",
+      "pattern": "ERROR - Cannot find '([^']+\\.bcf)'|ERROR - BibTeX subsystem: .* syntax error|INFO - .* was not found in data source",
+      "category": "bibliography",
+      "severity": "error",
+      "cascading_followups": ["ERR-UNDEF-CITATION"],
+      "root_cause": "Biber run before engine generated .bcf, .bib encoding/brace error, or missing citation key.",
+      "fix_recipe": "Run xelatex/pdflatex first to emit .bcf, verify UTF-8 .bib braces/commas, then run biber and 2x engine passes.",
+      "fallback": "Check biblatex backend=biber matches biber invocation."
+    },
+    {
+      "id": "ERR-OVERFULL-HBOX",
+      "pattern": "Overfull \\\\hbox \\(([0-9.]+)pt too wide\\)",
+      "category": "layout_overflow",
+      "severity": "warning",
+      "cascading_followups": [],
+      "root_cause": "Line, inline math, URL, or wide table exceeds \\linewidth/\\textwidth.",
+      "fix_recipe": "For tables, use tabularx/p{width}/siunitx/adjust column spacing (NEVER hide with \\resizebox); for URLs load xurl/hyperref; for equations split with align/multline.",
+      "fallback": "Review visual PNG preview for any >10pt overfull boxes."
+    },
+    {
+      "id": "ERR-FLOAT-TOO-LARGE",
+      "pattern": "Float too large for page by ([0-9.]+)pt|Too many unprocessed floats",
+      "category": "layout_overflow",
+      "severity": "warning",
+      "cascading_followups": [],
+      "root_cause": "Tall figure/table exceeds \\textheight or restrictive [!h] placement blocks float queue.",
+      "fix_recipe": "Use [htbp] instead of [h], switch tall tables to longtable, or set figure height <= 0.85\\textheight with keepaspectratio.",
+      "fallback": "Insert \\clearpage between dense float clusters."
+    },
+    {
+      "id": "ERR-RERUN-NEEDED",
+      "pattern": "Label\\(s\\) may have changed\\. Rerun to get cross-references right|Rerun LaTeX|Please \\(re\\)run Biber",
+      "category": "convergence",
+      "severity": "warning",
+      "cascading_followups": [],
+      "root_cause": "Cross-references, TOC, page numbers, or bibliography changed during the current pass.",
+      "fix_recipe": "Re-run engine until auxiliary file hashes stabilize and rerun warnings disappear (typically 2-3 passes after bib).",
+      "fallback": "Record actual pass count in reproducibility_manifest.json."
+    },
+    {
+      "id": "ERR-AMBIGUOUS-TEX-OPT",
+      "pattern": "LaTeX Error: Missing \\\\begin\\{document\\}",
+      "category": "structure_preamble",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-EMERGENCY-STOP"],
+      "root_cause": "Plain text emitted in preamble before \\begin{document}, stray character/BOM, or a subfile was compiled directly instead of main.tex.",
+      "fix_recipe": "Inspect first non-comment token triggering error; ensure main entry file (containing \\documentclass and \\begin{document}) is compiled and BOM is stripped.",
+      "fallback": "If compiling subfiles standalone, wrap with subfiles class or compile root main.tex."
+    },
+    {
+      "id": "ERR-OUT-OF-MEMORY",
+      "pattern": "TeX capacity exceeded, sorry|Dimension too large",
+      "category": "recursion_or_math",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-EMERGENCY-STOP"],
+      "root_cause": "Circular \\input/\\include loop, recursive macro expansion, or extreme TikZ/pgfplots coordinate.",
+      "fix_recipe": "Check analyze_latex.py include-graph cycle detector and fix infinite recursion.",
+      "fallback": "Use externalized/pre-rendered PDF figures for ultra-heavy TikZ if memory exhausted."
+    },
+    {
+      "id": "ERR-PERMISSION-IO",
+      "pattern": "I can't write on file|Permission denied|Emergency stop",
+      "category": "io_or_fatal",
+      "severity": "fatal",
+      "cascading_followups": [],
+      "root_cause": "Read-only input directory compiled in-place or fatal prior error halted TeX.",
+      "fix_recipe": "Copy project into writable /app/work/build before compiling; resolve first fatal error above Emergency stop.",
+      "fallback": "Report exact OS permission/path block in uncertainty[] if input file itself is unreadable."
+    },
+    {
+      "id": "ERR-SUBCAPTION-CLASH",
+      "pattern": "Package subcaption Error: This package can't be used in cooperation|Command \\\\c@subfigure already defined",
+      "category": "package_conflict",
+      "severity": "error",
+      "cascading_followups": ["ERR-UNDEFINED-CS"],
+      "root_cause": "Legacy subfigure or subfig loaded alongside modern subcaption, or inside incompatible class (IEEEtran/acmart require special options).",
+      "fix_recipe": "Use subcaption (remove subfigure/subfig) or use IEEEtran's [caption=false]{subfig} when required by template.",
+      "fallback": "Follow template_profiles.json guidance for figure subpanels."
+    },
+    {
+      "id": "ERR-NOT-IN-OUTER-PAR",
+      "pattern": "LaTeX Error: Not in outer par mode",
+      "category": "float_nesting",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "A figure/table float was nested inside another float, minipage, or parbox.",
+      "fix_recipe": "Remove inner figure/table float; use minipage + \\captionof{figure/table}{...} (caption package) or subcaption.",
+      "fallback": "None."
+    },
+    {
+      "id": "ERR-SOMETHING-WRONG-ITEM",
+      "pattern": "LaTeX Error: Something's wrong--perhaps a missing \\\\item",
+      "category": "environment_syntax",
+      "severity": "error",
+      "cascading_followups": [],
+      "root_cause": "Text inside itemize/enumerate/description/thebibliography without \\item, or empty bibliography environment.",
+      "fix_recipe": "Add \\item or move stray text outside the list environment.",
+      "fallback": "Ensure at least one \\bibitem or \\bibliography source exists."
+    }
+  ]
+}

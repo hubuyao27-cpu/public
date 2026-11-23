@@ -1,0 +1,74 @@
+{
+  "version": "1.0.0",
+  "four_core_questions": {
+    "立得住": "Background establishes concrete domain lineage, specific technical bottleneck, and why-now urgency without empty cliché openings.",
+    "分得清": "Related work is grouped by problem setting, method route, or evaluation paradigm and compares conclusions, applicability conditions, and limitations rather than sequential paper summaries.",
+    "说得实": "Research gaps are explicitly derived from shared limitations, uncovered scenarios, or inter-study conflicts across cited literature, or explicitly tagged [作者判断]/[AUTHOR_JUDGMENT].",
+    "对得上": "Each contribution maps 1-to-1 to concrete methods, figures, tables, and grounded experimental metrics with exact scope qualification, and every citation resolves to verifiable metadata."
+  },
+  "evidence_tier_precedence": [
+    "original_paper_or_pdf",
+    "bibtex_or_csl_metadata",
+    "own_paper_results_or_tables",
+    "own_paper_manuscript_or_methods",
+    "structured_notes",
+    "narrative_draft"
+  ],
+  "cliche_openings_zh": [
+    "近年来[^。\\n]{0,25}(受到|引起)[^。\\n]{0,15}广泛关注",
+    "随着[^。\\n]{0,30}(快速发展|迅猛发展|不断进步|日新月异)",
+    "在当今[^。\\n]{0,25}时代",
+    "具有重要的(理论和实际|科学|现实|研究)意义",
+    "已成为(当前|学术界|工业界)的研究热点",
+    "取得了(令人瞩目|长足|显著)的(进展|成果)"
+  ],
+  "cliche_openings_en": [
+    "in recent years,?.{0,40}attracted\\s+(widespread|increasing|great|considerable)\\s+attention",
+    "with the rapid\\s+(development|advancement|growth)\\s+of",
+    "plays\\s+an\\s+increasingly\\s+(important|crucial|vital)\\s+role",
+    "has\\s+become\\s+a\\s+hot\\s+(topic|research\\s+area)",
+    "witnessed\\s+(tremendous|rapid|remarkable)\\s+progress"
+  ],
+  "overclaim_patterns_zh": [
+    "首次彻底解决",
+    "全面超越所有",
+    "完美解决",
+    "首次提出并彻底",
+    "适用于所有(场景|任务|条件)",
+    "彻底消除了所有"
+  ],
+  "overclaim_patterns_en": [
+    "first\\s+ever\\s+to\\s+completely",
+    "universally\\s+outperforms\\s+all",
+    "completely\\s+solves",
+    "definitively\\s+proves\\s+for\\s+all",
+    "eliminates\\s+all\\s+(errors|limitations|bottlenecks)"
+  ],
+  "citation_style_specs": {
+    "gbt7714": {
+      "label": "GB/T 7714-2015",
+      "inline_example": "[1], [1, 2]",
+      "reference_template": "[idx] {authors}. {title}[J/C]. {venue}, {year}{extra}."
+    },
+    "ieee_numeric": {
+      "label": "IEEE Numeric",
+      "inline_example": "[1], [1], [2]",
+      "reference_template": "[idx] {authors}, \"{title},\" {venue}, {year}{extra}."
+    },
+    "apa_author_year": {
+      "label": "APA 7th Author-Year",
+      "inline_example": "(Surname, 2023)",
+      "reference_template": "{authors} ({year}). {title}. {venue}{extra}."
+    },
+    "nature_numeric": {
+      "label": "Nature Superscript/Numeric",
+      "inline_example": "[1] or ^1",
+      "reference_template": "idx. {authors} {title}. {venue} ({year}){extra}."
+    },
+    "bibtex_latex": {
+      "label": "LaTeX \\cite{key} + BibTeX",
+      "inline_example": "\\cite{cite_key}",
+      "reference_template": "@article{{{cite_key}, author={{{authors}}}, title={{{title}}}, journal={{{venue}}}, year={{{year}}}}}"
+    }
+  }
+}

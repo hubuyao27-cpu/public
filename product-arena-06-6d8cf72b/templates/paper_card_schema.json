@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StructuredPaperCard",
+  "type": "object",
+  "required": [
+    "research_question",
+    "data_or_samples",
+    "methodology_and_conditions",
+    "key_findings",
+    "preconditions",
+    "conclusions",
+    "limitations"
+  ],
+  "properties": {
+    "bibliographic": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "authors": { "type": "string" },
+        "year": { "type": "string" },
+        "venue_or_doi": { "type": "string" }
+      }
+    },
+    "research_question": {
+      "$ref": "#/$defs/grounded_text_block"
+    },
+    "data_or_samples": {
+      "$ref": "#/$defs/grounded_text_block"
+    },
+    "methodology_and_conditions": {
+      "$ref": "#/$defs/grounded_text_block"
+    },
+    "key_findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/grounded_list_entry" }
+    },
+    "preconditions": {
+      "type": "array",
+      "description": "Explicit conditions, regimes, assumptions, or parameter ranges required for main findings/conclusions to hold.",
+      "items": { "$ref": "#/$defs/grounded_list_entry" }
+    },
+    "conclusions": {
+      "$ref": "#/$defs/grounded_text_block"
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/grounded_list_entry" }
+    }
+  },
+  "$defs": {
+    "evidence_anchor": {
+      "type": "object",
+      "required": ["anchor_id", "quote"],
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^(D\\d+-)?(P\\d{3,4}|FIG:.+|TAB:.+|EQ:.+)$" },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "section": { "type": "string" },
+        "quote": { "type": "string", "minLength": 6 }
+      }
+    },
+    "grounded_text_block": {
+      "type": "object",
+      "required": ["summary", "status", "verification_mode", "evidence"],
+      "properties": {
+        "summary": { "type": "string" },
+        "status": { "type": "string", "enum": ["reported", "not_reported", "unable_to_determine"] },
+        "verification_mode": { "type": "string", "enum": ["machine_verifiable", "human_review_required"] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_anchor" } }
+      }
+    },
+    "grounded_list_entry": {
+      "type": "object",
+      "required": ["statement", "attribution", "verification_mode", "evidence"],
+      "properties": {
+        "statement": { "type": "string" },
+        "attribution": { "type": "string", "enum": ["author_stated", "reader_inferred"] },
+        "status": { "type": "string", "enum": ["reported", "not_reported", "unable_to_determine"] },
+        "verification_mode": { "type": "string", "enum": ["machine_verifiable", "human_review_required"] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence_anchor" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "schema_version": "1.0",
+  "incompatible_pairs": [
+    {
+      "pkg_a": "natbib",
+      "pkg_b": "biblatex",
+      "reason": "Incompatible bibliography drivers (BibTeX-based natbib vs Biber-based biblatex). Loading both triggers command/counter redefinition errors.",
+      "resolution": "Keep biblatex (with biber) if modern \\addbibresource/\\printbibliography is used; keep natbib (with bibtex) if publisher template requires .bst."
+    },
+    {
+      "pkg_a": "subfigure",
+      "pkg_b": "subcaption",
+      "reason": "Obsolete subfigure clashes directly with subcaption (Command \\c@subfigure already defined).",
+      "resolution": "Remove subfigure and use subcaption (\\begin{subfigure}) or \\subfloat with caption=false when using IEEEtran."
+    },
+    {
+      "pkg_a": "subfig",
+      "pkg_b": "subcaption",
+      "reason": "Both define subfigure/subtable float interfaces and conflict unconditionally.",
+      "resolution": "Prefer subcaption with \\usepackage{caption,subcaption}; only keep subfig if mandated by legacy template."
+    },
+    {
+      "pkg_a": "cite",
+      "pkg_b": "natbib",
+      "reason": "Both redefine \\cite handling and cause incompatible spacing/sorting behavior.",
+      "resolution": "Remove cite when using natbib (pass [sort&compress] to natbib) or biblatex."
+    },
+    {
+      "pkg_a": "cite",
+      "pkg_b": "biblatex",
+      "reason": "cite package is incompatible with biblatex.",
+      "resolution": "Remove \\usepackage{cite} and pass sorting/compression options to biblatex."
+    },
+    {
+      "pkg_a": "inputenc",
+      "pkg_b": "fontspec",
+      "reason": "inputenc is for 8-bit pdflatex; fontspec/xeCJK/ctex require UTF-8 native XeLaTeX/LuaLaTeX.",
+      "resolution": "Drop inputenc/fontenc when compiling with xelatex/lualatex, or guard with \\usepackage{iftex} / \\ifPDFTeX."
+    },
+    {
+      "pkg_a": "txfonts",
+      "pkg_b": "amsmath",
+      "reason": "txfonts loaded before amsmath causes \\iint/\\iiint already defined errors.",
+      "resolution": "Replace obsolete txfonts/pxfonts with newtxtext + newtxmath (loaded AFTER amsmath)."
+    },
+    {
+      "pkg_a": "ulem",
+      "pkg_b": "soul",
+      "reason": "Both redefine underline/strikeout hooks and can interfere without [normalem] on ulem.",
+      "resolution": "Always pass \\usepackage[normalem]{ulem} so \\emph stays italic rather than underlined."
+    },
+    {
+      "pkg_a": "epsfig",
+      "pkg_b": "graphicx",
+      "reason": "epsfig is a legacy wrapper superseded by graphicx.",
+      "resolution": "Use \\usepackage{graphicx} and \\includegraphics exclusively."
+    }
+  ],
+  "load_order_rules": [
+    {
+      "first": "amsmath",
+      "second": "amsthm",
+      "reason": "amsthm checks amsmath definitions to integrate \\qedhere cleanly."
+    },
+    {
+      "first": "amsmath",
+      "second": "newtxmath",
+      "reason": "newtxmath adapts math symbols to amsmath when loaded afterward."
+    },
+    {
+      "first": "xcolor",
+      "second": "tikz",
+      "reason": "Load xcolor with options (table,dvipsnames) before tikz/hyperref to avoid option clashes."
+    },
+    {
+      "first": "xcolor",
+      "second": "hyperref",
+      "reason": "Pass xcolor options before packages that internally load xcolor."
+    },
+    {
+      "first": "amsmath",
+      "second": "hyperref",
+      "reason": "hyperref patches equation/align anchors and should follow amsmath."
+    },
+    {
+      "first": "hyperref",
+      "second": "cleveref",
+      "reason": "cleveref MUST be loaded after hyperref (one of the very few exceptions to hyperref-last)."
+    },
+    {
+      "first": "hyperref",
+      "second": "bookmark",
+      "reason": "bookmark depends on hyperref."
+    },
+    {
+      "first": "hyperref",
+      "second": "glossaries",
+      "reason": "glossaries requires hyperref loaded before it to create clickable glossary links."
+    },
+    {
+      "first": "hyperref",
+      "second": "algorithm",
+      "reason": "Load algorithm before hyperref (and algorithmic/algpseudocode after or per hyperref docs) to prevent \\theHalgorithm anchor warnings."
+    }
+  ],
+  "engine_requirements": {
+    "xelatex_or_lualatex_required": ["fontspec", "xecjk", "ctex", "unicode-math", "polyglossia"],
+    "pdflatex_only_legacy": ["cjkutf8", "cjk"]
+  },
+  "deprecated_or_antipattern_macros": [
+    {
+      "pattern": "\\\\begin\\{eqnarray\\*?\\}",
+      "reason": "Inconsistent spacing around '=' and broken equation numbering/labels.",
+      "replacement": "Use \\begin{align} or \\begin{align*} from amsmath."
+    },
+    {
+      "pattern": "\\\\(?:resizebox|scalebox)\\s*\\{[^}]*\\}\\s*(?:\\{[^}]*\\}\\s*)?\\{\\s*\\\\begin\\{(?:tabular|tabularx|array)",
+      "reason": "Masking wide-table overflow with \\resizebox distorts font size unevenly and violates publisher readability.",
+      "replacement": "Use tabularx (X columns), p{width}, \\small/\\footnotesize, \\setlength{\\tabcolsep}{...}, or sideways/longtable."
+    },
+    {
+      "pattern": "\\{\\s*\\\\(?:bf|it|rm|tt|sc|sf)\\b",
+      "reason": "Plain TeX font switches ({\\bf ...}) are deprecated in LaTeX2e and fail in some classes (e.g., KOMA-Script).",
+      "replacement": "Use \\textbf{}, \\textit{}, \\textrm{}, \\texttt{}, \\textsc{}, \\textsf{}."
+    },
+    {
+      "pattern": "\\$\\$[^$]+\\$\\$",
+      "reason": "Plain TeX $$...$$ causes vertical spacing bugs and breaks amsmath fleqn/leqno.",
+      "replacement": "Use \\[ ... \\] for unnumbered display equations or \\begin{equation} for numbered equations."
+    }
+  ]
+}
