@@ -1,0 +1,282 @@
+{
+  "version": "1.0",
+  "description": "Bilingual (EN/ZH) epistemic hedge strength tiers, causal vs correlational markers, and polarity/quantifier anchors for semantic-conservation auditing.",
+  "epistemic_tiers": {
+    "1_tentative": {
+      "level": 1,
+      "label": "tentative_speculative",
+      "en_patterns": [
+        "\\bmay\\b",
+        "\\bmight\\b",
+        "\\bcould\\b",
+        "\\bpossibly\\b",
+        "\\bperhaps\\b",
+        "\\bplausibly\\b",
+        "\\bpotentially\\b",
+        "\\bspeculate[sd]?\\b",
+        "\\bhypothesize[sd]?\\b",
+        "\\btentative(?:ly)?\\b",
+        "\\braises? the possibility\\b"
+      ],
+      "zh_patterns": [
+        "可能",
+        "或许",
+        "也许",
+        "推测",
+        "疑似",
+        "有待进一步验证",
+        "初步推测"
+      ]
+    },
+    "2_hedged_inference": {
+      "level": 2,
+      "label": "hedged_inference",
+      "en_patterns": [
+        "\\bsuggests?\\b",
+        "\\bindicates?\\b",
+        "\\bappears? to\\b",
+        "\\bseems? to\\b",
+        "\\btends? to\\b",
+        "\\bprobably\\b",
+        "\\blikely\\b",
+        "\\bin most cases\\b",
+        "\\bunder (?:these|certain|specific) conditions\\b",
+        "\\bto some extent\\b",
+        "\\bpartially\\b",
+        "\\bprimarily\\b",
+        "\\blargely\\b",
+        "\\bpredominantly\\b",
+        "\\bconsistent with\\b"
+      ],
+      "zh_patterns": [
+        "表明",
+        "提示",
+        "倾向于",
+        "似乎",
+        "在一定程度上",
+        "主要",
+        "大多",
+        "初步表明",
+        "部分"
+      ]
+    },
+    "3_observational_neutral": {
+      "level": 3,
+      "label": "observational_neutral",
+      "en_patterns": [
+        "\\bobserved\\b",
+        "\\bfound\\b",
+        "\\bshowed\\b",
+        "\\bexhibited\\b",
+        "\\breported\\b",
+        "\\bmeasured\\b",
+        "\\bgenerally\\b",
+        "\\btypically\\b",
+        "\\boften\\b"
+      ],
+      "zh_patterns": [
+        "观察到",
+        "发现",
+        "显示",
+        "测得",
+        "通常",
+        "一般而言"
+      ]
+    },
+    "4_strong_claim": {
+      "level": 4,
+      "label": "strong_empirical_claim",
+      "en_patterns": [
+        "\\bdemonstrates?\\b",
+        "\\bconfirms?\\b",
+        "\\bestablishes?\\b",
+        "\\bclearly shows?\\b",
+        "\\bsubstantially\\b",
+        "\\bsignificantly\\b"
+      ],
+      "zh_patterns": [
+        "证实",
+        "确证",
+        "明确表明",
+        "显著"
+      ]
+    },
+    "5_absolute_universal": {
+      "level": 5,
+      "label": "absolute_universal",
+      "en_patterns": [
+        "\\bproves?\\b",
+        "\\bdefinitely\\b",
+        "\\bundoubtedly\\b",
+        "\\bcertainly\\b",
+        "\\balways\\b",
+        "\\bnever\\b",
+        "\\bguarantee[sd]?\\b",
+        "\\bcompletely\\b",
+        "\\bentirely\\b",
+        "\\binvariably\\b",
+        "\\birrefutably\\b",
+        "\\bunquestionably\\b",
+        "\\b100%\\b"
+      ],
+      "zh_patterns": [
+        "证明了",
+        "绝对",
+        "必然",
+        "毫无疑问",
+        "肯定",
+        "完全",
+        "彻底",
+        "始终",
+        "永远",
+        "首次彻底解决"
+      ]
+    }
+  },
+  "causality_markers": {
+    "causal": {
+      "en": [
+        "\\bcauses?\\b",
+        "\\bcaused\\b",
+        "\\bleads? to\\b",
+        "\\bled to\\b",
+        "\\bresults? in\\b",
+        "\\bresulted in\\b",
+        "\\binduces?\\b",
+        "\\binduced\\b",
+        "\\bdrives?\\b",
+        "\\bdrove\\b",
+        "\\btriggers?\\b",
+        "\\btriggered\\b",
+        "\\bgenerates?\\b",
+        "\\bproduces?\\b",
+        "\\bdetermines?\\b"
+      ],
+      "zh": [
+        "导致",
+        "引起",
+        "引发",
+        "促使",
+        "造成",
+        "决定",
+        "诱发"
+      ]
+    },
+    "correlational": {
+      "en": [
+        "\\bassociated with\\b",
+        "\\bcorrelated with\\b",
+        "\\blinked to\\b",
+        "\\brelated to\\b",
+        "\\bco-occurs? with\\b",
+        "\\baccompanied by\\b",
+        "\\bcovaries? with\\b"
+      ],
+      "zh": [
+        "相关",
+        "关联",
+        "伴随",
+        "有关",
+        "呈正相关",
+        "呈负相关"
+      ]
+    }
+  },
+  "negation_markers": {
+    "en": [
+      "\\bnot\\b",
+      "\\bn't\\b",
+      "\\bno\\b",
+      "\\bnever\\b",
+      "\\bneither\\b",
+      "\\bnor\\b",
+      "\\bnone\\b",
+      "\\bwithout\\b",
+      "\\bfail(?:ed|s)? to\\b",
+      "\\black(?:ed|s)?\\b",
+      "\\babsence of\\b",
+      "\\bunable to\\b",
+      "\\bhardly\\b",
+      "\\bscarcely\\b",
+      "\\brarely\\b",
+      "\\bseldom\\b",
+      "\\binsignificant\\b",
+      "\\bno significant\\b"
+    ],
+    "zh": [
+      "不",
+      "未",
+      "没有",
+      "并非",
+      "非",
+      "无",
+      "缺乏",
+      "难以",
+      "未能",
+      "极少",
+      "几乎不",
+      "不显著"
+    ]
+  },
+  "conditional_and_quantifier_markers": {
+    "conditional_en": [
+      "\\bif\\b",
+      "\\bunless\\b",
+      "\\bprovided that\\b",
+      "\\bonly when\\b",
+      "\\bonly if\\b",
+      "\\bexcept\\b",
+      "\\bwhereas\\b",
+      "\\balthough\\b",
+      "\\bthough\\b",
+      "\\bdespite\\b",
+      "\\bin spite of\\b",
+      "\\bwhile\\b"
+    ],
+    "conditional_zh": [
+      "如果",
+      "若",
+      "除非",
+      "仅当",
+      "只有当",
+      "除了",
+      "尽管",
+      "虽然",
+      "然而",
+      "但是"
+    ],
+    "quantifier_en": [
+      "\\ball\\b",
+      "\\bevery\\b",
+      "\\beach\\b",
+      "\\bmost\\b",
+      "\\bmajority\\b",
+      "\\bsome\\b",
+      "\\bseveral\\b",
+      "\\bfew\\b",
+      "\\ba few\\b",
+      "\\bonly\\b",
+      "\\bsolely\\b",
+      "\\bexclusively\\b",
+      "\\bat least\\b",
+      "\\bat most\\b",
+      "\\bapproximately\\b",
+      "\\broughly\\b"
+    ],
+    "quantifier_zh": [
+      "所有",
+      "全部",
+      "每个",
+      "多数",
+      "大部分",
+      "部分",
+      "少数",
+      "仅",
+      "只",
+      "至少",
+      "至多",
+      "约",
+      "大约"
+    ]
+  }
+}

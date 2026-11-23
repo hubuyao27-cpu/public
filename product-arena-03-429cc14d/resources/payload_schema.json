@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AcademicCitationDecisionsPayload",
+  "type": "object",
+  "required": ["target_style", "claim_insertions", "existing_citation_audits"],
+  "properties": {
+    "target_style": {
+      "type": "string",
+      "enum": ["gbt7714_numeric", "gbt7714_author_year", "apa7", "ieee", "nature", "vancouver", "chicago_author_year"]
+    },
+    "retain_uncited_library": { "type": "boolean" },
+    "summary": { "type": "string" },
+    "dedup_overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate_pair", "decision", "rationale"],
+        "properties": {
+          "candidate_pair": { "type": "array", "items": { "type": "string" } },
+          "decision": { "type": "string", "enum": ["merge", "keep_separate"] },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "section_reorder": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional ordered list of section names if the task requests reordering or merging sections."
+    },
+    "claim_insertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sentence_id", "anchor_phrase", "placement_mode", "ref_ids", "match_verdict", "match_evidence", "rationale"],
+        "properties": {
+          "sentence_id": { "type": "string" },
+          "anchor_phrase": { "type": "string" },
+          "placement_mode": { "type": "string", "enum": ["after_phrase", "before_clause_punct", "sentence_end"] },
+          "ref_ids": { "type": "array", "items": { "type": "string" } },
+          "match_verdict": { "type": "string", "enum": ["supported", "partially_supported", "mismatch_or_unsupported", "insufficient_source_text", "unresolved_ref"] },
+          "match_evidence": { "type": "string" },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "existing_citation_audits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["citation_point_id", "sentence_id", "old_marker", "resolved_ref_ids", "action", "match_verdict", "match_evidence", "rationale"],
+        "properties": {
+          "citation_point_id": { "type": "string" },
+          "sentence_id": { "type": "string" },
+          "old_marker": { "type": "string" },
+          "resolved_ref_ids": { "type": "array", "items": { "type": "string" } },
+          "action": { "type": "string", "enum": ["keep", "replace", "remove", "flag_unresolved"] },
+          "match_verdict": { "type": "string", "enum": ["supported", "partially_supported", "mismatch_or_unsupported", "insufficient_source_text", "unresolved_ref"] },
+          "match_evidence": { "type": "string" },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "metadata_corrections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_id", "field", "old_value", "new_value", "evidence_source"],
+        "properties": {
+          "ref_id": { "type": "string" },
+          "field": { "type": "string" },
+          "old_value": { "type": "string" },
+          "new_value": { "type": "string" },
+          "evidence_source": { "type": "string" }
+        }
+      }
+    },
+    "uncertainty": { "type": "array", "items": { "type": "string" } },
+    "author_confirmation_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "target", "issue_type", "question", "options", "current_handling"],
+        "properties": {
+          "id": { "type": "string" },
+          "target": { "type": "string" },
+          "issue_type": { "type": "string" },
+          "question": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "current_handling": { "type": "string" }
+        }
+      }
+    },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "contract_overrides": { "type": "object" }
+  }
+}

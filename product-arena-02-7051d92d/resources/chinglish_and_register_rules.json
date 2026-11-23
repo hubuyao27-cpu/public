@@ -1,0 +1,119 @@
+{
+  "version": "1.0",
+  "description": "Diagnostics for Chinglish / translationese, promotional/colloquial register violations, and CJK-ASCII punctuation mechanics.",
+  "chinglish_patterns": [
+    {
+      "id": "CHINGLISH-01",
+      "pattern": "\\bwith the (?:rapid )?development of\\b",
+      "issue": "Empty stock opener ('with the development of'); replace with domain-specific motivation or direct subject.",
+      "suggestion": "Start directly with the specific technological trend or problem."
+    },
+    {
+      "id": "CHINGLISH-02",
+      "pattern": "\\bmore and more\\b",
+      "issue": "Informal Chinese-to-English literal phrasing ('越来越').",
+      "suggestion": "Use 'increasingly', 'a growing number of', or 'increasing' as grammatically appropriate."
+    },
+    {
+      "id": "CHINGLISH-03",
+      "pattern": "\\bplay an? (?:important|vital|crucial|key) role in\\b",
+      "issue": "Overused translationese ('在……中发挥重要作用') when a precise verb fits better.",
+      "suggestion": "Consider a direct mechanism verb (e.g., 'regulates', 'governs', 'stabilizes') if supported by context."
+    },
+    {
+      "id": "CHINGLISH-04",
+      "pattern": "\\bit is well known that\\b",
+      "issue": "Empty assertion ('众所周知') without citation.",
+      "suggestion": "State the established fact directly with appropriate hedging or citation."
+    },
+    {
+      "id": "CHINGLISH-05",
+      "pattern": "\\battracted (?:widespread|great|extensive|much) attention\\b",
+      "issue": "Stock hype opener ('引起了广泛关注'); acceptable once in broad Intro, often redundant.",
+      "suggestion": "Focus on why the phenomenon is scientifically significant."
+    },
+    {
+      "id": "CHINGLISH-06",
+      "pattern": "\\bmake (?:a )?(?:great|significant|important) contributions? to\\b",
+      "issue": "Literal phrasing ('做出重要贡献').",
+      "suggestion": "Use 'contributes substantially to' or 'advances'."
+    },
+    {
+      "id": "CHINGLISH-07",
+      "pattern": "\\b(?:conduct|perform|carry out) an? (?:investigation|analysis|study|evaluation|research) (?:of|on)\\b",
+      "issue": "Redundant nominalization.",
+      "suggestion": "Prefer direct active/passive verb ('investigated', 'analyzed', 'evaluated')."
+    },
+    {
+      "id": "CHINGLISH-08",
+      "pattern": "\\bin recent years,\\s*many researchers\\b",
+      "issue": "Formulaic opener.",
+      "suggestion": "Lead with the research gap or specific advance."
+    },
+    {
+      "id": "CHINGLISH-09",
+      "pattern": "\\b(?:researches|equipments|informations|evidences|literatures|datas|softwares)\\b",
+      "issue": "Uncountable academic noun used in plural form.",
+      "suggestion": "Use singular uncountable noun or 'studies / instruments / data sets / literature'."
+    },
+    {
+      "id": "CHINGLISH-10",
+      "pattern": "\\baccording to our knowledge\\b|\\bto the best of our knowledges\\b",
+      "issue": "Non-idiomatic phrase.",
+      "suggestion": "Use 'to our knowledge' or 'to the best of our knowledge'."
+    },
+    {
+      "id": "CHINGLISH-11",
+      "pattern": "\\bthere are many (?:reasons|factors|scholars) (?:that|which|who)\\b",
+      "issue": "Wordy existential 'there are' construction.",
+      "suggestion": "Promote the real subject or condense clause."
+    },
+    {
+      "id": "CHINGLISH-12",
+      "pattern": "\\bas shown in Figure \\d+,\\s*it\\b|\\bfrom Table \\d+,\\s*we can see\\b",
+      "issue": "Redundant 'we can see' / dangling subject after figure reference.",
+      "suggestion": "Use 'Figure X shows that ...' or 'As shown in Table Y, ...'."
+    }
+  ],
+  "colloquial_and_promotional_flags": {
+    "en": [
+      "\\bvery (?:good|bad|big|small|important|high|low|fast|slow)\\b",
+      "\\ba lot of\\b",
+      "\\blots of\\b",
+      "\\bkind of\\b",
+      "\\bsort of\\b",
+      "\\bpretty much\\b",
+      "\\bgot\\b",
+      "\\bthings\\b",
+      "\\bstuff\\b",
+      "\\bhuge\\b",
+      "\\bamazing\\b",
+      "\\brevolutionary\\b",
+      "\\bgroundbreaking\\b",
+      "\\bgame-changing\\b",
+      "\\bunprecedented\\b",
+      "\\bworld-leading\\b",
+      "\\bperfect(?:ly)?\\b",
+      "\\bcan't\\b|\\bdon't\\b|\\bwon't\\b|\\bisn't\\b|\\baren't\\b|\\bwasn't\\b|\\bweren't\\b"
+    ],
+    "zh": [
+      "国际领先",
+      "世界首创",
+      "填补了国内空白",
+      "彻底解决了",
+      "非常好",
+      "特别棒",
+      "搞清楚",
+      "做一下",
+      "差不多",
+      "显而易见的是"
+    ]
+  },
+  "punctuation_and_mechanics": {
+    "double_spaces": " {2,}",
+    "space_before_en_punct": "\\s+[,.;:?!](?!\\d)",
+    "missing_space_after_en_punct": "[,;](?=[A-Za-z])",
+    "zh_halfwidth_comma_period": "[\\u4e00-\\u9fff][,.?!:;][\\u4e00-\\u9fff]",
+    "en_fullwidth_punct": "[A-Za-z][，。；：？！][A-Za-z]"
+  }
+}

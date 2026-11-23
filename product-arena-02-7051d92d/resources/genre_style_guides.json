@@ -1,0 +1,88 @@
+{
+  "version": "1.0",
+  "genres": {
+    "journal_article": {
+      "label": "Peer-Reviewed Journal Manuscript (期刊论文)",
+      "tone": "Objective, concise, restrained, evidence-led; zero promotional hype or colloquialisms.",
+      "tense_guidance": {
+        "abstract": "Past for methods/findings; present for established facts and conclusions.",
+        "introduction": "Present for established background; present perfect for research trends; past for specific prior studies.",
+        "methods": "Past tense (passive or 'We + past verb' per journal style).",
+        "results": "Past tense for observations; present tense when pointing to figures/tables ('Figure 2 shows...').",
+        "discussion": "Present for interpretation/implications; past for own findings; preserve all hedges."
+      },
+      "person": "Third person or restrained 'we' (never 'you' or casual 'I think'); avoid 'we can see'.",
+      "constraints": [
+        "No contractions (don't -> do not).",
+        "Preserve exact hedge tiers and correlation vs causation boundaries.",
+        "Enforce Full Term (ACR) on first occurrence."
+      ]
+    },
+    "thesis_dissertation": {
+      "label": "Graduate Thesis / Dissertation (学位论文)",
+      "tone": "Formal, thorough, structurally explicit, neutral academic prose.",
+      "tense_guidance": {
+        "zh": "Formal Chinese academic prose ('本研究采用……', avoid '我们做了……' colloquialisms); unified full-width Chinese punctuation.",
+        "en": "Consistent past for experimental/computational work; present for definitions and chapter roadmaps."
+      },
+      "person": "Use '本研究/本文' (ZH) or 'this thesis/this work/we' (EN); avoid subjective exclamations.",
+      "constraints": [
+        "Maintain strict cross-chapter terminology consistency.",
+        "Preserve section/chapter/figure/table cross-reference labels."
+      ]
+    },
+    "grant_proposal": {
+      "label": "Research Grant Proposal (基金申请书，如 NSFC / NIH / ERC)",
+      "tone": "Persuasive yet rigorous and verifiable; forward-looking hypotheses clearly distinguished from established preliminary data.",
+      "tense_guidance": {
+        "background_and_preliminary": "Present/past for established literature and preliminary results.",
+        "proposed_aims": "Future or intentional ('will investigate', 'aims to clarify', '拟开展……', '旨在揭示……')."
+      },
+      "person": "'The applicant / our group / 本课题组 / 本项目' appropriate; avoid empty slogans ('国际领先', 'breakthrough') unless backed by concrete metrics.",
+      "constraints": [
+        "Eliminate Chinese-to-English literal translationese when translating proposals.",
+        "Put specific scientific mechanisms and measurable endpoints before generic background."
+      ]
+    },
+    "reviewer_response": {
+      "label": "Point-by-Point Reviewer Response / Rebuttal (审稿回复)",
+      "tone": "Courteous, appreciative, direct, evidence-backed, non-defensive.",
+      "tense_guidance": {
+        "acknowledgment": "Present ('We thank the reviewer for this insightful comment.').",
+        "revisions_made": "Present perfect / past ('We have added...', 'Section 2.3 now states...')."
+      },
+      "person": "First-person plural ('We') preferred; avoid sycophantic excess or dismissive phrasing.",
+      "constraints": [
+        "Preserve exact quote/line/page pointers to manuscript revisions.",
+        "Do not overclaim beyond the added evidence."
+      ]
+    },
+    "english_abstract": {
+      "label": "Standalone English Abstract (英文摘要)",
+      "tone": "High information density, concise, zero filler openers, clear Background-Objective-Methods-Results-Conclusion arc.",
+      "tense_guidance": {
+        "background": "Present.",
+        "methods_results": "Past.",
+        "conclusion": "Present with exact original epistemic hedging."
+      },
+      "person": "Third person or restrained 'we'; eliminate 'In this paper, we mainly studied...'.",
+      "constraints": [
+        "Strictly conserve every quantitative metric, p-value, sample size, and hedge qualifier.",
+        "Minimize wordiness while retaining all boundary conditions."
+      ]
+    },
+    "bilingual_zh_en": {
+      "label": "Bilingual Chinese-English Polishing & Alignment (中英双语润色与对照)",
+      "tone": "Formal academic register in both Chinese and English with 1:1 terminology and semantic alignment.",
+      "tense_guidance": {
+        "zh": "Natural academic Chinese ('本文研究了……', '结果表明……'), avoiding English-syntax calques.",
+        "en": "Natural academic English restructuring topic-prominent Chinese clauses into clear English subjects and active/passive verbs."
+      },
+      "person": "Consistent across both language tracks.",
+      "constraints": [
+        "Maintain bidirectional bilingual glossary equivalence.",
+        "Re-arrange subject/information focus when translating ZH->EN rather than word-for-word calques."
+      ]
+    }
+  }
+}

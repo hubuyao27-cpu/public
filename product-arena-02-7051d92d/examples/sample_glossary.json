@@ -1,0 +1,19 @@
+{
+  "note": "ILLUSTRATIVE EXAMPLE ONLY — NOT A FORMAL BENCHMARK CASE",
+  "terms": [
+    {
+      "canonical_en": "faradaic efficiency",
+      "canonical_zh": "法拉第效率",
+      "acronym": "FE",
+      "avoid": ["Faraday efficiency"],
+      "note": "Use lowercase 'faradaic efficiency (FE)' on first mention."
+    },
+    {
+      "canonical_en": "reversible hydrogen electrode",
+      "canonical_zh": "可逆氢电极",
+      "acronym": "RHE",
+      "avoid": [],
+      "note": "Standard potential reference."
+    }
+  ]
+}

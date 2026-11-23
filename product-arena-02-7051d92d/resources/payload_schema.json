@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AcademicLanguagePolisherPayload",
+  "type": "object",
+  "required": ["status", "genre", "language", "edit_intensity", "sentences", "glossary_final"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "unable_to_determine", "not_applicable_qa"]
+    },
+    "genre": {
+      "type": "string",
+      "enum": ["journal_article", "thesis_dissertation", "grant_proposal", "reviewer_response", "english_abstract", "bilingual_zh_en"]
+    },
+    "language": {
+      "type": "string",
+      "enum": ["en", "zh", "bilingual"]
+    },
+    "edit_intensity": {
+      "type": "string",
+      "enum": ["minimal", "standard", "substantive"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sentence_id", "paragraph_id", "section", "original", "polished", "changed", "edit_types", "rationale"],
+        "properties": {
+          "sentence_id": { "type": "string", "pattern": "^P\\d+\\.S\\d+$" },
+          "paragraph_id": { "type": "string", "pattern": "^P\\d+$" },
+          "section": { "type": "string" },
+          "original": { "type": "string" },
+          "polished": { "type": "string" },
+          "changed": { "type": "boolean" },
+          "edit_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "unchanged",
+                "grammar_syntax",
+                "article_preposition",
+                "tense_voice",
+                "punctuation_mechanics",
+                "terminology_consistency",
+                "abbreviation_expansion",
+                "academic_register",
+                "chinglish_translationese",
+                "sentence_splitting_flow",
+                "bilingual_alignment"
+              ]
+            }
+          },
+          "rationale": { "type": "string" },
+          "needs_human_confirmation": { "type": "boolean" },
+          "confirmation_question": { "type": "string" }
+        }
+      }
+    },
+    "glossary_final": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["canonical_en", "canonical_zh", "acronym", "allowed_variants", "first_occurrence_rule", "note"],
+        "properties": {
+          "canonical_en": { "type": "string" },
+          "canonical_zh": { "type": "string" },
+          "acronym": { "type": "string" },
+          "allowed_variants": { "type": "array", "items": { "type": "string" } },
+          "first_occurrence_rule": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "bilingual_alignment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sentence_id": { "type": "string" },
+          "zh_text": { "type": "string" },
+          "en_text": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "author_confirmation_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "sentence_id", "issue_type", "question", "options", "current_handling"],
+        "properties": {
+          "id": { "type": "string" },
+          "sentence_id": { "type": "string" },
+          "issue_type": { "type": "string" },
+          "question": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "current_handling": { "type": "string" }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "contract_overrides": {
+      "type": "object"
+    }
+  }
+}

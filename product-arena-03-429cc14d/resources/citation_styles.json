@@ -1,0 +1,114 @@
+{
+  "version": "1.0",
+  "styles": {
+    "gbt7714_numeric": {
+      "label": "GB/T 7714—2015 Sequential Numeric (顺序编码制)",
+      "system": "numeric",
+      "in_text_format": "[{nums}]",
+      "range_compress": true,
+      "range_sep": "-",
+      "max_authors": 3,
+      "et_al_zh": "等",
+      "et_al_en": "et al",
+      "type_codes": {
+        "journal_article": "[J]",
+        "conference_paper": "[C]",
+        "book": "[M]",
+        "book_chapter": "[M]",
+        "thesis": "[D]",
+        "report": "[R]",
+        "standard": "[S]",
+        "patent": "[P]",
+        "preprint": "[EB/OL]",
+        "web": "[EB/OL]",
+        "misc": "[Z]"
+      },
+      "rules": [
+        "Western author names formatted as SURNAME Initials (e.g., SMITH J A).",
+        "Up to 3 authors listed; >3 authors truncated after 3rd with ', 等' (ZH) or ', et al' (EN).",
+        "Document type indicator [J]/[C]/[M]/[D]/[R]/[EB/OL] appended immediately after title.",
+        "Proceedings entries include '//Proceedings Title' before place/year/pages.",
+        "Include DOI at end when available without inventing missing DOIs."
+      ]
+    },
+    "gbt7714_author_year": {
+      "label": "GB/T 7714—2015 Author-Year (著者—出版年制)",
+      "system": "author_year",
+      "in_text_format": "({label})",
+      "range_compress": false,
+      "max_authors": 3,
+      "et_al_zh": "等",
+      "et_al_en": "et al",
+      "rules": [
+        "In-text label uses (FirstAuthor, Year) or (Author1, Author2, Year) for 2 authors, and (FirstAuthor 等, Year) / (FirstAuthor et al., Year) for 3+.",
+        "Bibliography sorted alphabetically by first author surname (or pinyin/stroke), then year with a/b disambiguation."
+      ]
+    },
+    "apa7": {
+      "label": "APA 7th Edition",
+      "system": "author_year",
+      "in_text_format": "({label})",
+      "range_compress": false,
+      "max_authors": 20,
+      "et_al_en": "et al.",
+      "rules": [
+        "In-text: 1 author (Smith, 2021); 2 authors (Smith & Lee, 2021); 3+ authors (Smith et al., 2021).",
+        "Same first author and year disambiguated deterministically as 2021a, 2021b in bibliography order.",
+        "Reference list lists up to 20 authors (Surname, F. M.), separated by '&' before the final author.",
+        "Append https://doi.org/<doi> when DOI is present."
+      ]
+    },
+    "ieee": {
+      "label": "IEEE Reference Style",
+      "system": "numeric",
+      "in_text_format": "[{nums}]",
+      "range_compress": true,
+      "range_sep": "]–[",
+      "max_authors": 6,
+      "et_al_en": "et al.",
+      "rules": [
+        "Authors formatted as 'F. M. Surname'; >6 authors truncated to first author + 'et al.'.",
+        "Article title enclosed in quotation marks with trailing comma inside quotes.",
+        "Format: Authors, \"Title,\" Journal, vol. X, no. Y, pp. Z–W, Year, doi: ... ."
+      ]
+    },
+    "nature": {
+      "label": "Nature Portfolio Numeric Style",
+      "system": "numeric",
+      "in_text_format": "[{nums}]",
+      "range_compress": true,
+      "range_sep": "–",
+      "max_authors": 5,
+      "et_al_en": "et al.",
+      "rules": [
+        "Numeric sequential markers; up to 5 authors listed before 'et al.'.",
+        "Format: Surname, F. M. et al. Title. *Journal* **vol**, pages (Year)."
+      ]
+    },
+    "vancouver": {
+      "label": "Vancouver / ICMJE Numeric Style",
+      "system": "numeric",
+      "in_text_format": "[{nums}]",
+      "range_compress": true,
+      "range_sep": "-",
+      "max_authors": 6,
+      "et_al_en": "et al",
+      "rules": [
+        "Authors as 'Surname FM'; up to 6 authors + 'et al'.",
+        "Format: Authors. Title. Journal. Year;Vol(Issue):Pages. doi:..."
+      ]
+    },
+    "chicago_author_year": {
+      "label": "Chicago Manual of Style (Author-Date)",
+      "system": "author_year",
+      "in_text_format": "({label})",
+      "range_compress": false,
+      "max_authors": 10,
+      "et_al_en": "et al.",
+      "rules": [
+        "In-text: (Smith 2021), (Smith and Lee 2021), or (Smith et al. 2021) for 4+ authors.",
+        "Reference list: First author 'Surname, First', subsequent 'First Surname'."
+      ]
+    }
+  }
+}
