@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "source_precedence": {
+    "published_peer_reviewed": 100,
+    "wos_scopus_crossref": 90,
+    "bibtex_ris_csl": 80,
+    "cnki_endnote": 75,
+    "local_pdf_metadata": 70,
+    "preprint_arxiv_biorxiv": 50,
+    "manuscript_inline_ref": 30
+  },
+  "preprint_venue_patterns": [
+    "arxiv",
+    "biorxiv",
+    "medrxiv",
+    "chemrxiv",
+    "ssrn",
+    "research square",
+    "preprint",
+    "corr",
+    "chinaxiv",
+    "osf preprints"
+  ],
+  "thresholds": {
+    "tier1_identifier_title_coherence_min": 0.30,
+    "tier2_preprint_published_title_sim_min": 0.88,
+    "tier2_preprint_published_author_overlap_min": 0.50,
+    "tier2_preprint_published_max_year_gap": 3,
+    "tier2_cross_db_title_sim_min": 0.90,
+    "tier2_cross_db_author_overlap_min": 0.50,
+    "tier2_cross_db_max_year_gap": 1,
+    "tier3_conference_journal_title_sim_min": 0.72,
+    "tier3_conference_journal_title_sim_max": 0.90,
+    "tier3_bilingual_max_year_gap": 1,
+    "anti_false_merge_title_sim_floor": 0.70
+  },
+  "merge_policy": {
+    "auto_merge_tiers": [
+      "tier1_exact_identifier",
+      "tier2_preprint_to_published",
+      "tier2_cross_db_strong_metadata",
+      "tier2_bilingual_with_doi_or_locator"
+    ],
+    "human_or_agent_review_tiers": [
+      "tier3_conference_vs_journal_extension",
+      "tier3_suspected_bilingual_pair"
+    ],
+    "never_auto_merge_conditions": [
+      "distinct_valid_dois_unless_preprint_arxiv_doi_vs_published_doi",
+      "same_volume_non_overlapping_numeric_pages",
+      "recycled_or_conflicting_doi_title_sim_below_0.30",
+      "title_sim_below_0.70_same_script_without_shared_identifier"
+    ]
+  }
+}
