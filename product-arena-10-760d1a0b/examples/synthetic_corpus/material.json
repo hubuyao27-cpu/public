@@ -1,0 +1,48 @@
+{
+  "_synthetic_example_only": true,
+  "description": "Aggregated paragraph index across primary-material.json and secondary-material.json.",
+  "paragraphs": [
+    {
+      "source_id": "paper_primary",
+      "paragraph_id": "p1-abs-1",
+      "section": "Abstract",
+      "text": "We synthesized a hollow porous Ni-N-C catalyst (HP-Ni-N-C) via pyrolysis at 900 C for CO2 electroreduction (CO2RR) in an H-cell with 0.5 M KHCO3 electrolyte."
+    },
+    {
+      "source_id": "paper_primary",
+      "paragraph_id": "p1-meth-1",
+      "section": "Methods",
+      "text": "Online mass spectrometry (MS) and gas chromatography were applied to quantify CO product selectivity and Faradaic efficiency (FE) across applied potentials."
+    },
+    {
+      "source_id": "paper_primary",
+      "paragraph_id": "p1-res-1",
+      "section": "Results",
+      "text": "HP-Ni-N-C achieved a Faradaic efficiency of 91.5% for CO at -0.8 V vs RHE in 0.5 M KHCO3 and maintained stable electrolysis for 40 h without noticeable flooding."
+    },
+    {
+      "source_id": "paper_primary",
+      "paragraph_id": "p1-disc-1",
+      "section": "Discussion",
+      "text": "In prior literature, Smith et al. reported that a Cu-N-C baseline reached 78.0% FE for CO under bicarbonate conditions; we hypothesize that hollow mesopores suppress local salt precipitation."
+    },
+    {
+      "source_id": "paper_secondary",
+      "paragraph_id": "p2-abs-1",
+      "section": "Abstract",
+      "text": "A planar Ni-N-C catalyst (P-Ni-N-C) pyrolyzed at 800 C was evaluated for CO2RR in a gas-diffusion flow cell using 1.0 M KOH electrolyte."
+    },
+    {
+      "source_id": "paper_secondary",
+      "paragraph_id": "p2-meth-1",
+      "section": "Methods",
+      "text": "An anion-exchange membrane separator (MS) separated the catholyte and anolyte chambers at a flow rate of 10-3 m3/h."
+    },
+    {
+      "source_id": "paper_secondary",
+      "paragraph_id": "p2-res-1",
+      "section": "Results",
+      "text": "P-Ni-N-C delivered an initial FE of 94.2% at -0.6 V vs RHE and 200 mA cm-2, outperforming commercial Ag nanoparticles (83.1% FE) under identical 1.0 M KOH flow-cell conditions, but suffered electrolyte flooding after 12 h (see Figure S2 for raw impedance curves)."
+    }
+  ]
+}

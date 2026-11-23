@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article>
+  <front>
+    <article-meta>
+      <article-id pub-id-type="doi">10.9999/synth.secondary.2026.002</article-id>
+      <title-group>
+        <article-title>Planar Ni-N-C Electrodes in Alkaline Flow Cells for High-Rate CO<sub>2</sub>RR</article-title>
+      </title-group>
+      <contrib-group>
+        <contrib contrib-type="author"><name><surname>Patel</surname><given-names>R.</given-names></name></contrib>
+        <contrib contrib-type="author"><name><surname>Weber</surname><given-names>S.</given-names></name></contrib>
+      </contrib-group>
+    </article-meta>
+  </front>
+  <body>
+    <abstract>
+      <p id="p2-abs-1">A planar Ni-N-C catalyst (P-Ni-N-C) pyrolyzed at 800 C was evaluated for CO<sub>2</sub>RR in a gas-diffusion flow cell using 1.0 M KOH electrolyte.</p>
+    </abstract>
+    <sec>
+      <title>Methods</title>
+      <p id="p2-meth-1">An anion-exchange membrane separator (MS) separated the catholyte and anolyte chambers at a flow rate of 10<sup>-3</sup> m<sup>3</sup>/h.</p>
+    </sec>
+    <sec>
+      <title>Results</title>
+      <p id="p2-res-1">P-Ni-N-C delivered an initial <inline-formula><tex-math>FE_{\mathrm{CO}} = 94.2\%</tex-math></inline-formula> at -0.6 V vs RHE and 200 mA cm<sup>-2</sup>, outperforming commercial Ag nanoparticles (83.1% FE) under identical 1.0 M KOH flow-cell conditions, but suffered electrolyte flooding after 12 h (see Figure S2 for raw impedance curves).</p>
+      <table-wrap id="tbl1">
+        <label>Table 1</label>
+        <caption><p>Flow-cell CO<sub>2</sub>RR comparison in 1.0 M KOH at -0.6 V vs RHE.</p></caption>
+        <table>
+          <tr><th>Catalyst</th><th>FE<sub>CO</sub> (%)</th><th>j (mA cm<sup>-2</sup>)</th><th>Stability (h)</th></tr>
+          <tr><td>P-Ni-N-C</td><td>94.2</td><td>200</td><td>12 (flooding onset)</td></tr>
+          <tr><td>Commercial Ag NPs</td><td>83.1</td><td>200</td><td>Not reported</td></tr>
+        </table>
+      </table-wrap>
+    </sec>
+  </body>
+</article>

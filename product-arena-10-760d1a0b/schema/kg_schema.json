@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verifiable Multi-Paper Literature Knowledge Graph Schema",
+  "schema_version": "1.0.0",
+  "description": "Domain-agnostic, provenance-bound scientific literature knowledge graph ontology with two-tier entity alignment (Concept vs ScopedInstance), explicit non-merge/conflict tracking, and incremental update guarantees.",
+  "controlled_vocabularies": {
+    "entity_types": [
+      "Researcher",
+      "Material",
+      "Method",
+      "Task",
+      "Metric",
+      "Conclusion",
+      "Dataset_Or_Sample",
+      "Concept"
+    ],
+    "relation_types": [
+      "USES",
+      "EVALUATED_ON",
+      "MEASURES",
+      "REPORTS_METRIC",
+      "COMPARES",
+      "OUTPERFORMS",
+      "SUPPORTS",
+      "CONTRADICTS",
+      "DERIVES_FROM",
+      "PART_OF",
+      "APPLIED_TO",
+      "ASSOCIATED_WITH",
+      "INSTANTIATES_CONCEPT",
+      "CITES_PRIOR_CLAIM"
+    ],
+    "conditional_relations_requiring_conditions": [
+      "OUTPERFORMS",
+      "SUPPORTS",
+      "CONTRADICTS",
+      "COMPARES",
+      "REPORTS_METRIC"
+    ],
+    "attribution_types": [
+      "author_direct_result",
+      "author_method_statement",
+      "cited_prior_work",
+      "speculation_or_hypothesis"
+    ],
+    "evidence_strengths": [
+      "strong_direct",
+      "moderate_indirect",
+      "cited_secondary",
+      "weak_speculative"
+    ],
+    "locator_types": [
+      "jats_paragraph_id",
+      "pdf_page",
+      "section_line",
+      "xml_element",
+      "manifest_metadata"
+    ],
+    "alignment_verdicts": [
+      "merge_alias",
+      "keep_separate_distinct_instance",
+      "keep_separate_homonym",
+      "uncertain_no_merge"
+    ],
+    "conflict_types": [
+      "cross_paper_numeric_divergence",
+      "cross_paper_conclusion_contradiction",
+      "cross_paper_condition_mismatch",
+      "intra_paper_inconsistency",
+      "xml_vs_linearized_text_discrepancy"
+    ],
+    "query_operators": [
+      "entity_neighborhood",
+      "multi_hop_chain",
+      "cross_paper_comparison",
+      "conflict_and_boundary_audit",
+      "evidence_filter",
+      "gap_or_unanswerable_check"
+    ],
+    "run_statuses": [
+      "success",
+      "partial",
+      "unable_to_determine",
+      "refused"
+    ]
+  },
+  "epistemic_rules": [
+    "Every substantive node mention and every edge evidence item MUST bind (source_id, paragraph_id, locator_type, quote) verifiable against the exact paragraph text in corpus_index.json.",
+    "When has_pdf_pages is false, locator_type MUST NOT be pdf_page and no synthetic page 1 may be claimed as an original PDF page.",
+    "Root case.json DOI/title/authors belong ONLY to the primary paper and MUST NOT be applied to secondary papers.",
+    "Multiple file formats (e.g. JSON + Markdown) of the same paper share one paper_group_id and NEVER count as cross-paper evidence.",
+    "Edges with attribution in {cited_prior_work, speculation_or_hypothesis} MUST NOT be assigned evidence_strength == strong_direct.",
+    "Sharing a generic material/method/task term across papers does NOT imply identical physical samples, model instances, datasets, or experimental conditions; keep distinct instances separate via keep_separate_distinct_instance and optionally link via INSTANTIATES_CONCEPT to an abstract Concept node.",
+    "Never collapse experimental conditions, samples, or numeric metrics from two different papers into a single non-comparative edge or single blended conclusion.",
+    "Missing modalities (figure pixels, supplementary attachments, raw clinical/experimental tables) MUST be explicitly recorded in declared_input_boundaries and uncertainty; never fabricate unseen values."
+  ],
+  "node_schema": {
+    "required": [
+      "id",
+      "canonical_name",
+      "entity_type",
+      "scope",
+      "source_ids",
+      "aliases",
+      "mentions"
+    ],
+    "properties": {
+      "id": "Stable deterministic ID: E001, E002, ... (or C001, ... for cross-paper abstract Concept nodes). Preserved across incremental updates.",
+      "canonical_name": "Paper-grounded canonical surface name (for ScopedInstance nodes include source qualifier if needed to prevent ambiguity).",
+      "entity_type": "One of controlled_vocabularies.entity_types.",
+      "scope": "paper_scoped_instance | shared_canonical_entity | abstract_concept",
+      "source_ids": "Sorted list of unique source_ids where this node is grounded.",
+      "aliases": "Sorted list of exact surface forms/abbreviations/case variants observed in the papers.",
+      "attributes": "Optional paper-grounded attributes (e.g. sample composition, sample size, version, units, formula_xml_verified). Never blend attributes across papers.",
+      "mentions": [
+        {
+          "source_id": "Document source_id from corpus_index.json",
+          "paragraph_id": "Exact JATS paragraph_id or locator ID from corpus_index.json",
+          "locator_type": "jats_paragraph_id | pdf_page | section_line | xml_element | manifest_metadata",
+          "section": "Section heading if present",
+          "surface_form": "Exact entity text as written in that paragraph",
+          "quote": "Short verbatim excerpt from that paragraph containing or supporting the entity",
+          "attribution": "author_direct_result | author_method_statement | cited_prior_work | speculation_or_hypothesis",
+          "xml_verified_formula": "Optional exact formula/subscript string reconciled from publisher XML"
+        }
+      ],
+      "first_introduced_in_version": "v1 | v2 | ..."
+    }
+  },
+  "edge_schema": {
+    "required": [
+      "id",
+      "source",
+      "target",
+      "relation_type",
+      "direction",
+      "attribution",
+      "evidence_strength",
+      "conditions",
+      "evidence"
+    ],
+    "properties": {
+      "id": "Stable deterministic ID: R001, R002, ... Preserved across incremental updates.",
+      "source": "Source node ID (must exist in nodes[]).",
+      "target": "Target node ID (must exist in nodes[]).",
+      "relation_type": "One of controlled_vocabularies.relation_types.",
+      "direction": "directed (source -> target)",
+      "attribution": "author_direct_result | author_method_statement | cited_prior_work | speculation_or_hypothesis",
+      "evidence_strength": "strong_direct | moderate_indirect | cited_secondary | weak_speculative",
+      "conditions": "Applicable experimental/clinical/computational conditions, sample/dataset scope, baseline/control, numeric value with units, or explicit 'not_reported_in_source'.",
+      "evidence": [
+        {
+          "source_id": "Document source_id from corpus_index.json",
+          "paragraph_id": "Exact JATS paragraph_id or locator ID",
+          "locator_type": "jats_paragraph_id | pdf_page | section_line | xml_element",
+          "quote": "Short verbatim excerpt directly supporting the relation and direction"
+        }
+      ],
+      "is_cross_paper": "Boolean; true ONLY when evidence spans >=2 distinct paper_group_id values (never same-paper multi-format).",
+      "first_introduced_in_version": "v1 | v2 | ..."
+    }
+  },
+  "alignment_decision_schema": {
+    "required": [
+      "decision_id",
+      "candidate_a",
+      "candidate_b",
+      "verdict",
+      "rationale",
+      "evidence"
+    ],
+    "properties": {
+      "decision_id": "A001, A002, ...",
+      "candidate_a": {
+        "node_id_or_name": "Primary/existing node ID or surface name",
+        "source_id": "source_id of candidate A"
+      },
+      "candidate_b": {
+        "node_id_or_name": "Secondary/new entity temp_id or surface name",
+        "source_id": "source_id of candidate B"
+      },
+      "verdict": "merge_alias | keep_separate_distinct_instance | keep_separate_homonym | uncertain_no_merge",
+      "canonical_target_id": "Target existing node_id when merge_alias; null otherwise",
+      "shared_concept_name": "Optional abstract Concept name when verdict == keep_separate_distinct_instance (creates Concept node + INSTANTIATES_CONCEPT edges without merging instances)",
+      "rationale": "Explicit scientific and textual justification for merging or refusing to merge (e.g. distinct physical sample, different experimental condition, homonym abbreviation, or explicit acronym definition).",
+      "evidence": [
+        {
+          "source_id": "source_id",
+          "paragraph_id": "paragraph_id",
+          "locator_type": "jats_paragraph_id | pdf_page | section_line | xml_element",
+          "quote": "Verbatim excerpt justifying alignment verdict"
+        }
+      ]
+    }
+  }
+}

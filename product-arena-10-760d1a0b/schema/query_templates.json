@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Reusable declarative query templates executed by scripts/query_kg.py directly over kg.json. Every query returns matched_subgraph (node_ids, edge_ids), verbatim supporting_evidence, answer, uncertain_or_unanswerable_relations, and honest status.",
+  "templates": [
+    {
+      "template_id": "QT1_cross_paper_comparison",
+      "operator": "cross_paper_comparison",
+      "purpose": "Compare how two independent papers investigate a shared concept, method family, or material class while explicitly preserving distinct physical samples, conditions, and numeric metrics without collapsing them.",
+      "example_spec": {
+        "query_id": "Q1",
+        "question": "Compare the methods, samples, experimental conditions, and reported metrics across the two papers for shared concepts without merging distinct instances.",
+        "operator": "cross_paper_comparison",
+        "params": {
+          "concept_or_term": "<canonical concept or entity name>",
+          "include_alignment_decisions": true
+        }
+      }
+    },
+    {
+      "template_id": "QT2_multi_hop_provenance_chain",
+      "operator": "multi_hop_chain",
+      "purpose": "Trace a verifiable multi-hop path from Material/Method through Task/Dataset_Or_Sample and Metric to Conclusion, with verbatim paragraph-level provenance on every hop.",
+      "example_spec": {
+        "query_id": "Q2",
+        "question": "Trace verifiable evidence chains from key methods/materials to reported metrics and author conclusions.",
+        "operator": "multi_hop_chain",
+        "params": {
+          "start_types": ["Method", "Material"],
+          "end_types": ["Metric", "Conclusion"],
+          "max_hops": 3,
+          "exclude_attributions": ["cited_prior_work", "speculation_or_hypothesis"]
+        }
+      }
+    },
+    {
+      "template_id": "QT3_conflict_and_boundary_audit",
+      "operator": "conflict_and_boundary_audit",
+      "purpose": "Retrieve all cross-paper or intra-paper contradictions, non-merged distinct instances/homonyms, and cited-vs-direct attribution distinctions.",
+      "example_spec": {
+        "query_id": "Q3",
+        "question": "Which cross-paper or intra-paper conflicts, non-mergeable entity pairs, and secondary/speculative claims exist in the graph?",
+        "operator": "conflict_and_boundary_audit",
+        "params": {
+          "include_non_merges": true,
+          "include_cited_or_speculative": true
+        }
+      }
+    },
+    {
+      "template_id": "QT4_entity_neighborhood",
+      "operator": "entity_neighborhood",
+      "purpose": "Inspect the 1-hop or 2-hop provenance-bound neighborhood of a focal entity (by ID, canonical name, or alias).",
+      "example_spec": {
+        "query_id": "Q4",
+        "question": "What evidence-backed relations directly involve <focal entity>, under what conditions, and from which papers?",
+        "operator": "entity_neighborhood",
+        "params": {
+          "entity": "<node_id or canonical_name or alias>",
+          "hops": 1,
+          "relation_types": []
+        }
+      }
+    },
+    {
+      "template_id": "QT5_gap_or_unanswerable_check",
+      "operator": "gap_or_unanswerable_check",
+      "purpose": "Test an explicit unanswerable/boundary question (e.g., head-to-head comparison under identical conditions not tested in either paper, or numeric values locked inside unavailable figure pixels/supplementary files) and honestly return unable_to_determine.",
+      "example_spec": {
+        "query_id": "Q5",
+        "question": "Does the corpus provide direct experimental evidence comparing Paper 1's sample and Paper 2's sample under identical controlled conditions (or raw figure/supplementary values)?",
+        "operator": "gap_or_unanswerable_check",
+        "params": {
+          "entity_a": "<optional node_id/name from paper 1>",
+          "entity_b": "<optional node_id/name from paper 2>",
+          "required_relation_types": ["OUTPERFORMS", "COMPARES"],
+          "require_direct_author_evidence": true,
+          "missing_modality_check": ["figure_pixels_unavailable", "supplementary_unavailable", "raw_data_unavailable"]
+        }
+      }
+    }
+  ]
+}

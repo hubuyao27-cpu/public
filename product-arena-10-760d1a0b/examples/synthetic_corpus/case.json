@@ -1,0 +1,31 @@
+{
+  "_synthetic_example_only": true,
+  "case_id": "SYNTH-EX-001",
+  "title": "Hollow Porous Ni-N-C Single-Atom Catalyst for Long-Term CO2 Electroreduction in H-Cell",
+  "doi": "10.9999/synth.primary.2025.001",
+  "authors": [
+    "L. Chen",
+    "M. Dupont"
+  ],
+  "prompt": "Construct a provenance-bound multi-paper knowledge graph across both papers, record cross-paper entity alignment merges and explicit non-merge boundaries, preserve per-paper conditions without blending numeric results, and execute at least 3 graph queries with verbatim paragraph evidence.",
+  "output_contract": {
+    "required": [
+      "case_id",
+      "status",
+      "knowledge_graph",
+      "alignment_decisions",
+      "conflicts",
+      "queries",
+      "sources",
+      "uncertainty",
+      "change_records",
+      "verification_report"
+    ]
+  },
+  "queries": [
+    "Compare the Ni-N-C catalysts, test conditions, and Faradaic efficiency metrics reported in Paper 1 and Paper 2 without merging distinct physical samples.",
+    "Trace verifiable direct author evidence chains from catalysts and methods to reported Faradaic efficiency metrics and conclusions.",
+    "Audit all cross-paper conflicts, non-merged distinct instances or homonyms, and cited prior claims.",
+    "Does the corpus report a direct side-by-side comparison of Paper 1 hollow Ni-N-C and Paper 2 planar Ni-N-C under identical flow-cell conditions or raw Figure S2 impedance values?"
+  ]
+}

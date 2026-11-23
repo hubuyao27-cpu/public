@@ -1,0 +1,26 @@
+{
+  "_synthetic_example_only": true,
+  "documents": [
+    {
+      "source_id": "paper_primary",
+      "role": "primary",
+      "doi": "10.9999/synth.primary.2025.001",
+      "title": "Hollow Porous Ni-N-C Single-Atom Catalyst for Long-Term CO2 Electroreduction in H-Cell",
+      "authors": ["L. Chen", "M. Dupont"],
+      "license": "CC-BY-4.0",
+      "source_hash": "synth-sha256-primary-001",
+      "material_file": "primary-material.json"
+    },
+    {
+      "source_id": "paper_secondary",
+      "role": "secondary",
+      "doi": "10.9999/synth.secondary.2026.002",
+      "title": "Planar Ni-N-C Electrodes in Alkaline Flow Cells for High-Rate CO2RR",
+      "authors": ["R. Patel", "S. Weber"],
+      "license": "CC-BY-4.0",
+      "source_hash": "synth-sha256-secondary-002",
+      "material_file": "secondary-material.json",
+      "publisher_xml": "secondary-publisher.xml"
+    }
+  ]
+}
