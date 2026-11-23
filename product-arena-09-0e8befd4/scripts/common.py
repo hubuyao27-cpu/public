@@ -216,11 +216,13 @@ def extract_numeric_tokens(text: Optional[str]) -> List[str]:
     s = norm_nfkc(text)
     if not s:
         return []
-    # Match numbers like 32.4, -1.5, 10^-6, 1.2e-4, 95% (strip trailing % for number matching)
+    # Strip chemical subscript digits (e.g. Li_{2}S, CO_2) and unit exponent digits (e.g. cm^-2, m^{2})
+    s = re.sub(r"(?<=[A-Za-z\)])_\{?\d+\}?", "", s)
+    s = re.sub(r"(?<=[A-Za-z\)])\^\{?[-+]?\d+\}?", "", s)
+    # Match numbers like 32.4, -1.5, 1.2e-4, 95% (strip trailing % for number matching)
     matches = re.findall(r"(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", s)
     out: List[str] = []
     for m in matches:
-        # Normalize 12.0 -> 12? Keep string form and normalized float key separately in caller
         out.append(m.lstrip("+"))
     return out
 

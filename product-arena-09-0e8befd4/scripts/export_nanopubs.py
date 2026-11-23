@@ -531,6 +531,29 @@ def export_all(
     elif isinstance(qa_data, dict):
         qa_answers = list(qa_data.get("qa_answers") or qa_data.get("answers") or [])
 
+    # Resolve any temp_id entries in qa_answers[].supporting_nanopub_ids -> canonical urn:nanopub:RA...
+    temp_to_canonical: Dict[str, str] = {}
+    for np in nanopubs:
+        cid = np.get("nanopub_id")
+        if not cid:
+            continue
+        for tid in (np.get("pubinfo") or {}).get("merged_from_temp_ids") or []:
+            temp_to_canonical[str(tid)] = cid
+    if temp_to_canonical and qa_answers:
+        resolved_qa: List[Dict[str, Any]] = []
+        for qa in qa_answers:
+            qa_copy = dict(qa)
+            resolved_ids: List[str] = []
+            seen_ids: set = set()
+            for sid in qa_copy.get("supporting_nanopub_ids") or []:
+                mapped = temp_to_canonical.get(str(sid), str(sid))
+                if mapped not in seen_ids:
+                    seen_ids.add(mapped)
+                    resolved_ids.append(mapped)
+            qa_copy["supporting_nanopub_ids"] = resolved_ids
+            resolved_qa.append(qa_copy)
+        qa_answers = resolved_qa
+
     docs = source_index.get("documents") or []
     readable_docs = [d for d in docs if d.get("sentence_count", 0) > 0]
     unreadable_pages_all = [
