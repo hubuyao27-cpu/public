@@ -1,0 +1,631 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Controlled Scientific Predicate Vocabulary for Nanopublications",
+  "description": "24 canonical predicates mapped to OBO Relation Ontology (RO), Semanticscience Integrated Ontology (SIO), CiTO, and EDAM IRIs, with passive-voice inversion markers and opposite predicates for conflict detection.",
+  "namespaces": {
+    "ro": "http://purl.obolibrary.org/obo/RO_",
+    "sio": "http://semanticscience.org/resource/SIO_",
+    "cito": "http://purl.org/spar/cito/",
+    "edam": "http://edamontology.org/",
+    "npext": "https://w3id.org/np/o/ntemplate/ext/"
+  },
+  "predicates": [
+    {
+      "id": "increases",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002213",
+      "curie": "ro:RO_0002213",
+      "category": "causal_modulation",
+      "label_en": "positively regulates / increases",
+      "label_zh": "提高 / 增强 / 上调",
+      "synonyms": [
+        "boosts",
+        "elevates",
+        "enhances",
+        "raises",
+        "upregulates",
+        "amplifies",
+        "improves_quantity_of",
+        "augments",
+        "elevates_level_of"
+      ],
+      "passive_markers": [
+        "is increased by",
+        "was increased by",
+        "were increased by",
+        "is enhanced by",
+        "was enhanced by",
+        "is elevated by",
+        "was elevated by",
+        "is upregulated by",
+        "was upregulated by",
+        "is boosted by",
+        "was boosted by",
+        "被提高",
+        "被增强",
+        "受...提升"
+      ],
+      "opposite_predicates": [
+        "decreases",
+        "inhibits",
+        "prevents"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Intervention/Factor/Material -> Property/Metric/Process/Level"
+    },
+    {
+      "id": "decreases",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002212",
+      "curie": "ro:RO_0002212",
+      "category": "causal_modulation",
+      "label_en": "negatively regulates / decreases",
+      "label_zh": "降低 / 减少 / 下调",
+      "synonyms": [
+        "reduces",
+        "lowers",
+        "diminishes",
+        "downregulates",
+        "attenuates",
+        "suppresses_level_of",
+        "alleviates",
+        "mitigates"
+      ],
+      "passive_markers": [
+        "is decreased by",
+        "was decreased by",
+        "were decreased by",
+        "is reduced by",
+        "was reduced by",
+        "were reduced by",
+        "is lowered by",
+        "was lowered by",
+        "is downregulated by",
+        "was attenuated by",
+        "被降低",
+        "被减少"
+      ],
+      "opposite_predicates": [
+        "increases",
+        "activates"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Intervention/Factor/Material -> Property/Metric/Process/Level"
+    },
+    {
+      "id": "causes",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002410",
+      "curie": "ro:RO_0002410",
+      "category": "causal_modulation",
+      "label_en": "causally related to / causes",
+      "label_zh": "导致 / 引起 / 诱发",
+      "synonyms": [
+        "induces",
+        "triggers",
+        "leads_to",
+        "produces",
+        "generates",
+        "drives",
+        "elicits"
+      ],
+      "passive_markers": [
+        "is caused by",
+        "was caused by",
+        "were caused by",
+        "is induced by",
+        "was induced by",
+        "is triggered by",
+        "was triggered by",
+        "results from",
+        "由...导致",
+        "由...引起"
+      ],
+      "opposite_predicates": [
+        "prevents",
+        "inhibits"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Agent/Event/Exposure -> Outcome/Phenotype/State"
+    },
+    {
+      "id": "inhibits",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002449",
+      "curie": "ro:RO_0002449",
+      "category": "causal_modulation",
+      "label_en": "directly negatively regulates / inhibits",
+      "label_zh": "抑制 / 阻断",
+      "synonyms": [
+        "blocks",
+        "suppresses",
+        "repairs_against",
+        "antagonizes",
+        "impairs",
+        "retards",
+        "quenches"
+      ],
+      "passive_markers": [
+        "is inhibited by",
+        "was inhibited by",
+        "were inhibited by",
+        "is blocked by",
+        "was blocked by",
+        "is suppressed by",
+        "was suppressed by",
+        "被抑制",
+        "受...抑制"
+      ],
+      "opposite_predicates": [
+        "activates",
+        "increases",
+        "catalyzes"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Inhibitor/Material/Condition -> Pathway/Reaction/Growth/Activity"
+    },
+    {
+      "id": "activates",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002448",
+      "curie": "ro:RO_0002448",
+      "category": "causal_modulation",
+      "label_en": "directly positively regulates / activates",
+      "label_zh": "激活 / 促进 / 触发",
+      "synonyms": [
+        "promotes",
+        "stimulates",
+        "potentiates",
+        "switches_on",
+        "facilitates"
+      ],
+      "passive_markers": [
+        "is activated by",
+        "was activated by",
+        "were activated by",
+        "is promoted by",
+        "was promoted by",
+        "is stimulated by",
+        "was stimulated by",
+        "被激活",
+        "被促进"
+      ],
+      "opposite_predicates": [
+        "inhibits",
+        "decreases",
+        "prevents"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Activator/Ligand/Stimulus -> Enzyme/Pathway/Gene/Process"
+    },
+    {
+      "id": "catalyzes",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002327",
+      "curie": "ro:RO_0002327",
+      "category": "causal_modulation",
+      "label_en": "enables / catalyzes",
+      "label_zh": "催化 / 驱动反应",
+      "synonyms": [
+        "accelerates_reaction",
+        "mediates_reaction",
+        "electrocatalyzes",
+        "photocatalyzes"
+      ],
+      "passive_markers": [
+        "is catalyzed by",
+        "was catalyzed by",
+        "were catalyzed by",
+        "is catalysed by",
+        "was catalysed by",
+        "被催化"
+      ],
+      "opposite_predicates": [
+        "inhibits"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Catalyst/Enzyme -> ChemicalReaction/ConversionProcess"
+    },
+    {
+      "id": "prevents",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002559",
+      "curie": "ro:RO_0002559",
+      "category": "causal_modulation",
+      "label_en": "prevents",
+      "label_zh": "防止 / 阻止 / 消除",
+      "synonyms": [
+        "averts",
+        "eliminates",
+        "protects_against",
+        "halts",
+        "stops"
+      ],
+      "passive_markers": [
+        "is prevented by",
+        "was prevented by",
+        "were prevented by",
+        "is eliminated by",
+        "was eliminated by",
+        "被阻止",
+        "被消除"
+      ],
+      "opposite_predicates": [
+        "causes",
+        "increases",
+        "activates"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Intervention/Barrier -> AdverseEvent/Degradation/Disease"
+    },
+    {
+      "id": "correlates_with",
+      "uri": "http://semanticscience.org/resource/SIO_000638",
+      "curie": "sio:SIO_000638",
+      "category": "association_composition",
+      "label_en": "correlates with",
+      "label_zh": "与...相关（统计相关性）",
+      "synonyms": [
+        "positively_correlates_with",
+        "negatively_correlates_with",
+        "co_varies_with",
+        "scales_with",
+        "is_linearly_related_to"
+      ],
+      "passive_markers": [
+        "was correlated with",
+        "is correlated with"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": true,
+      "domain_range_hint": "Variable/Feature -> Variable/Outcome (non-causal statistical correlation)"
+    },
+    {
+      "id": "associated_with",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002610",
+      "curie": "ro:RO_0002610",
+      "category": "association_composition",
+      "label_en": "correlated with or associated with",
+      "label_zh": "与...关联",
+      "synonyms": [
+        "linked_to",
+        "co_occurs_with",
+        "relates_to",
+        "connected_with"
+      ],
+      "passive_markers": [
+        "is associated with",
+        "was associated with"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Entity/Biomarker/Feature -> Condition/Phenotype/Property"
+    },
+    {
+      "id": "interacts_with",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002434",
+      "curie": "ro:RO_0002434",
+      "category": "association_composition",
+      "label_en": "interacts with",
+      "label_zh": "与...相互作用",
+      "synonyms": [
+        "binds",
+        "binds_to",
+        "couples_with",
+        "complexes_with",
+        "adsorbs_on"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [],
+      "requires_conditions": true,
+      "domain_range_hint": "Molecule/Material/Agent -> Molecule/Substrate/Site"
+    },
+    {
+      "id": "part_of",
+      "uri": "http://purl.obolibrary.org/obo/BFO_0000050",
+      "curie": "ro:BFO_0000050",
+      "category": "association_composition",
+      "label_en": "part of",
+      "label_zh": "属于 / 是...的组成部分",
+      "synonyms": [
+        "component_of",
+        "belongs_to",
+        "subunit_of",
+        "contained_in",
+        "embedded_in"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Component/Substructure -> WholeSystem/Assembly"
+    },
+    {
+      "id": "composed_of",
+      "uri": "http://purl.obolibrary.org/obo/BFO_0000051",
+      "curie": "ro:BFO_0000051",
+      "category": "association_composition",
+      "label_en": "has part / composed of",
+      "label_zh": "由...组成 / 包含",
+      "synonyms": [
+        "contains",
+        "consists_of",
+        "comprises",
+        "incorporates",
+        "doped_with"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Composite/Material/System -> Constituent/Component"
+    },
+    {
+      "id": "derived_from",
+      "uri": "http://purl.obolibrary.org/obo/RO_0001000",
+      "curie": "ro:RO_0001000",
+      "category": "association_composition",
+      "label_en": "derives from",
+      "label_zh": "衍生自 / 由...制备",
+      "synonyms": [
+        "synthesized_from",
+        "extracted_from",
+        "obtained_from",
+        "originates_from",
+        "prepared_from"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Product/Model/Dataset -> Precursor/Parent/RawSource"
+    },
+    {
+      "id": "outperforms",
+      "uri": "https://w3id.org/np/o/ntemplate/ext/outperforms",
+      "curie": "npext:outperforms",
+      "category": "performance_comparison",
+      "label_en": "outperforms",
+      "label_zh": "性能优于 / 超过",
+      "synonyms": [
+        "surpasses",
+        "exceeds",
+        "beats",
+        "is_superior_to",
+        "achieves_higher_accuracy_than"
+      ],
+      "passive_markers": [
+        "is outperformed by",
+        "was outperformed by",
+        "were outperformed by",
+        "is surpassed by",
+        "was surpassed by",
+        "被超越",
+        "劣于"
+      ],
+      "opposite_predicates": [
+        "underperforms",
+        "comparable_to"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "ProposedMethod/Material -> BaselineMethod/Material (requires metric + benchmark/dataset in conditions)"
+    },
+    {
+      "id": "comparable_to",
+      "uri": "https://w3id.org/np/o/ntemplate/ext/comparable_to",
+      "curie": "npext:comparable_to",
+      "category": "performance_comparison",
+      "label_en": "comparable to / equivalent to",
+      "label_zh": "与...相当 / 无显著差异",
+      "synonyms": [
+        "similar_to",
+        "matches",
+        "on_par_with",
+        "statistically_indistinguishable_from"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [
+        "outperforms",
+        "underperforms"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "System/Method -> BaselineSystem/Method"
+    },
+    {
+      "id": "underperforms",
+      "uri": "https://w3id.org/np/o/ntemplate/ext/underperforms",
+      "curie": "npext:underperforms",
+      "category": "performance_comparison",
+      "label_en": "underperforms",
+      "label_zh": "性能低于 / 逊于",
+      "synonyms": [
+        "lags_behind",
+        "is_inferior_to",
+        "scores_lower_than"
+      ],
+      "passive_markers": [
+        "is underperformed by"
+      ],
+      "opposite_predicates": [
+        "outperforms"
+      ],
+      "requires_conditions": true,
+      "domain_range_hint": "Method/Material -> ComparatorMethod/Material"
+    },
+    {
+      "id": "exhibits_property",
+      "uri": "http://semanticscience.org/resource/SIO_000008",
+      "curie": "sio:SIO_000008",
+      "category": "performance_comparison",
+      "label_en": "has attribute / exhibits property",
+      "label_zh": "具有特征 / 表现出性质",
+      "synonyms": [
+        "displays",
+        "possesses",
+        "demonstrates_property",
+        "shows_feature",
+        "characterized_by"
+      ],
+      "passive_markers": [
+        "is exhibited by",
+        "was observed in"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Material/Organism/Model -> Structural/Physical/FunctionalProperty"
+    },
+    {
+      "id": "achieves_metric",
+      "uri": "http://semanticscience.org/resource/SIO_000216",
+      "curie": "sio:SIO_000216",
+      "category": "performance_comparison",
+      "label_en": "has measurement value / achieves metric",
+      "label_zh": "达到指标值 / 测得数值",
+      "synonyms": [
+        "attains",
+        "records_value",
+        "yields",
+        "delivers",
+        "reports_value",
+        "reaches"
+      ],
+      "passive_markers": [
+        "is achieved by",
+        "was achieved by",
+        "is attained by",
+        "was obtained by",
+        "was measured using"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": true,
+      "domain_range_hint": "Method/Material/Sample -> MetricValue/PerformanceTarget (requires unit/dataset/condition)"
+    },
+    {
+      "id": "uses_method",
+      "uri": "http://semanticscience.org/resource/SIO_000230",
+      "curie": "sio:SIO_000230",
+      "category": "method_applicability",
+      "label_en": "uses method / employs technique",
+      "label_zh": "采用方法 / 使用技术",
+      "synonyms": [
+        "employs",
+        "applies",
+        "utilizes",
+        "implements",
+        "adopts",
+        "relies_on"
+      ],
+      "passive_markers": [
+        "is used by",
+        "was used by",
+        "is employed by",
+        "was utilized by"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Study/Pipeline/Protocol -> Assay/Algorithm/Instrument/Method"
+    },
+    {
+      "id": "evaluated_on",
+      "uri": "http://edamontology.org/operation_2428",
+      "curie": "edam:operation_2428",
+      "category": "method_applicability",
+      "label_en": "evaluated on / validated on",
+      "label_zh": "在...上评估 / 验证于",
+      "synonyms": [
+        "tested_on",
+        "benchmarked_on",
+        "validated_in",
+        "assessed_using"
+      ],
+      "passive_markers": [
+        "is evaluated by",
+        "was evaluated by"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Model/Method/Material -> Dataset/Cohort/Testbed"
+    },
+    {
+      "id": "applicable_to",
+      "uri": "http://semanticscience.org/resource/SIO_000628",
+      "curie": "sio:SIO_000628",
+      "category": "method_applicability",
+      "label_en": "applicable to",
+      "label_zh": "适用于",
+      "synonyms": [
+        "generalizes_to",
+        "suitable_for",
+        "effective_for",
+        "valid_for"
+      ],
+      "passive_markers": [],
+      "opposite_predicates": [],
+      "requires_conditions": true,
+      "domain_range_hint": "Method/Model/Correlation -> Domain/Regime/System"
+    },
+    {
+      "id": "requires_condition",
+      "uri": "http://purl.obolibrary.org/obo/RO_0002502",
+      "curie": "ro:RO_0002502",
+      "category": "method_applicability",
+      "label_en": "depends on / requires condition",
+      "label_zh": "依赖于 / 需要条件",
+      "synonyms": [
+        "depends_on",
+        "needs",
+        "is_contingent_on",
+        "operates_only_under",
+        "requires"
+      ],
+      "passive_markers": [
+        "is required by",
+        "was required by",
+        "is required for"
+      ],
+      "opposite_predicates": [],
+      "requires_conditions": false,
+      "domain_range_hint": "Process/Method/Effect -> Precondition/Threshold/Parameter"
+    },
+    {
+      "id": "supports",
+      "uri": "http://purl.org/spar/cito/agreesWith",
+      "curie": "cito:agreesWith",
+      "category": "discourse_evidentiary",
+      "label_en": "supports / confirms",
+      "label_zh": "支持 / 证实",
+      "synonyms": [
+        "confirms",
+        "corroborates",
+        "consistent_with",
+        "validates_claim"
+      ],
+      "passive_markers": [
+        "is supported by",
+        "was supported by",
+        "is confirmed by",
+        "was confirmed by"
+      ],
+      "opposite_predicates": [
+        "contradicts"
+      ],
+      "requires_conditions": false,
+      "domain_range_hint": "Finding/Observation/Study -> Hypothesis/PriorClaim"
+    },
+    {
+      "id": "contradicts",
+      "uri": "http://purl.org/spar/cito/disagreesWith",
+      "curie": "cito:disagreesWith",
+      "category": "discourse_evidentiary",
+      "label_en": "contradicts / refutes",
+      "label_zh": "反驳 / 与...矛盾",
+      "synonyms": [
+        "refutes",
+        "disputes",
+        "conflicts_with",
+        "inconsistent_with",
+        "challenges"
+      ],
+      "passive_markers": [
+        "is contradicted by",
+        "was contradicted by",
+        "is refuted by"
+      ],
+      "opposite_predicates": [
+        "supports"
+      ],
+      "requires_conditions": false,
+      "domain_range_hint": "Finding/Observation/Study -> Hypothesis/PriorClaim"
+    }
+  ]
+}

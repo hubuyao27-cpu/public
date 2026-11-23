@@ -1,0 +1,379 @@
+{
+  "illustrative_synthetic_benchmark": true,
+  "note": "SYNTHETIC ILLUSTRATIVE BENCHMARK ONLY. Fictional paper data created solely for Skill self-testing and community reuse. Not a hidden competition case or formal answer.",
+  "case_id": "synthetic_benchmark_20_assertions",
+  "source_id": "synthetic_paper",
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "What overpotential does Meso-NiFeOOH require to achieve 10 mA cm^-2 in 1.0 M KOH at 298 K, and how does it compare with commercial IrO2?"
+    },
+    {
+      "id": "Q2",
+      "question": "Does Meso-NiFeOOH exhibit significant catalytic activity for the hydrogen evolution reaction (HER) under the reported alkaline conditions?"
+    },
+    {
+      "id": "Q3",
+      "question": "What was the exact Faradaic efficiency of Meso-NiFeOOH measured by gas chromatography at 353 K?"
+    }
+  ],
+  "nanopublications": [
+    {
+      "temp_id": "BM_01",
+      "claim_text": "Meso-NiFeOOH achieves 10 mA cm^-2 at an overpotential of 218 ± 4 mV in 1.0 M KOH at 298 K.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": ["hierarchical mesoporous nickel-iron oxyhydroxide electrocatalyst"]},
+      "predicate": "achieves_metric",
+      "object": {"label": "218 ± 4 mV overpotential at 10 mA cm^-2", "entity_type": "Property_Or_Metric", "aliases": ["overpotential of 218 ± 4 mV"]},
+      "conditions": {"experimental_system": "1.0 M KOH", "parameters": ["298 K", "10 mA cm^-2"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "overpotential", "operator": "=", "value": "218", "unit": "mV", "uncertainty_or_stat": "± 4 mV"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "In 1.0 M KOH at 298 K, Meso-NiFeOOH requires an overpotential of 218 ± 4 mV to achieve 10 mA cm^-2",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P002", "section": "Abstract"}
+      }]
+    },
+    {
+      "temp_id": "BM_02_DUP_RESULTS",
+      "claim_text": "Meso-NiFeOOH achieves 10 mA cm^-2 at an overpotential of 218 ± 4 mV in 1.0 M KOH at 298 K.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "achieves_metric",
+      "object": {"label": "218 ± 4 mV overpotential at 10 mA cm^-2", "entity_type": "Property_Or_Metric", "aliases": ["overpotential of 218 ± 4 mV"]},
+      "conditions": {"experimental_system": "1.0 M KOH", "parameters": ["298 K", "10 mA cm^-2"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "overpotential", "operator": "=", "value": "218", "unit": "mV", "uncertainty_or_stat": "± 4 mV"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "In 1.0 M KOH at 298 K, Meso-NiFeOOH achieves a current density of 10 mA cm^-2 at an overpotential of 218 ± 4 mV.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P005", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_03",
+      "claim_text": "Meso-NiFeOOH outperforms commercial IrO2 by 94 mV in OER overpotential at 10 mA cm^-2 in 1.0 M KOH at 298 K.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "outperforms",
+      "object": {"label": "commercial IrO2", "entity_type": "Material", "aliases": []},
+      "conditions": {"experimental_system": "1.0 M KOH at 298 K", "parameters": ["10 mA cm^-2", "94 mV lower overpotential"], "comparator": "commercial IrO2 (312 ± 6 mV)", "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "overpotential advantage", "operator": "=", "value": "94", "unit": "mV", "uncertainty_or_stat": null}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "In 1.0 M KOH at 298 K, Meso-NiFeOOH requires an overpotential of 218 ± 4 mV to achieve 10 mA cm^-2, outperforming commercial IrO2 (312 ± 6 mV) by 94 mV.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P002", "section": "Abstract"}
+      }]
+    },
+    {
+      "temp_id": "BM_04",
+      "claim_text": "Increasing Fe doping ratio above 25 at.% decreases electrical conductivity of Meso-NiFeOOH.",
+      "subject": {"label": "Fe doping ratio above 25 at.%", "entity_type": "Parameter_Or_Condition", "aliases": ["increasing the Fe doping ratio above 25 at.%"]},
+      "predicate": "decreases",
+      "object": {"label": "electrical conductivity", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "Meso-NiFeOOH", "parameters": ["Fe > 25 at.%"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "Fe doping threshold", "operator": ">", "value": "25", "unit": "at.%", "uncertainty_or_stat": null}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "However, increasing the Fe doping ratio above 25 at.% reduces electrical conductivity and increases charge-transfer resistance.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P002", "section": "Abstract"}
+      }]
+    },
+    {
+      "temp_id": "BM_05",
+      "claim_text": "Increasing Fe doping ratio above 25 at.% increases charge-transfer resistance of Meso-NiFeOOH.",
+      "subject": {"label": "Fe doping ratio above 25 at.%", "entity_type": "Parameter_Or_Condition", "aliases": ["increasing the Fe doping ratio above 25 at.%"]},
+      "predicate": "increases",
+      "object": {"label": "charge-transfer resistance", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "Meso-NiFeOOH", "parameters": ["Fe > 25 at.%"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "Fe doping threshold", "operator": ">", "value": "25", "unit": "at.%", "uncertainty_or_stat": null}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "However, increasing the Fe doping ratio above 25 at.% reduces electrical conductivity and increases charge-transfer resistance.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P002", "section": "Abstract"}
+      }]
+    },
+    {
+      "temp_id": "BM_06",
+      "claim_text": "Prior literature reported that Fe incorporation into NiOOH lattices decreases OER overpotential via Fe-O-Ni dual-site stabilization.",
+      "subject": {"label": "Fe incorporation", "entity_type": "Process", "aliases": []},
+      "predicate": "decreases",
+      "object": {"label": "OER overpotential", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "NiOOH lattices", "parameters": ["Fe-O-Ni dual-site stabilization"], "comparator": null, "scope_qualifiers": ["cited prior work [1, 2]"]},
+      "quantitative_values": [],
+      "polarity": "positive",
+      "epistemic_status": "cited_prior_work",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Previous studies have reported that Fe incorporation into NiOOH lattices lowers the OER overpotential through Fe-O-Ni dual-site stabilization [1, 2].",
+        "evidence_type": "cited_prior_work",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P003", "section": "1. Introduction"}
+      }]
+    },
+    {
+      "temp_id": "BM_07",
+      "claim_text": "Excessive Fe segregation at high anodic potentials is hypothesized to cause phase separation into Fe2O3 domains.",
+      "subject": {"label": "Fe segregation", "entity_type": "Process", "aliases": ["excessive Fe segregation"]},
+      "predicate": "causes",
+      "object": {"label": "phase separation into poorly conductive Fe2O3 domains", "entity_type": "Process", "aliases": ["phase separation"]},
+      "conditions": {"experimental_system": "NiOOH lattices", "parameters": ["high anodic potentials"], "comparator": null, "scope_qualifiers": ["tentative without direct in-situ confirmation"]},
+      "quantitative_values": [],
+      "polarity": "conditional",
+      "epistemic_status": "hypothesis_or_speculation",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "However, excessive Fe segregation at high anodic potentials may promote phase separation into poorly conductive Fe2O3 domains, although direct in-situ confirmation remains tentative.",
+        "evidence_type": "indirect_inference",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P003", "section": "1. Introduction"}
+      }]
+    },
+    {
+      "temp_id": "BM_08",
+      "claim_text": "Meso-NiFeOOH catalysts are derived from an SBA-15 silica hard template with selective NaOH etching at 353 K for 12 h.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": ["Meso-NiFeOOH catalysts"]},
+      "predicate": "derived_from",
+      "object": {"label": "SBA-15 silica hard template", "entity_type": "Material", "aliases": ["mesoporous SBA-15 silica hard template"]},
+      "conditions": {"experimental_system": "hydrothermal + etching", "parameters": ["NaOH etching", "353 K", "12 h"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "etching temperature", "operator": "=", "value": "353", "unit": "K"}, {"metric": "etching duration", "operator": "=", "value": "12", "unit": "h"}],
+      "polarity": "positive",
+      "epistemic_status": "author_method_claim",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Meso-NiFeOOH catalysts were derived from a mesoporous SBA-15 silica hard template followed by selective NaOH etching at 353 K for 12 h.",
+        "evidence_type": "method_specification",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P004", "section": "2. Materials and Methods"}
+      }]
+    },
+    {
+      "temp_id": "BM_09",
+      "claim_text": "Electrochemical measurements were evaluated on a rotating disk electrode at 1600 rpm in O2-saturated 1.0 M KOH at 298 K.",
+      "subject": {"label": "Electrochemical measurements", "entity_type": "Method", "aliases": []},
+      "predicate": "evaluated_on",
+      "object": {"label": "rotating disk electrode", "entity_type": "Device", "aliases": ["RDE"]},
+      "conditions": {"experimental_system": "O2-saturated 1.0 M KOH", "parameters": ["1600 rpm", "298 K", "95% iR-compensation"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "rotation rate", "operator": "=", "value": "1600", "unit": "rpm"}, {"metric": "iR compensation", "operator": "=", "value": "95", "unit": "%"}],
+      "polarity": "positive",
+      "epistemic_status": "author_method_claim",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Electrochemical measurements were evaluated on a rotating disk electrode (RDE, 1600 rpm) in O2-saturated 1.0 M KOH at 298 K with iR-compensation (95%).",
+        "evidence_type": "method_specification",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P004", "section": "2. Materials and Methods"}
+      }]
+    },
+    {
+      "temp_id": "BM_10",
+      "claim_text": "Structural characterization uses nitrogen physisorption, TEM, and XPS.",
+      "subject": {"label": "Structural characterization", "entity_type": "Process", "aliases": []},
+      "predicate": "uses_method",
+      "object": {"label": "nitrogen physisorption, TEM, and XPS", "entity_type": "Method", "aliases": ["BET", "transmission electron microscopy", "X-ray photoelectron spectroscopy"]},
+      "conditions": {"experimental_system": "Meso-NiFeOOH", "parameters": [], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [],
+      "polarity": "positive",
+      "epistemic_status": "author_method_claim",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Structural characterization used nitrogen physisorption (BET), transmission electron microscopy (TEM), and X-ray photoelectron spectroscopy (XPS).",
+        "evidence_type": "method_specification",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P004", "section": "2. Materials and Methods"}
+      }]
+    },
+    {
+      "temp_id": "BM_11",
+      "claim_text": "Meso-NiFeOOH achieves a Tafel slope of 34.2 mV dec^-1 at 10 mA cm^-2.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "achieves_metric",
+      "object": {"label": "Tafel slope of 34.2 mV dec^-1", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "1.0 M KOH", "parameters": ["10 mA cm^-2"], "comparator": "commercial IrO2 (56.8 mV dec^-1)", "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "Tafel slope", "operator": "=", "value": "34.2", "unit": "mV dec^-1"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "At 10 mA cm^-2, Meso-NiFeOOH exhibits a Tafel slope of 34.2 mV dec^-1, which is lower than that of commercial IrO2 (56.8 mV dec^-1).",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P005", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_12",
+      "claim_text": "Meso-NiFeOOH exhibits a BET specific surface area of 142 m^2 g^-1.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "exhibits_property",
+      "object": {"label": "BET specific surface area of 142 m^2 g^-1", "entity_type": "Property_Or_Metric", "aliases": ["Brunauer-Emmett-Teller (BET) specific surface area of 142 m^2 g^-1"]},
+      "conditions": {"experimental_system": "nitrogen physisorption", "parameters": [], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "BET specific surface area", "operator": "=", "value": "142", "unit": "m^2 g^-1"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Nitrogen physisorption confirms that Meso-NiFeOOH possesses a Brunauer-Emmett-Teller (BET) specific surface area of 142 m^2 g^-1 and a narrow mesopore diameter centered at 6.4 nm.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P005", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_13",
+      "claim_text": "Meso-NiFeOOH (15 at.% Fe) exhibits uniform 6.4 nm mesopores in TEM and pore-size analysis.",
+      "subject": {"label": "Meso-NiFeOOH (15 at.% Fe)", "entity_type": "Material", "aliases": ["Meso-NiFeOOH"]},
+      "predicate": "exhibits_property",
+      "object": {"label": "uniform 6.4 nm mesopores", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "TEM and pore-size distribution", "parameters": ["15 at.% Fe"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "mesopore diameter", "operator": "=", "value": "6.4", "unit": "nm"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Fig. 1 TEM and pore-size distribution confirming uniform 6.4 nm mesopores in Meso-NiFeOOH (15 at.% Fe).",
+        "evidence_type": "table_or_caption_direct",
+        "locator": {"locator_type": "figure_caption", "paragraph_id": "P009", "section": "3. Results and Discussion", "figure_id": "Fig_1"}
+      }]
+    },
+    {
+      "temp_id": "BM_14",
+      "claim_text": "Meso-NiFeOOH achieves 96.5% initial potential efficiency retention over 120 h at 100 mA cm^-2.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "achieves_metric",
+      "object": {"label": "96.5% initial potential efficiency retention", "entity_type": "Property_Or_Metric", "aliases": ["96.5% of its initial potential efficiency"]},
+      "conditions": {"experimental_system": "chronopotentiometry", "parameters": ["100 mA cm^-2", "120 h"], "comparator": null, "scope_qualifiers": ["Fe dissolution < 0.2 ppm by ICP-OES"]},
+      "quantitative_values": [{"metric": "potential efficiency retention", "operator": "=", "value": "96.5", "unit": "%"}, {"metric": "Fe dissolution", "operator": "<", "value": "0.2", "unit": "ppm"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Chronopotentiometry at 100 mA cm^-2 for 120 h showed that Meso-NiFeOOH retains 96.5% of its initial potential efficiency without measurable Fe dissolution (< 0.2 ppm by ICP-OES).",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P006", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_15",
+      "claim_text": "Addition of 0.1 mM FeCl3 increases the turnover frequency of pure NiOOH by 4.3-fold at 1.50 V vs. RHE.",
+      "subject": {"label": "0.1 mM FeCl3", "entity_type": "Compound", "aliases": ["Addition of 0.1 mM FeCl3"]},
+      "predicate": "increases",
+      "object": {"label": "turnover frequency (TOF) of pure NiOOH", "entity_type": "Property_Or_Metric", "aliases": ["turnover frequency"]},
+      "conditions": {"experimental_system": "pure NiOOH in alkaline electrolyte", "parameters": ["1.50 V vs. RHE"], "comparator": "pure NiOOH without FeCl3", "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "TOF enhancement", "operator": "=", "value": "4.3", "unit": "fold"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Addition of 0.1 mM FeCl3 to the electrolyte further increased the turnover frequency (TOF) of pure NiOOH by 4.3-fold at 1.50 V vs. RHE.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P006", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_16_NULL",
+      "claim_text": "Meso-NiFeOOH does not catalyze the hydrogen evolution reaction (HER) significantly in 1.0 M KOH.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "catalyzes",
+      "object": {"label": "hydrogen evolution reaction (HER)", "entity_type": "Process", "aliases": []},
+      "conditions": {"experimental_system": "1.0 M KOH", "parameters": ["overpotential > 480 mV at 10 mA cm^-2", "p = 0.42"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "HER overpotential", "operator": ">", "value": "480", "unit": "mV", "uncertainty_or_stat": "p = 0.42"}],
+      "polarity": "null_result",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Conversely, Meso-NiFeOOH showed no statistically significant catalytic activity for the hydrogen evolution reaction (HER) in 1.0 M KOH (overpotential > 480 mV at 10 mA cm^-2, p = 0.42).",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P006", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_17_TABLE",
+      "claim_text": "Bulk-NiFeOOH (15 at.% Fe) achieves an overpotential of 269 ± 5 mV and a Tafel slope of 44.1 mV dec^-1 (BET area 38 m^2 g^-1).",
+      "subject": {"label": "Bulk-NiFeOOH (15 at.% Fe)", "entity_type": "Material", "aliases": ["Bulk-NiFeOOH"]},
+      "predicate": "achieves_metric",
+      "object": {"label": "269 ± 5 mV overpotential and 44.1 mV dec^-1 Tafel slope", "entity_type": "Property_Or_Metric", "aliases": ["269 ± 5"]},
+      "conditions": {"experimental_system": "1.0 M KOH at 298 K", "parameters": ["15 at.% Fe"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "overpotential", "operator": "=", "value": "269", "unit": "mV", "uncertainty_or_stat": "± 5 mV"}, {"metric": "Tafel slope", "operator": "=", "value": "44.1", "unit": "mV dec^-1"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "| Catalyst | Overpotential at 10 mA cm^-2 (mV) | Tafel Slope (mV dec^-1) | BET Area (m^2 g^-1) | |---|---|---|---| | Meso-NiFeOOH (15 at.% Fe) | 218 ± 4 | 34.2 | 142 | | Bulk-NiFeOOH (15 at.% Fe) | 269 ± 5 | 44.1 | 38 |",
+        "evidence_type": "table_or_caption_direct",
+        "locator": {"locator_type": "table_cell", "paragraph_id": "Table_1_block", "section": "3. Results and Discussion", "table_id": "Table_1"}
+      }]
+    },
+    {
+      "temp_id": "BM_18",
+      "claim_text": "Raising Fe doping from 15 at.% to 30 at.% increases charge-transfer resistance from 3.1 Ohm to 11.4 Ohm.",
+      "subject": {"label": "Fe doping fraction from 15 at.% to 30 at.%", "entity_type": "Parameter_Or_Condition", "aliases": ["Fe doping fraction"]},
+      "predicate": "increases",
+      "object": {"label": "charge-transfer resistance (Rct)", "entity_type": "Property_Or_Metric", "aliases": ["charge-transfer resistance"]},
+      "conditions": {"experimental_system": "Meso-NiFeOOH", "parameters": ["15 at.% -> 30 at.% Fe"], "comparator": "15 at.% Fe (3.1 Ohm)", "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "Rct baseline", "operator": "=", "value": "3.1", "unit": "Ohm"}, {"metric": "Rct at 30 at.% Fe", "operator": "=", "value": "11.4", "unit": "Ohm"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "When the Fe doping fraction was raised from 15 at.% to 30 at.%, the charge-transfer resistance (Rct) increased from 3.1 Ohm to 11.4 Ohm",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P010", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_19",
+      "claim_text": "Optimal pore accessibility in Meso-NiFeOOH requires complete removal of the SBA-15 silica template.",
+      "subject": {"label": "optimal pore accessibility", "entity_type": "Property_Or_Metric", "aliases": []},
+      "predicate": "requires_condition",
+      "object": {"label": "complete removal of the SBA-15 silica template", "entity_type": "Process", "aliases": []},
+      "conditions": {"experimental_system": "Meso-NiFeOOH synthesis", "parameters": [], "comparator": null, "scope_qualifiers": ["residual SiO2 blocks active sites"]},
+      "quantitative_values": [],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Complete removal of the SBA-15 silica template is required for optimal pore accessibility, as residual SiO2 blocks active sites.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P010", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_20",
+      "claim_text": "CO2-contaminated ambient KOH decreases geometric current density of Meso-NiFeOOH by 28% within 6 h.",
+      "subject": {"label": "prolonged exposure to CO2-contaminated ambient KOH", "entity_type": "Parameter_Or_Condition", "aliases": ["CO2-contaminated ambient KOH"]},
+      "predicate": "decreases",
+      "object": {"label": "geometric current density", "entity_type": "Property_Or_Metric", "aliases": []},
+      "conditions": {"experimental_system": "CO2-contaminated ambient KOH", "parameters": ["pH < 12.5", "6 h"], "comparator": null, "scope_qualifiers": ["carbonate precipitation"]},
+      "quantitative_values": [{"metric": "current density drop", "operator": "=", "value": "28", "unit": "%"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Furthermore, prolonged exposure to CO2-contaminated ambient KOH (pH < 12.5) causes rapid carbonate precipitation and decreases geometric current density by 28% within 6 h.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P010", "section": "3. Results and Discussion"}
+      }]
+    },
+    {
+      "temp_id": "BM_21",
+      "claim_text": "Meso-NiFeOOH is applicable to anion-exchange membrane water electrolyzers (AEMWEs) operating at 333 K.",
+      "subject": {"label": "Meso-NiFeOOH", "entity_type": "Material", "aliases": []},
+      "predicate": "applicable_to",
+      "object": {"label": "anion-exchange membrane water electrolyzers (AEMWEs)", "entity_type": "Device", "aliases": []},
+      "conditions": {"experimental_system": "AEMWE", "parameters": ["333 K"], "comparator": null, "scope_qualifiers": []},
+      "quantitative_values": [{"metric": "operating temperature", "operator": "=", "value": "333", "unit": "K"}],
+      "polarity": "positive",
+      "epistemic_status": "author_direct_finding",
+      "evidence_spans": [{
+        "source_id": "synthetic_paper",
+        "quote": "Finally, Meso-NiFeOOH is applicable to anion-exchange membrane water electrolyzers (AEMWEs) operating at 333 K.",
+        "evidence_type": "direct_empirical",
+        "locator": {"locator_type": "line_range", "paragraph_id": "P010", "section": "3. Results and Discussion"}
+      }]
+    }
+  ]
+}

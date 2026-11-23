@@ -1,0 +1,725 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verifiable Scientific Nanopublication & Harbor Result Schema",
+  "description": "4-graph Nanopublication specification (head, assertion, provenance, pubinfo) and Harbor deliverable wrapper schema.",
+  "type": "object",
+  "required": [
+    "case_id",
+    "status",
+    "nanopublications",
+    "sources",
+    "uncertainty",
+    "limitations",
+    "change_records"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial",
+        "unable_to_determine",
+        "refused"
+      ]
+    },
+    "nanopublications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Nanopublication"
+      }
+    },
+    "qa_answers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QAAnswer"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConflictRecord"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "change_records": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "manual_takeover_points": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audit_summary": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "EntityRef": {
+      "type": "object",
+      "required": [
+        "label",
+        "entity_type"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entity_type": {
+          "type": "string",
+          "enum": [
+            "Material",
+            "Compound",
+            "Method",
+            "Model",
+            "Device",
+            "Process",
+            "Gene_Or_Protein",
+            "Organism_Or_Cell",
+            "Disease_Or_Phenotype",
+            "Dataset_Or_Cohort",
+            "Property_Or_Metric",
+            "Parameter_Or_Condition",
+            "Theory_Or_Claim",
+            "Study"
+          ]
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "identifier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "QuantValue": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operator": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uncertainty_or_stat": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Locator": {
+      "type": "object",
+      "required": [
+        "locator_type"
+      ],
+      "properties": {
+        "locator_type": {
+          "type": "string",
+          "enum": [
+            "pdf_page",
+            "jats_paragraph_id",
+            "section_paragraph",
+            "line_range",
+            "table_cell",
+            "figure_caption",
+            "equation_block"
+          ]
+        },
+        "page": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "printed_page": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paragraph_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sentence_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line_start": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "line_end": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "char_start": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "char_end": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "table_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "figure_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "equation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "EvidenceSpan": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "quote",
+        "evidence_type",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 5
+        },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "direct_empirical",
+            "direct_analytical",
+            "table_or_caption_direct",
+            "indirect_inference",
+            "cited_prior_work",
+            "method_specification"
+          ]
+        },
+        "locator": {
+          "$ref": "#/$defs/Locator"
+        },
+        "multi_sentence_justification": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ocr_confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "SourceMetadata": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_file",
+        "file_sha256"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "year": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "venue": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "doi": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pmid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arxiv_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_file": {
+          "type": "string"
+        },
+        "file_sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "Nanopublication": {
+      "type": "object",
+      "required": [
+        "nanopub_id",
+        "head",
+        "assertion",
+        "provenance",
+        "pubinfo"
+      ],
+      "properties": {
+        "nanopub_id": {
+          "type": "string",
+          "pattern": "^urn:nanopub:RA[A-Za-z0-9_-]{20,}$"
+        },
+        "head": {
+          "type": "object",
+          "required": [
+            "nanopub_uri",
+            "assertion_graph",
+            "provenance_graph",
+            "pubinfo_graph"
+          ],
+          "properties": {
+            "nanopub_uri": {
+              "type": "string"
+            },
+            "assertion_graph": {
+              "type": "string"
+            },
+            "provenance_graph": {
+              "type": "string"
+            },
+            "pubinfo_graph": {
+              "type": "string"
+            }
+          }
+        },
+        "assertion": {
+          "type": "object",
+          "required": [
+            "claim_text",
+            "subject",
+            "predicate",
+            "object",
+            "conditions",
+            "quantitative_values",
+            "polarity",
+            "epistemic_status"
+          ],
+          "properties": {
+            "claim_text": {
+              "type": "string",
+              "minLength": 5
+            },
+            "subject": {
+              "$ref": "#/$defs/EntityRef"
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "increases",
+                "decreases",
+                "causes",
+                "inhibits",
+                "activates",
+                "catalyzes",
+                "prevents",
+                "correlates_with",
+                "associated_with",
+                "interacts_with",
+                "part_of",
+                "composed_of",
+                "derived_from",
+                "outperforms",
+                "comparable_to",
+                "underperforms",
+                "exhibits_property",
+                "achieves_metric",
+                "uses_method",
+                "evaluated_on",
+                "applicable_to",
+                "requires_condition",
+                "supports",
+                "contradicts"
+              ]
+            },
+            "predicate_uri": {
+              "type": "string"
+            },
+            "object": {
+              "$ref": "#/$defs/EntityRef"
+            },
+            "conditions": {
+              "type": "object",
+              "required": [
+                "experimental_system",
+                "parameters",
+                "comparator",
+                "scope_qualifiers"
+              ],
+              "properties": {
+                "experimental_system": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parameters": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "comparator": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "scope_qualifiers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "quantitative_values": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QuantValue"
+              }
+            },
+            "polarity": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "negative",
+                "null_result",
+                "conditional"
+              ]
+            },
+            "epistemic_status": {
+              "type": "string",
+              "enum": [
+                "author_direct_finding",
+                "author_method_claim",
+                "cited_prior_work",
+                "hypothesis_or_speculation",
+                "limitation"
+              ]
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "evidence_spans",
+            "source_metadata",
+            "confidence"
+          ],
+          "properties": {
+            "evidence_spans": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/EvidenceSpan"
+              }
+            },
+            "source_metadata": {
+              "$ref": "#/$defs/SourceMetadata"
+            },
+            "source_metadata_list": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SourceMetadata"
+              }
+            },
+            "confidence": {
+              "type": "object",
+              "required": [
+                "level",
+                "score",
+                "rationale",
+                "factors"
+              ],
+              "properties": {
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low",
+                    "unverified"
+                  ]
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "factors": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "pubinfo": {
+          "type": "object",
+          "required": [
+            "nanopub_id",
+            "dedup_fingerprint",
+            "created_at",
+            "created_by",
+            "schema_version",
+            "license"
+          ],
+          "properties": {
+            "nanopub_id": {
+              "type": "string"
+            },
+            "dedup_fingerprint": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "created_by": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            },
+            "license": {
+              "type": "string"
+            },
+            "corroboration_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "merged_from_temp_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "QAAnswer": {
+      "type": "object",
+      "required": [
+        "question_id",
+        "question",
+        "answer_status",
+        "answer",
+        "supporting_nanopub_ids",
+        "evidence_spans"
+      ],
+      "properties": {
+        "question_id": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "answer_status": {
+          "type": "string",
+          "enum": [
+            "answered",
+            "partial",
+            "unreported_in_source",
+            "conflicting_evidence"
+          ]
+        },
+        "answer": {
+          "type": "string"
+        },
+        "supporting_nanopub_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_spans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceSpan"
+          }
+        },
+        "uncertainty_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ConflictRecord": {
+      "type": "object",
+      "required": [
+        "conflict_id",
+        "conflict_type",
+        "description",
+        "nanopub_ids"
+      ],
+      "properties": {
+        "conflict_id": {
+          "type": "string"
+        },
+        "conflict_type": {
+          "type": "string",
+          "enum": [
+            "opposite_predicate",
+            "polarity_conflict",
+            "numeric_discrepancy",
+            "claim_evidence_contradiction",
+            "cross_paper_disagreement",
+            "intra_paper_tension"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "nanopub_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "condition_difference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence_spans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceSpan"
+          }
+        }
+      }
+    }
+  }
+}

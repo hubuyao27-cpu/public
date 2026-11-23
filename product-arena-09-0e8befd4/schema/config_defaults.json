@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0.0",
+  "atomicity": {
+    "max_words_per_claim": 45,
+    "max_cjk_chars_per_claim": 90,
+    "max_independent_metrics_per_claim": 2,
+    "compound_split_cues_en": [
+      "; ",
+      ", whereas ",
+      ", while ",
+      ", and also ",
+      ", furthermore,",
+      ", moreover,",
+      " in addition to ",
+      " as well as showing that ",
+      " and demonstrated that "
+    ],
+    "compound_split_cues_zh": [
+      "；",
+      "，此外",
+      "，同时还",
+      "，并且还",
+      "；另一方面"
+    ]
+  },
+  "evidence_minimality": {
+    "max_sentences_without_justification": 2,
+    "max_chars_without_justification": 450,
+    "max_paragraph_coverage_ratio": 0.85,
+    "min_paragraph_chars_for_ratio_check": 450,
+    "fuzzy_fallback_warn_threshold": 0.78
+  },
+  "deduplication": {
+    "token_jaccard_threshold": 0.82,
+    "same_paper_doc_jaccard_threshold": 0.70,
+    "merge_same_fingerprint": true,
+    "preserve_all_corroborating_spans": true
+  },
+  "pdf_ingestion": {
+    "min_chars_per_page_text_layer": 80,
+    "max_garble_ratio": 0.25,
+    "two_column_gutter_min_frac": 0.35,
+    "two_column_gutter_max_frac": 0.65,
+    "header_footer_band_frac": 0.08,
+    "ocr_low_confidence_threshold": 60.0
+  },
+  "confidence_rubric": {
+    "weights": {
+      "evidence_directness": 0.30,
+      "quote_match_exactness": 0.25,
+      "condition_completeness": 0.20,
+      "numeric_fidelity": 0.15,
+      "corroboration_bonus": 0.10
+    },
+    "evidence_type_scores": {
+      "direct_empirical": 1.0,
+      "direct_analytical": 0.95,
+      "table_or_caption_direct": 0.90,
+      "method_specification": 0.85,
+      "indirect_inference": 0.60,
+      "cited_prior_work": 0.45
+    },
+    "level_thresholds": {
+      "high": 0.80,
+      "medium": 0.55,
+      "low": 0.30
+    }
+  },
+  "serialization": {
+    "base_iri": "https://w3id.org/np/arena/",
+    "default_license": "https://creativecommons.org/licenses/by/4.0/",
+    "schema_version": "nanopub-skill/1.0.0",
+    "created_by": "nanopublication-extractor/1.0.0"
+  }
+}
