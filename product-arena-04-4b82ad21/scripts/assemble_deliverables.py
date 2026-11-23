@@ -16,6 +16,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -175,12 +176,119 @@ def _render_audit_md(payload: Dict[str, Any], verification: Dict[str, Any]) -> s
 
 
 def _latex_escape(txt: str) -> str:
-    rep = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}"}
-    out = txt
-    for k, v in rep.items():
-        if k != "\\":
-            out = out.replace(k, v)
-    return out
+    bs_tok = "ZZZBACKSLASHZZZ"
+    out = txt.replace("\\", bs_tok)
+    for k, v in (("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"), ("_", r"\_"), ("{", r"\{"), ("}", r"\}"), ("~", r"\textasciitilde{}"), ("^", r"\textasciicircum{}")):
+        out = out.replace(k, v)
+    return out.replace(bs_tok, r"\textbackslash{}")
+
+
+def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: Dict[str, int], use_cite_cmd: bool) -> str:
+    """Convert structured Markdown prose into clean standalone LaTeX body while preserving existing \\cite{} commands."""
+    lines_out: List[str] = []
+    in_list = False
+    cite_cmd_re = re.compile(r"\\cite[a-z]*\{[^}]+\}")
+    ref_bracket_re = re.compile(r"\[(R\d{2,3}(?:\s*[,;]\s*R\d{2,3})*)\]")
+
+    def convert_inline(s: str) -> str:
+        saved: Dict[str, str] = {}
+
+        def hold(tok: str) -> str:
+            key = f"@@CITEHOLD{len(saved)}@@"
+            saved[key] = tok
+            return key
+
+        tmp = cite_cmd_re.sub(lambda m: hold(m.group(0)), s)
+
+        def sub_rids(m: re.Match[str]) -> str:
+            rids = [x.strip() for x in re.split(r"[,;]", m.group(1)) if x.strip()]
+            if use_cite_cmd:
+                keys = [ref_by_id.get(r.lower(), r) for r in rids]
+                return hold(f"\\cite{{{', '.join(keys)}}}")
+            nums = [str(ref_idx_by_id.get(r.lower(), r)) for r in rids]
+            return f"[{', '.join(nums)}]"
+
+        tmp = ref_bracket_re.sub(sub_rids, tmp)
+        # Handle **bold**, *italic*, `code` after protecting cites
+        spans: Dict[str, str] = {}
+
+        def hold_fmt(tex_cmd: str, inner: str) -> str:
+            key = f"@@FMTHOLD{len(spans)}@@"
+            spans[key] = f"\\{tex_cmd}{{{_latex_escape(inner)}}}"
+            return key
+
+        tmp = re.sub(r"\*\*(.+?)\*\*", lambda m: hold_fmt("textbf", m.group(1)), tmp)
+        tmp = re.sub(r"\*(.+?)\*", lambda m: hold_fmt("emph", m.group(1)), tmp)
+        tmp = re.sub(r"`([^`]+)`", lambda m: hold_fmt("texttt", m.group(1)), tmp)
+        esc = _latex_escape(tmp)
+        for k, v in spans.items():
+            esc = esc.replace(k, v)
+        for k, v in saved.items():
+            esc = esc.replace(k, v)
+        return esc
+
+    for raw in (md or "").splitlines():
+        s = raw.strip()
+        if not s:
+            if in_list:
+                lines_out.append(r"\end{itemize}")
+                in_list = False
+            lines_out.append("")
+            continue
+        if s.startswith("### "):
+            if in_list:
+                lines_out.append(r"\end{itemize}")
+                in_list = False
+            lines_out.append(f"\\subsection{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\s*', '', s[4:].strip()))}}}")
+        elif s.startswith("## "):
+            if in_list:
+                lines_out.append(r"\end{itemize}")
+                in_list = False
+            lines_out.append(f"\\section{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\s*', '', s[3:].strip()))}}}")
+        elif s.startswith("# "):
+            if in_list:
+                lines_out.append(r"\end{itemize}")
+                in_list = False
+            lines_out.append(f"\\section*{{{convert_inline(s[2:].strip())}}}")
+        elif re.match(r"^[-*]\s+", s):
+            if not in_list:
+                lines_out.append(r"\begin{itemize}")
+                in_list = True
+            lines_out.append(f"  \\item {convert_inline(re.sub(r'^[-*]\\s+', '', s))}")
+        else:
+            if in_list:
+                lines_out.append(r"\end{itemize}")
+                in_list = False
+            lines_out.append(convert_inline(s))
+    if in_list:
+        lines_out.append(r"\end{itemize}")
+    return "\n".join(lines_out)
+
+
+def _render_pdf_png_previews(pdf_path: Path, out_dir: Path, prefix: str) -> List[str]:
+    pngs: List[str] = []
+    if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+        return pngs
+    try:
+        try:
+            import pymupdf as fitz  # type: ignore
+        except ImportError:
+            import fitz  # type: ignore
+        doc = fitz.open(str(pdf_path))
+        for idx in range(min(3, len(doc))):
+            p_out = out_dir / f"{prefix}_preview_p{idx + 1}.png"
+            doc[idx].get_pixmap(dpi=150).save(str(p_out))
+            pngs.append(p_out.name)
+        doc.close()
+        if pngs:
+            return pngs
+    except Exception:
+        pass
+    if shutil.which("pdftoppm"):
+        subprocess.run(["pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "3", str(pdf_path), str(out_dir / f"{prefix}_preview")], capture_output=True)
+        for png in sorted(out_dir.glob(f"{prefix}_preview*.png")):
+            pngs.append(png.name)
+    return pngs
 
 
 def _maybe_export_requested(
@@ -190,66 +298,104 @@ def _maybe_export_requested(
 ) -> Tuple[List[str], List[str]]:
     extra_files: List[str] = []
     notes: List[str] = []
+    refs_list = [r for r in (payload.get("references") or []) if isinstance(r, dict)]
+    ref_by_id = {str(r.get("ref_id") or "").lower(): str(r.get("cite_key") or r.get("ref_id") or f"ref{i}") for i, r in enumerate(refs_list, start=1)}
+    ref_idx_by_id = {str(r.get("ref_id") or "").lower(): i for i, r in enumerate(refs_list, start=1)}
 
     if "bib" in requested_formats or "tex" in requested_formats:
         bib_path = out_dir / "references.bib"
         bib_entries: List[str] = []
-        for idx, r in enumerate(payload.get("references") or [], start=1):
-            if not isinstance(r, dict):
-                continue
+        for idx, r in enumerate(refs_list, start=1):
             ck = str(r.get("cite_key") or f"ref{idx}")
+            doi_val = str(r.get("doi_or_id") or "").strip()
+            doi_line = f"  doi = {{{doi_val}}},\n" if doi_val.startswith("10.") else (f"  note = {{{doi_val}}},\n" if doi_val else "")
             bib_entries.append(
                 f"@article{{{ck},\n"
                 f"  author = {{{r.get('authors') or 'Unknown'}}},\n"
-                f"  title = {{{r.get('title') or 'Untitled'}}},\n"
+                f"  title = {{{{{r.get('title') or 'Untitled'}}}}},\n"
                 f"  journal = {{{r.get('venue') or 'Unknown'}}},\n"
                 f"  year = {{{r.get('year') or '0000'}}},\n"
-                f"  note = {{{r.get('doi_or_id') or ''}}}\n"
-                f"}}"
+                f"{doi_line}".rstrip(",\n")
+                + "\n}"
             )
         bib_path.write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8", newline="\n")
         extra_files.append("references.bib")
 
     if "tex" in requested_formats:
         tex_path = out_dir / "introduction_and_related_work.tex"
-        body = _latex_escape(str(payload.get("manuscript_markdown") or ""))
-        title_tex = _latex_escape(str(payload.get("title") or "Introduction and Related Work"))
+        md_raw = str(payload.get("manuscript_markdown") or "")
+        title_raw = str(payload.get("title") or "Introduction and Related Work")
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", md_raw + title_raw))
+        use_cite_cmd = str(payload.get("citation_style") or "") == "bibtex_latex" or "\\cite" in md_raw
+        body_tex = _markdown_to_latex_body(md_raw, ref_by_id, ref_idx_by_id, use_cite_cmd=use_cite_cmd)
+
+        # Build optional booktabs Related Work Comparison Table
+        matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
+        table_tex = ""
+        if matrix:
+            trows = []
+            for m in matrix:
+                trows.append(
+                    " & ".join(
+                        _latex_escape(str(m.get(col) or "")[:90])
+                        for col in ("ref_id", "route", "method_route", "key_result", "limitations")
+                    )
+                    + r" \\"
+                )
+            table_tex = (
+                "\n\\begin{table*}[htbp]\n\\centering\n\\small\n"
+                "\\caption{Structured Related Work Comparison Matrix}\n"
+                "\\begin{tabular}{p{1.2cm}p{2.4cm}p{2.8cm}p{3.0cm}p{3.8cm}}\n\\toprule\n"
+                "Ref & Route & Method & Key Result & Limitations \\\\\n\\midrule\n"
+                + "\n".join(trows)
+                + "\n\\bottomrule\n\\end{tabular}\n\\end{table*}\n"
+            )
+
+        bibitems = []
+        for idx, r in enumerate(refs_list, start=1):
+            ck = str(r.get("cite_key") or f"ref{idx}")
+            fmt = str(r.get("formatted_citation") or f"{r.get('authors', '')} ({r.get('year', '')}). {r.get('title', '')}. {r.get('venue', '')}.").strip()
+            bibitems.append(f"\\bibitem{{{ck}}} {_latex_escape(fmt)}")
+        bib_block = (
+            "\n\\begin{thebibliography}{99}\n" + "\n".join(bibitems) + "\n\\end{thebibliography}\n"
+            if bibitems
+            else ""
+        )
+
+        doc_cls = "\\documentclass[UTF8]{ctexart}\n" if has_cjk else "\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n"
         tex_src = (
-            "\\documentclass[11pt]{article}\n"
-            "\\usepackage[utf8]{inputenc}\n"
-            "\\usepackage[margin=1in]{geometry}\n"
-            f"\\title{{{title_tex}}}\n"
-            "\\begin{document}\n"
-            "\\maketitle\n"
-            "\\begin{verbatim}\n"
-            + str(payload.get("manuscript_markdown") or "")[:6000]
-            + "\n\\end{verbatim}\n"
-            "\\end{document}\n"
+            doc_cls
+            + "\\usepackage[margin=1in]{geometry}\n"
+            + "\\usepackage{booktabs}\n"
+            + "\\usepackage[T1]{fontenc}\n"
+            + f"\\title{{{_latex_escape(title_raw)}}}\n"
+            + "\\date{}\n"
+            + "\\begin{document}\n"
+            + "\\maketitle\n\n"
+            + body_tex
+            + "\n"
+            + table_tex
+            + bib_block
+            + "\\end{document}\n"
         )
         tex_path.write_text(tex_src, encoding="utf-8", newline="\n")
         extra_files.append("introduction_and_related_work.tex")
-        compiler = shutil.which("xelatex") or shutil.which("pdflatex")
+        compiler = (shutil.which("xelatex") or shutil.which("pdflatex")) if has_cjk else (shutil.which("pdflatex") or shutil.which("xelatex"))
         if compiler:
             proc = subprocess.run(
                 [compiler, "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,
             )
             pdf_out = out_dir / "introduction_and_related_work.pdf"
-            if proc.returncode == 0 and pdf_out.exists():
+            if proc.returncode == 0 and pdf_out.exists() and pdf_out.stat().st_size > 0:
                 extra_files.append("introduction_and_related_work.pdf")
-                if shutil.which("pdftoppm"):
-                    subprocess.run(
-                        ["pdftoppm", "-png", "-r", "150", str(pdf_out), str(out_dir / "tex_preview")],
-                        capture_output=True,
-                    )
-                    for png in sorted(out_dir.glob("tex_preview*.png")):
-                        extra_files.append(png.name)
+                extra_files.extend(_render_pdf_png_previews(pdf_out, out_dir, "tex"))
             else:
                 notes.append(f"latex_compile_failed:{proc.returncode}")
         else:
-            notes.append("latex_compiler_not_installed:exported_tex_source_only")
+            notes.append("latex_compiler_not_installed:exported_structured_tex_and_bib")
 
     if "docx" in requested_formats:
         docx_path = out_dir / "introduction_and_related_work.docx"
@@ -258,6 +404,7 @@ def _maybe_export_requested(
 
             doc = docx.Document()
             doc.add_heading(payload.get("title") or "Introduction and Related Work", level=1)
+            bold_split = re.compile(r"(\*\*[^*]+\*\*)")
             for ln in str(payload.get("manuscript_markdown") or "").splitlines():
                 s = ln.strip()
                 if not s:
@@ -269,19 +416,38 @@ def _maybe_export_requested(
                 elif s.startswith("# "):
                     doc.add_heading(s[2:], level=1)
                 else:
-                    doc.add_paragraph(s)
+                    p = doc.add_paragraph()
+                    for part in bold_split.split(s):
+                        if part.startswith("**") and part.endswith("**"):
+                            r = p.add_run(part[2:-2])
+                            r.bold = True
+                        elif part:
+                            p.add_run(part)
+            matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
+            if matrix:
+                doc.add_heading("Related Work Comparison Matrix", level=2)
+                cols = ["ref_id", "route", "method_route", "key_result", "applicability_conditions", "limitations"]
+                tbl = doc.add_table(rows=1, cols=len(cols))
+                hdr = tbl.rows[0].cells
+                for ci, col in enumerate(cols):
+                    hdr[ci].text = col
+                for m in matrix:
+                    row_cells = tbl.add_row().cells
+                    for ci, col in enumerate(cols):
+                        row_cells[ci].text = str(m.get(col) or "")
+            if refs_list:
+                doc.add_heading("References", level=2)
+                for idx, r in enumerate(refs_list, start=1):
+                    doc.add_paragraph(str(r.get("formatted_citation") or f"[{idx}] {r.get('authors', '')} ({r.get('year', '')}). {r.get('title', '')}. {r.get('venue', '')}."))
             doc.save(str(docx_path))
             extra_files.append("introduction_and_related_work.docx")
             soffice = shutil.which("soffice") or shutil.which("libreoffice")
             if soffice:
-                subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)], capture_output=True, timeout=30)
+                subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)], capture_output=True, timeout=45)
                 pdf_p = out_dir / "introduction_and_related_work.pdf"
-                if pdf_p.exists():
+                if pdf_p.exists() and pdf_p.stat().st_size > 0:
                     extra_files.append("introduction_and_related_work.pdf")
-                    if shutil.which("pdftoppm"):
-                        subprocess.run(["pdftoppm", "-png", "-r", "150", str(pdf_p), str(out_dir / "docx_preview")], capture_output=True)
-                        for png in sorted(out_dir.glob("docx_preview*.png")):
-                            extra_files.append(png.name)
+                    extra_files.extend(_render_pdf_png_previews(pdf_p, out_dir, "docx"))
             else:
                 notes.append("soffice_not_installed:docx_written_without_pdf_preview")
         except ImportError:
@@ -293,7 +459,16 @@ def _maybe_export_requested(
 
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt  # type: ignore
+            from matplotlib import font_manager  # type: ignore
             from matplotlib.patches import FancyBboxPatch  # type: ignore
+
+            # Prefer CJK-capable sans-serif fonts if installed so Chinese labels never render as boxes
+            avail_fonts = {f.name for f in font_manager.fontManager.ttflist}
+            cjk_prefs = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", "SimHei", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
+            chosen_fonts = [fn for fn in cjk_prefs if fn in avail_fonts]
+            if chosen_fonts:
+                plt.rcParams["font.sans-serif"] = chosen_fonts + ["DejaVu Sans"]
+            plt.rcParams["axes.unicode_minus"] = False
 
             groups = payload.get("related_work_groups") or []
             gaps = payload.get("research_gaps") or []

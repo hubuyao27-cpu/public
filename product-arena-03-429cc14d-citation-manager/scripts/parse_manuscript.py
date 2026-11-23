@@ -550,6 +550,44 @@ def main() -> None:
         for line in res.get("inline_refs_lines", []):
             all_inline_refs.append({"source_file": f["rel_path"], "raw": line})
 
+    # Fallback: extract inline manuscript from case.json if no external manuscript files exist
+    inline_ms_sources: List[str] = []
+    if not ms_files:
+        cmeta = case_plan.get("case_metadata") or {}
+        for key in ("manuscript", "manuscript_text", "draft", "draft_text", "text", "body", "paper", "article", "sections"):
+            val = cmeta.get(key)
+            if not val:
+                continue
+            if isinstance(val, list):
+                txt = "\n\n".join(
+                    (f"## {item.get('heading') or item.get('section')}\n{item.get('text') or item.get('content') or ''}"
+                     if isinstance(item, dict) else str(item))
+                    for item in val
+                )
+            elif isinstance(val, dict):
+                txt = "\n\n".join(f"## {hk}\n{hv}" for hk, hv in val.items() if hv)
+            else:
+                txt = str(val)
+            if txt.strip():
+                loc = f"case.json#{key}"
+                inline_ms_sources.append(loc)
+                if "\\section" in txt or "\\begin{document}" in txt or "\\cite" in txt:
+                    res = parse_latex_manuscript(txt, loc)
+                    primary_format = "latex"
+                else:
+                    res = parse_markdown_or_text_manuscript(txt, loc)
+                    primary_format = "markdown"
+                all_blocks.extend(res.get("blocks", []))
+                for line in res.get("inline_refs_lines", []):
+                    all_inline_refs.append({"source_file": loc, "raw": line})
+                break
+
+        raw_ir = cmeta.get("inline_references")
+        if isinstance(raw_ir, str) and raw_ir.strip():
+            for ln in raw_ir.splitlines():
+                if ln.strip():
+                    all_inline_refs.append({"source_file": "case.json#inline_references", "raw": ln.strip()})
+
     # Sentence segmentation & citation/placement signal detection
     sentences: List[Dict[str, Any]] = []
     paragraph_end_clusters: List[Dict[str, Any]] = []
@@ -641,7 +679,7 @@ def main() -> None:
 
     parsed = {
         "case_id": case_plan.get("case_id", ""),
-        "manuscript_files": [f["rel_path"] for f in ms_files],
+        "manuscript_files": [f["rel_path"] for f in ms_files] + inline_ms_sources,
         "primary_format": primary_format,
         "sections_order": sections_order,
         "blocks": all_blocks,

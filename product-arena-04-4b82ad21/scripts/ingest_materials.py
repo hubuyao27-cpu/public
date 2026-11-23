@@ -232,6 +232,7 @@ def main() -> None:
     ap.add_argument("--case-plan", default="/app/work/case_plan.json")
     ap.add_argument("--out-ledger", default="/app/work/source_ledger.json")
     ap.add_argument("--out-digest", default="/app/work/evidence_digest.md")
+    ap.add_argument("--out-skeleton", default=None, help="Optional output path for pre-populated section_payload_skeleton.json")
     args = ap.parse_args()
 
     plan, err = load_json_safe(Path(args.case_plan))
@@ -254,23 +255,45 @@ def main() -> None:
     grounded_numbers: List[Dict[str, Any]] = []
     figure_table_mentions: List[Dict[str, str]] = []
 
-    # 1. Process inline materials in case.json
+    # 1. Process inline materials in case.json (and fallback inline blocks in task.md)
     if case_data:
         inline_refs = _extract_refs_from_json(case_data, "case.json")
         raw_ref_records.extend(inline_refs)
-        for k in ("draft", "manuscript", "intro_draft", "existing_draft"):
+        for k in ("draft", "manuscript", "intro_draft", "existing_draft", "related_work"):
             if isinstance(case_data.get(k), str) and case_data[k].strip():
                 draft_texts.append((f"case.json#{k}", case_data[k]))
-        for k in ("methods", "experiments", "results", "figures", "tables", "contributions", "own_paper", "notes", "background", "context"):
+        for k in (
+            "methods", "experiments", "results", "evaluation", "ablation", "metrics",
+            "own_results", "figures", "tables", "contributions", "own_paper",
+            "notes", "background", "context", "abstract", "manuscript",
+        ):
             val = case_data.get(k)
             if not val:
                 continue
             txt = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
-            own_paper_snippets.append({"locator": f"case.json#{k}", "text": txt[:1200]})
+            own_paper_snippets.append({"locator": f"case.json#{k}", "text": txt[:1500]})
             for tok in extract_numeric_tokens(txt, filter_structural=False):
                 grounded_numbers.append({"locator": f"case.json#{k}", **tok})
             for fm in re.finditer(r"(?:Fig(?:ure)?|Table|Tab\.|图|表)\s*\.?\s*[A-Za-z0-9.-]+", txt, re.I):
                 figure_table_mentions.append({"marker": fm.group(0), "locator": f"case.json#{k}"})
+
+    # Fallback: parse inline BibTeX / RIS / numbered references or own metrics inside task.md
+    task_md_path = Path(plan["task_md_path"]) if plan.get("task_md_path") else None
+    if task_md_path and task_md_path.exists():
+        t_txt, t_err = read_text_safe(task_md_path)
+        if t_txt:
+            for tok in extract_numeric_tokens(t_txt, filter_structural=False):
+                grounded_numbers.append({"locator": "task.md", **tok})
+            if not raw_ref_records:
+                if "@" in t_txt and re.search(r"@\w+\s*\{", t_txt):
+                    raw_ref_records.extend(parse_bibtex_text(t_txt, "task.md"))
+                elif "TY  -" in t_txt and "ER  -" in t_txt:
+                    raw_ref_records.extend(parse_ris_text(t_txt, "task.md"))
+                else:
+                    from common import parse_markdown_or_text_refs
+                    task_ref_recs = parse_markdown_or_text_refs(t_txt, "task.md")
+                    if task_ref_recs:
+                        raw_ref_records.extend(task_ref_recs)
 
     # 2. Process all files in inventory (bibliography files FIRST so notes enrich/align rather than create stub refs)
     bucket_order = {"bibliography": 0, "literature_source": 1, "own_paper_evidence": 2, "own_paper_draft": 3, "other_text": 4, "binary_or_figure": 5}
@@ -575,7 +598,85 @@ def main() -> None:
     out_dig = Path(args.out_digest)
     out_dig.parent.mkdir(parents=True, exist_ok=True)
     out_dig.write_text("\n".join(dlines) + "\n", encoding="utf-8", newline="\n")
-    print(json.dumps({"status": "ok", "references": len(catalog), "conflicts": len(conflicts), "pre_gaps": len(pre_gaps)}, ensure_ascii=False))
+
+    # 7. Auto-emit ready-to-fill section_payload_skeleton.json to cut LLM boilerplate turns
+    out_skel = Path(args.out_skeleton) if getattr(args, "out_skeleton", None) else (out_dig.parent / "section_payload_skeleton.json")
+    has_material = bool(catalog or own_paper_snippets or draft_texts)
+    skeleton_refs = [
+        {
+            "ref_id": r["ref_id"],
+            "cite_key": r.get("cite_key") or r["ref_id"],
+            "authors": r.get("authors") or "",
+            "year": r.get("year") or "",
+            "title": r.get("title") or "",
+            "venue": r.get("venue") or "",
+            "doi_or_id": r.get("doi_or_id") or "",
+            "recency_role": r.get("recency_role") or "representative",
+            "source_locator": (r.get("source_locators") or ["unknown"])[0],
+            "verification_status": (
+                "metadata_conflict"
+                if any(r["ref_id"].lower() in json.dumps(c, ensure_ascii=False).lower() for c in conflicts)
+                else ("partial_metadata" if r.get("missing_metadata_fields") else "verified")
+            ),
+            "formatted_citation": "",
+        }
+        for r in catalog
+    ]
+    skeleton_confirm = []
+    for i, g in enumerate(pre_gaps, start=1):
+        iss = str(g.get("issue") or "missing_metadata")
+        if iss == "incomplete_reference_metadata":
+            loc, sev = "references", "important"
+        elif iss == "unspecified_citation_style":
+            loc, sev = "global_format", "recommended"
+        elif iss == "missing_own_paper_evidence":
+            loc, sev = "global_own_paper", "important"
+        elif iss in ("empty_literature_library", "unresolved_draft_citation"):
+            loc = "manuscript_draft" if iss == "unresolved_draft_citation" else "global_literature"
+            sev = "critical"
+        else:
+            loc, sev = g.get("location", "global"), "important"
+        skeleton_confirm.append(
+            {
+                "gap_id": g.get("gap_id", f"GAP-{i:02d}"),
+                "severity": sev,
+                "location_in_draft": loc,
+                "issue_type": iss,
+                "question": g.get("detail", ""),
+                "what_was_checked": f"All files in {plan.get('input_dir', '/input')}",
+            }
+        )
+    skeleton = {
+        "case_id": plan["case_id"],
+        "status": "completed" if has_material else "insufficient_material",
+        "language": plan["signals"]["language"],
+        "citation_style": plan["signals"]["citation_style"],
+        "task_mode": plan["signals"]["task_mode"],
+        "title": str(case_data.get("title") or "Introduction and Related Work"),
+        "manuscript_markdown": "",
+        "research_background": {
+            "domain_lineage": "",
+            "concrete_problem": "",
+            "technical_constraints": [],
+            "why_now": "",
+            "evidence_locators": [],
+            "citation_ids": [],
+        },
+        "related_work_groups": [],
+        "comparison_matrix": [],
+        "research_gaps": [],
+        "contributions": [],
+        "claim_citation_map": [],
+        "references": skeleton_refs,
+        "excluded_references": [],
+        "conflicts": conflicts,
+        "author_confirmation_items": skeleton_confirm,
+        "change_records": [],
+        "uncertainty": list(warnings),
+        "contract_overrides": {},
+    }
+    save_json(out_skel, skeleton)
+    print(json.dumps({"status": "ok", "references": len(catalog), "conflicts": len(conflicts), "pre_gaps": len(pre_gaps), "skeleton": str(out_skel)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

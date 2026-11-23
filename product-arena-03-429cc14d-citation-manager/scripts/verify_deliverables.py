@@ -119,9 +119,14 @@ def main() -> None:
     in_text_format = synced.get("in_text_format", "bracket")
     formatted_refs = synced.get("formatted_references", [])
     bib_nums = {fr["assigned_number"] for fr in formatted_refs}
+    library_only = len(ms.get("sentences", [])) == 0 and len(formatted_refs) > 0
     body_text, bib_text = _split_body_and_bib(revised_md)
 
-    if in_text_format == "latex_cite":
+    if library_only:
+        if target_style not in ("apa7", "apa6", "gbt7714_2015_author_year", "chicago_author_date") and bib_nums:
+            if bib_nums != set(range(1, len(bib_nums) + 1)):
+                err("numbering_gap_or_noncontiguous", f"Library-only bibliography numbers {sorted(bib_nums)} != 1..{len(bib_nums)}")
+    elif in_text_format == "latex_cite":
         # Check \cite{key} vs \bibitem{key}
         tex_path = out_dir / "revised_manuscript.tex"
         tex_txt, _, _ = read_text_safe(tex_path) if tex_path.exists() else (revised_md, "", None)
@@ -137,6 +142,8 @@ def main() -> None:
             err("dangling_latex_cite", f"LaTeX keys cited in text missing from thebibliography: {sorted(missing_keys)}")
         if orphan_keys:
             err("orphan_latex_bibitem", f"LaTeX bibitem entries never cited in text: {sorted(orphan_keys)}")
+        if target_style not in ("apa7", "apa6", "gbt7714_2015_author_year", "chicago_author_date") and _extract_rendered_numeric_citations(body_text):
+            err("dangling_numeric_in_latex_mode", f"Residual unmapped numeric bracket citations found in revised_manuscript.md while in latex_cite mode: {_extract_rendered_numeric_citations(body_text)}")
     elif target_style in ("apa7", "apa6", "gbt7714_2015_author_year", "chicago_author_date"):
         # Verify every occurrence recorded by sync_and_format appears in body_text and every formatted ref is present
         occ_markers = {o["rendered_marker"] for o in synced.get("in_text_occurrences", [])}

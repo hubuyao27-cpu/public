@@ -168,25 +168,44 @@ def main() -> None:
     if status == "completed" and not catalog and not own_ev and not fig_mentions:
         add_err("DISHONEST_STATUS", "status='completed' but both literature catalog and own-paper evidence are empty.", "Change status to 'insufficient_material' or 'partial' and list missing items in uncertainty[].")
 
-    # Axis 2: Core 5-element completeness when completed
+    # Axis 2: Core completeness when completed (mode-aware for targeted subtasks)
+    task_mode = str((plan.get("signals") or {}).get("task_mode") or "draft_intro_rw")
     manuscript = str(payload.get("manuscript_markdown") or "")
     bg = payload.get("research_background") or {}
     rw_groups = payload.get("related_work_groups") or []
+    matrix = payload.get("comparison_matrix") or []
     gaps = payload.get("research_gaps") or []
     contribs = payload.get("contributions") or []
     refs = payload.get("references") or []
 
     if status == "completed":
-        if not manuscript.strip():
-            add_err("EMPTY_MANUSCRIPT", "manuscript_markdown is empty while status=='completed'.", "Write publication-ready Introduction & Related Work text.")
-        if not isinstance(bg, dict) or not bg.get("concrete_problem"):
-            add_err("MISSING_BACKGROUND", "research_background.concrete_problem missing.", "Populate research_background with domain_lineage, concrete_problem, technical_constraints, why_now.")
-        if not rw_groups:
-            add_err("MISSING_RELATED_WORK", "related_work_groups[] is empty.", "Group literature into at least 2 methodological/problem routes (or 1 explicit route if tiny corpus).")
-        if not gaps:
-            add_err("MISSING_RESEARCH_GAPS", "research_gaps[] is empty.", "Derive gaps from cited work limitations/conflicts or mark [作者判断]/[AUTHOR_JUDGMENT].")
-        if not contribs:
-            add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
+        if not manuscript.strip() and not (task_mode == "organize_related_work" and rw_groups and matrix):
+            add_err("EMPTY_MANUSCRIPT", "manuscript_markdown is empty while status=='completed'.", "Write publication-ready prose matching the requested scope.")
+        if task_mode == "organize_related_work":
+            if not rw_groups:
+                add_err("MISSING_RELATED_WORK", "related_work_groups[] is empty.", "Group literature into methodological/problem routes.")
+            if not gaps:
+                add_warn("MISSING_RESEARCH_GAPS", "No research_gaps[] supplied in organize_related_work mode.")
+            if own_ev and not contribs:
+                add_warn("MISSING_CONTRIBUTIONS", "Own-paper evidence exists but contributions[] is empty.")
+        elif task_mode == "fill_and_audit_citations":
+            if not refs:
+                add_err("MISSING_REFERENCES", "references[] is empty in fill_and_audit_citations mode.", "Populate verified references from source_ledger.json.")
+        elif task_mode == "align_contributions":
+            if not contribs:
+                add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty in align_contributions mode.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
+        else:
+            if not isinstance(bg, dict) or not bg.get("concrete_problem"):
+                add_err("MISSING_BACKGROUND", "research_background.concrete_problem missing.", "Populate research_background with domain_lineage, concrete_problem, technical_constraints, why_now.")
+            if not rw_groups:
+                add_err("MISSING_RELATED_WORK", "related_work_groups[] is empty.", "Group literature into at least 2 methodological/problem routes (or 1 explicit route if tiny corpus).")
+            if not gaps:
+                add_err("MISSING_RESEARCH_GAPS", "research_gaps[] is empty.", "Derive gaps from cited work limitations/conflicts or mark [作者判断]/[AUTHOR_JUDGMENT].")
+            if not contribs:
+                if own_ev or fig_mentions:
+                    add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
+                else:
+                    add_warn("NO_OWN_EVIDENCE_FOR_CONTRIBUTIONS", "No own-paper evidence in input; contributions[] left empty or pending author confirmation.")
 
     # Build lookup tables for ledger references & payload references
     ledger_by_ref_id = {r["ref_id"].lower(): r for r in catalog}
@@ -390,7 +409,16 @@ def main() -> None:
             # Check if it's a global format/style item allowed in questionnaire; warn instead if global, error only if specific draft gap
             item_obj = next((x for x in (payload.get("author_confirmation_items") or []) if isinstance(x, dict) and x.get("gap_id") == itg), {})
             loc_str = str(item_obj.get("location_in_draft") or "").lower()
-            if "global" not in loc_str and "references" not in loc_str and "format" not in loc_str:
+            issue_str = str(item_obj.get("issue_type") or "").lower()
+            if (
+                "global" not in loc_str
+                and "references" not in loc_str
+                and "format" not in loc_str
+                and issue_str not in (
+                    "missing_metadata", "missing_venue", "missing_year", "missing_doi",
+                    "incomplete_reference_metadata", "unspecified_citation_style", "missing_own_paper_evidence",
+                )
+            ):
                 add_err(
                     "MISSING_INLINE_GAP_TAG",
                     f"Confirmation item '{itg}' (location='{loc_str}') is not tagged inline in manuscript_markdown.",

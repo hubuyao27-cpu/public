@@ -339,8 +339,12 @@ def detect_task_signals(task_text: str, case_data: Dict[str, Any], files: List[D
         in_text_format = "author_year"
 
     if any(k in low for k in ("\\cite{", "latex", ".tex")):
-        if any(f["ext"] == ".tex" for f in files) or "latex" in low:
+        has_tex_input = any(f["ext"] == ".tex" for f in files)
+        explicit_non_tex_style = any(k in low for k in ("7714", "gb/t", "apa", "上标", "superscript", "顺序编码", "著者—出版年", "著者-出版年"))
+        if has_tex_input or "\\cite{" in low or ("latex" in low and not explicit_non_tex_style):
             in_text_format = "latex_cite"
+        elif any(k in low for k in ("上标", "superscript")) and target_style in ("gbt7714_2015_numeric", "nature", "vancouver"):
+            in_text_format = "superscript_bracket"
     elif any(k in low for k in ("脚注", "footnote")):
         in_text_format = "footnote"
     elif any(k in low for k in ("上标", "superscript")) and target_style in ("gbt7714_2015_numeric", "nature", "vancouver"):
@@ -460,6 +464,25 @@ def main() -> None:
     for f in files:
         by_role.setdefault(f["role"], []).append(f["rel_path"])
 
+    inline_ms_keys = [
+        k for k in ("manuscript", "manuscript_text", "draft", "draft_text", "text", "body", "paper", "article", "sections")
+        if case_data.get(k)
+    ]
+    inline_lib_keys = [
+        k for k in ("references", "bibliography", "library", "papers", "records", "bib_text", "bibtex", "ris_text", "cnki_text", "reference_list_text")
+        if case_data.get(k)
+    ]
+    if not inline_lib_keys and task_text and (re.search(r"@\w+\s*\{", task_text) or ("TY  -" in task_text and "ER  -" in task_text)):
+        inline_lib_keys.append("task.md#inline_library")
+
+    if inline_ms_keys and "manuscript" not in by_role:
+        # Check inline text for LaTeX signals
+        inline_blob = json.dumps({k: case_data[k] for k in inline_ms_keys if k in case_data}, ensure_ascii=False)
+        if "\\cite" in inline_blob or "\\section" in inline_blob:
+            if "tex" not in signals["requested_output_formats"]:
+                signals["requested_output_formats"].append("tex")
+            signals["in_text_format"] = "latex_cite"
+
     plan = {
         "case_id": case_id,
         "input_dir": str(input_dir.resolve()) if input_dir.exists() else str(input_dir),
@@ -471,16 +494,22 @@ def main() -> None:
         "output_contract_raw": contract_raw,
         "output_contract_parsed": output_contract_parsed,
         "signals": signals,
+        "inline_material_keys": {
+            "manuscript": inline_ms_keys,
+            "library": inline_lib_keys,
+        },
         "files": files,
         "files_by_role": by_role,
         "missing_referenced_files": missing_refs,
         "access_warnings": access_warnings,
         "stats": {
             "total_material_files": len(files),
-            "reference_library_count": len(by_role.get("reference_library", [])),
-            "manuscript_count": len(by_role.get("manuscript", [])),
+            "reference_library_count": len(by_role.get("reference_library", [])) + (1 if inline_lib_keys else 0),
+            "manuscript_count": len(by_role.get("manuscript", [])) + (1 if inline_ms_keys else 0),
             "evidence_paper_count": len(by_role.get("evidence_paper", [])),
             "corrupt_or_unreadable_count": len(by_role.get("corrupt_or_unreadable", [])),
+            "has_inline_manuscript": bool(inline_ms_keys),
+            "has_inline_library": bool(inline_lib_keys),
         },
     }
     save_json(out_path, plan)

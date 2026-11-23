@@ -212,36 +212,38 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
         cstyle = "ieee_numeric"
     elif "nature" in low:
         cstyle = "nature_numeric"
-    elif "bibtex" in low or "\\cite" in low or "latex" in low:
+    elif re.search(r"\bbibtex\b|\\cite|\blatex\b|\.tex\b", low):
         cstyle = "bibtex_latex"
     else:
         cstyle = "unspecified"
 
     # Task mode
+    has_intro_cue = bool(re.search(r"\bintroduction\b|引言", low))
+    has_rw_cue = bool(re.search(r"related work|相关工作", low))
     if any(w in low for w in ("bilingual", "双语")):
         tmode = "bilingual_writing"
     elif any(w in low for w in ("revise", "rewrite", "polish", "修改", "改写", "润色", "重构")):
         tmode = "revise_and_strengthen"
-    elif any(w in low for w in ("audit", "verify", "check", "核对", "补引", "补全引用", "校对")):
+    elif any(w in low for w in ("audit", "verify", "check", "核对", "补引", "补全引用", "校对")) and not (has_intro_cue or has_rw_cue):
         tmode = "fill_and_audit_citations"
-    elif any(w in low for w in ("group", "matrix", "compare", "分组", "梳理相关工作", "对比")):
+    elif (has_rw_cue or any(w in low for w in ("group", "matrix", "compare", "分组", "梳理相关工作", "对比路线"))) and not has_intro_cue:
         tmode = "organize_related_work"
-    elif any(w in low for w in ("contribution", "贡献对齐", "贡献表述")):
+    elif any(w in low for w in ("contribution", "贡献对齐", "贡献表述")) and not (has_intro_cue or has_rw_cue):
         tmode = "align_contributions"
     else:
         tmode = "draft_intro_rw"
 
-    # Requested output formats
+    # Requested output formats (avoid matching substrings like 'text'/'context' as 'tex')
     req_fmts = ["md"]
-    if any(w in low for w in ("latex", ".tex", "tex", "\\cite")):
+    if re.search(r"\b(?:latex|xelatex|pdflatex|tex)\b|\.tex\b|\\cite", low):
         req_fmts.append("tex")
-    if any(w in low for w in ("bibtex", ".bib")):
+    if re.search(r"\bbibtex\b|\.bib\b", low):
         req_fmts.append("bib")
-    if any(w in low for w in ("docx", "word")):
+    if re.search(r"\bdocx\b|\.docx\b|\bword\b|word文档", low):
         req_fmts.append("docx")
-    if any(w in low for w in ("csv", "excel", "table", "矩阵")):
+    if re.search(r"\bcsv\b|\.csv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", low):
         req_fmts.append("csv")
-    if any(w in low for w in ("diagram", "taxonomy", "figure", "图谱", "路线图")):
+    if re.search(r"\bdiagram\b|\btaxonomy\b|路线图|关系图|演化图|结构图", low):
         req_fmts.append("diagram")
 
     venue = str(case_data.get("venue") or case_data.get("audience") or case_data.get("journal") or "").strip()
@@ -335,7 +337,13 @@ def main() -> None:
 
     # Identify inline material keys in case.json
     inline_keys: List[str] = []
-    for k in ("references", "bibliography", "papers", "literature", "draft", "manuscript", "experiments", "results", "figures", "tables", "methods", "contributions", "materials", "documents", "notes", "context", "background"):
+    for k in (
+        "references", "bibliography", "papers", "literature", "draft", "manuscript",
+        "existing_draft", "intro_draft", "experiments", "results", "evaluation",
+        "ablation", "metrics", "figures", "tables", "methods", "contributions",
+        "own_paper", "materials", "documents", "notes", "context", "background",
+        "abstract", "related_work",
+    ):
         if k in case_data and case_data[k]:
             inline_keys.append(k)
 

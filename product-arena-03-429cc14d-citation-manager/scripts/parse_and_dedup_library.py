@@ -1143,6 +1143,51 @@ def main() -> None:
             irecs = parse_numbered_ref_lines(inline_lines, style_rules, len(raw_records), "manuscript_inline_ref")
             raw_records.extend(irecs)
 
+    # Also extract inline libraries embedded in case.json or task.md
+    cmeta = case_plan.get("case_metadata") or {}
+    for key in ("references", "bibliography", "library", "papers", "records", "bib_text", "bibtex", "ris_text", "cnki_text", "reference_list_text"):
+        val = cmeta.get(key)
+        if not val:
+            continue
+        loc = f"case.json#{key}"
+        if isinstance(val, (list, dict)):
+            if isinstance(val, list) and all(isinstance(x, str) for x in val):
+                recs = parse_numbered_ref_lines([{"source_file": loc, "raw": x} for x in val if x.strip()], style_rules, len(raw_records), "numbered_list")
+                raw_records.extend(recs)
+            else:
+                recs, warns = parse_csl_or_json(json.dumps(val, ensure_ascii=False), loc, style_rules, len(raw_records))
+                raw_records.extend(recs)
+                parse_warnings.extend(warns)
+        elif isinstance(val, str) and val.strip():
+            txt = val.strip()
+            if "@article" in txt.lower() or "@inproceedings" in txt.lower() or re.search(r"@\w+\s*\{", txt):
+                recs, warns = parse_bibtex(txt, loc, style_rules, len(raw_records))
+            elif "TY  -" in txt and "ER  -" in txt:
+                recs, warns = parse_ris(txt, loc, style_rules, len(raw_records))
+            elif "%0 " in txt and "%T " in txt:
+                recs, warns = parse_endnote_tagged(txt, loc, style_rules, len(raw_records))
+            elif any(k in txt[:2000] for k in ("RT ", "Title-题名:", "SrcDatabase-")):
+                recs, warns = parse_cnki_txt(txt, loc, style_rules, len(raw_records))
+            else:
+                recs = parse_numbered_ref_lines([{"source_file": loc, "raw": ln} for ln in txt.splitlines() if ln.strip()], style_rules, len(raw_records), "numbered_list")
+                warns = []
+            raw_records.extend(recs)
+            parse_warnings.extend(warns)
+
+    if not raw_records:
+        tp = input_dir / "task.md"
+        if tp.exists():
+            t_txt, _, _ = read_text_safe(tp)
+            if t_txt:
+                if re.search(r"@\w+\s*\{", t_txt):
+                    recs, warns = parse_bibtex(t_txt, "task.md", style_rules, len(raw_records))
+                    raw_records.extend(recs)
+                    parse_warnings.extend(warns)
+                elif "TY  -" in t_txt and "ER  -" in t_txt:
+                    recs, warns = parse_ris(t_txt, "task.md", style_rules, len(raw_records))
+                    raw_records.extend(recs)
+                    parse_warnings.extend(warns)
+
     save_json(out_dir / "raw_records.json", {"raw_records": raw_records, "parse_warnings": parse_warnings})
     save_json(out_dir / "evidence_fulltexts.json", {"evidence_papers": evidence_fulltexts})
 

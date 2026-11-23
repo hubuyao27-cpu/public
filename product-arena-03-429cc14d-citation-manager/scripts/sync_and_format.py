@@ -260,13 +260,25 @@ def main() -> None:
     num_map = dict(lib.get("inline_num_to_canonical_map", {}))
     key_map = dict(lib.get("key_to_canonical_map", {}))
     ay_lookup: Dict[str, List[str]] = {}
+    try:
+        from verify_sources_pre import _match_author_year
+    except Exception:
+        _match_author_year = None
     for sl in pre_audit.get("sentence_links", []):
         sid = sl["sentence_id"]
         orig_sent = next((s for s in ms.get("sentences", []) if s["sentence_id"] == sid), None)
         if orig_sent:
             for c in orig_sent.get("citations", []):
-                if c["kind"] in ("author_year_paren", "author_year_narrative") and len(c.get("author_years", [])) == 1 and len(sl.get("resolved_ref_ids", [])) >= 1:
-                    ay_lookup[c["author_years"][0]] = sl["resolved_ref_ids"]
+                if c["kind"] in ("author_year_paren", "author_year_narrative"):
+                    ays = c.get("author_years", [])
+                    if len(ays) == 1 and len(sl.get("resolved_ref_ids", [])) >= 1:
+                        ay_lookup[ays[0]] = sl["resolved_ref_ids"]
+                    elif _match_author_year is not None:
+                        for ay in ays:
+                            if ay not in ay_lookup:
+                                m_ids, _ = _match_author_year(ay, records)
+                                if len(m_ids) == 1:
+                                    ay_lookup[ay] = m_ids
 
     edits_by_sid: Dict[str, Dict[str, Any]] = {}
     for ed in plan.get("manuscript_edits") or []:
@@ -324,20 +336,30 @@ def main() -> None:
             tok_sents.append({"sentence": s_obj, "tokenized_text": tok_str})
         tokenized_blocks.append({"block": blk, "tokenized_sentences": tok_sents})
 
-    sorted_cited = sort_records_for_style(records, target_style, first_appearance_ids)
+    if not first_appearance_ids and len(ms.get("sentences", [])) == 0 and records:
+        # Library-only formatting/dedup/conversion task (no manuscript sentences)
+        library_order_ids = [r["ref_id"] for r in records]
+        sorted_cited = sort_records_for_style(records, target_style, library_order_ids)
+    else:
+        sorted_cited = sort_records_for_style(records, target_style, first_appearance_ids)
     year_suffixes = compute_author_year_suffixes(sorted_cited)
     assigned_numbers: Dict[str, int] = {r["ref_id"]: idx for idx, r in enumerate(sorted_cited, start=1)}
 
     in_text_occurrences: List[Dict[str, Any]] = []
     first_seen_meta: Dict[str, Dict[str, Any]] = {}
     rendered_blocks: List[Dict[str, Any]] = []
+    tex_rendered_blocks: List[Dict[str, Any]] = []
+    req_fmts_early = case_plan.get("signals", {}).get("requested_output_formats", [])
+    want_tex_out = (ms.get("primary_format") == "latex" or "tex" in req_fmts_early)
 
     for tb in tokenized_blocks:
         blk = tb["block"]
         if blk["block_type"] == "heading":
             rendered_blocks.append({"block_type": "heading", "section": blk["section"], "text": blk["text"]})
+            tex_rendered_blocks.append({"block_type": "heading", "section": blk["section"], "text": blk["text"]})
             continue
         rendered_sents: List[str] = []
+        tex_sents: List[str] = []
         for item in tb["tokenized_sentences"]:
             s_obj = item["sentence"]
             tok_str = item["tokenized_text"]
@@ -368,6 +390,17 @@ def main() -> None:
             r_sent = re.sub(r"\s+([。，；：！？])", r"\1", r_sent)
             rendered_sents.append(r_sent)
 
+            if want_tex_out:
+                def _render_tex_match(m: re.Match) -> str:
+                    kind = m.group(1)
+                    rids = [x.strip() for x in m.group(2).split(",") if x.strip() and x.strip() in rec_by_id]
+                    entries = [(rec_by_id[rid], assigned_numbers[rid], year_suffixes.get(rid, "")) for rid in rids]
+                    return format_in_text_citation(entries, target_style, "latex_cite", narrative=(kind == "CITE_NARR"))
+
+                t_sent = CITE_TOKEN_RE.sub(_render_tex_match, tok_str)
+                t_sent = re.sub(r"\s+([。，；：！？])", r"\1", t_sent)
+                tex_sents.append(t_sent)
+
         joined_para = "\n".join(rendered_sents) if blk["block_type"] == "table_cell" else " ".join(rendered_sents)
         if lang == "zh" and blk["block_type"] != "table_cell":
             joined_para = re.sub(r"(?<=[。！？；：”’>）\]])\s+(?=[\u4e00-\u9fff])", "", joined_para)
@@ -376,6 +409,11 @@ def main() -> None:
             "section": blk["section"],
             "text": joined_para,
         })
+        if want_tex_out:
+            t_para = "\n".join(tex_sents) if blk["block_type"] == "table_cell" else " ".join(tex_sents)
+            if lang == "zh" and blk["block_type"] != "table_cell":
+                t_para = re.sub(r"(?<=[。！？；：”’>）\]])\s+(?=[\u4e00-\u9fff])", "", t_para)
+            tex_rendered_blocks.append({"block_type": blk["block_type"], "section": blk["section"], "text": t_para})
 
     formatted_refs: List[Dict[str, Any]] = []
     for rec in sorted_cited:
@@ -454,13 +492,19 @@ def main() -> None:
             orig_tex, _, _ = read_text_safe(input_dir / tex_files[0]["rel_path"])
         cleaned_tex = re.sub(r"\\begin\{thebibliography\}.*?\\end\{thebibliography\}", "", orig_tex, flags=re.S)
         tex_body = []
-        for rb in rendered_blocks:
+        for rb in (tex_rendered_blocks or rendered_blocks):
             if rb["block_type"] == "heading":
-                ht = rb["text"].lstrip("#").strip()
-                if not ht.startswith("\\"):
-                    tex_body.append(f"\\section{{{ht}}}")
+                raw_h = rb["text"].strip()
+                if raw_h.startswith("### "):
+                    tex_body.append(f"\\subsection{{{raw_h[4:].strip()}}}")
+                elif raw_h.startswith("## "):
+                    tex_body.append(f"\\section{{{raw_h[3:].strip()}}}")
+                elif raw_h.startswith("# "):
+                    tex_body.append(f"\\section*{{{raw_h[2:].strip()}}}")
+                elif raw_h.startswith("\\"):
+                    tex_body.append(raw_h)
                 else:
-                    tex_body.append(ht)
+                    tex_body.append(f"\\section{{{raw_h}}}")
             else:
                 tex_body.append(rb["text"])
             tex_body.append("")
@@ -474,7 +518,10 @@ def main() -> None:
             preamble = cleaned_tex[: cleaned_tex.find("\\begin{document}") + len("\\begin{document}")]
             full_tex = preamble + "\n\n" + "\n".join(tex_body + bib_tex) + "\n\n\\end{document}\n"
         else:
-            full_tex = "\\documentclass{article}\n\\usepackage[utf8]{inputenc}\n\\begin{document}\n\n" + "\n".join(tex_body + bib_tex) + "\n\n\\end{document}\n"
+            joined_tex_text = "\n".join(tex_body + bib_tex)
+            has_cjk = bool(re.search(r"[\u4e00-\u9fff]", joined_tex_text))
+            doc_cls = "\\documentclass[UTF8]{ctexart}\n" if has_cjk else "\\documentclass{article}\n\\usepackage[utf8]{inputenc}\n"
+            full_tex = doc_cls + "\\usepackage[margin=1in]{geometry}\n\\begin{document}\n\n" + joined_tex_text + "\n\n\\end{document}\n"
         (out_dir / "revised_manuscript.tex").write_text(full_tex, encoding="utf-8")
 
     ref_md_lines = [ref_heading, ""] + [fr["formatted_entry"] for fr in formatted_refs]

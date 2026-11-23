@@ -35,9 +35,10 @@ submission/
 └── scripts/
     ├── common.py                             # PDF/DOCX/BibTeX/RIS/Markdown 解析与数字单位校验（纯标准库核心）
     ├── inspect_case.py                       # Step 1：契约解析、模式与格式检测、目录扫描
-    ├── ingest_materials.py                   # Step 2：多源文献归并、冲突检测、草稿预审、紧凑摘要生成
-    ├── verify_intro_rw.py                    # Step 5：十轴机械防幻觉与格式一致性校验器
-    └── assemble_deliverables.py              # Step 3/6：断点续存与最终可编辑产物组装
+    ├── ingest_materials.py                   # Step 2：多源文献归并、冲突检测、草稿预审、紧凑摘要与 skeleton 生成
+    ├── prepare_workspace.py                  # 一键预准备入口：串联 inspect -> ingest -> partial 断点输出
+    ├── verify_intro_rw.py                    # Step 3/5：十轴模式感知机械防幻觉与格式一致性校验器
+    └── assemble_deliverables.py              # Step 4/6：断点续存与结构化 LaTeX/DOCX/MD/图谱最终组装
 ```
 
 ---

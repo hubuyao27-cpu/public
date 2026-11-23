@@ -40,10 +40,27 @@ def _export_docx(
         doc = docx.Document()
         doc.add_heading(title or "Revised Manuscript", level=1)
 
-        sup_split_re = re.compile(r"(<sup>.*?</sup>|\^\[[^\]]+\])")
-        for line in revised_md.splitlines():
-            s = line.strip()
+        tok_split_re = re.compile(r"(<sup>.*?</sup>|\^\[[^\]]+\]|\*\*[^*]+\*\*)")
+        md_lines = revised_md.splitlines()
+        idx_ln = 0
+        while idx_ln < len(md_lines):
+            s = md_lines[idx_ln].strip()
             if not s:
+                idx_ln += 1
+                continue
+            if s.startswith("|") and s.endswith("|") and idx_ln + 1 < len(md_lines) and re.match(r"^\|[\s:|\-]+\|$", md_lines[idx_ln + 1].strip()):
+                rows_raw: List[List[str]] = []
+                while idx_ln < len(md_lines) and md_lines[idx_ln].strip().startswith("|"):
+                    row_s = md_lines[idx_ln].strip()
+                    if not re.match(r"^\|[\s:|\-]+\|$", row_s):
+                        rows_raw.append([c.strip() for c in row_s.strip("|").split("|")])
+                    idx_ln += 1
+                if rows_raw:
+                    ncol = max(len(r) for r in rows_raw)
+                    tbl = doc.add_table(rows=len(rows_raw), cols=ncol)
+                    for ri, row in enumerate(rows_raw):
+                        for ci, cell_val in enumerate(row[:ncol]):
+                            tbl.rows[ri].cells[ci].text = cell_val
                 continue
             if s.startswith("### "):
                 doc.add_heading(s[4:], level=3)
@@ -53,19 +70,22 @@ def _export_docx(
                 doc.add_heading(s[2:], level=1)
             else:
                 p = doc.add_paragraph()
-                parts = sup_split_re.split(s)
+                parts = tok_split_re.split(s)
                 for part in parts:
                     if not part:
                         continue
                     if part.startswith("<sup>") and part.endswith("</sup>"):
-                        inner = part[5:-6]
-                        r = p.add_run(inner)
+                        r = p.add_run(part[5:-6])
                         r.font.superscript = True
                     elif part.startswith("^[") and part.endswith("]"):
                         r = p.add_run(part[1:])
                         r.font.superscript = True
+                    elif part.startswith("**") and part.endswith("**"):
+                        r = p.add_run(part[2:-2])
+                        r.bold = True
                     else:
                         p.add_run(part)
+            idx_ln += 1
         doc.save(str(out_docx))
         return True, None
     except Exception as exc:
@@ -310,13 +330,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     synced_dir = Path(args.synced).parent
 
-    # Determine honest run status
+    # Determine honest run status (account for inline case.json/task.md materials too)
     stats = case_plan.get("stats", {})
     total_files = stats.get("total_material_files", 0)
     corrupt_cnt = stats.get("corrupt_or_unreadable_count", 0)
+    has_any_material = (total_files - corrupt_cnt > 0) or len(lib.get("canonical_records", [])) > 0 or len(ms.get("sentences", [])) > 0
     if args.checkpoint == "partial":
         status = "partial"
-    elif total_files == 0 or (total_files > 0 and corrupt_cnt == total_files):
+    elif not has_any_material:
         status = "unable_to_determine"
     elif verification and verification.get("error_count", 0) > 0:
         status = "partial"

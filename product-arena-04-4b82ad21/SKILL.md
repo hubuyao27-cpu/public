@@ -29,66 +29,53 @@ SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
 mkdir -p /app/work /app/output
 ```
 - **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and actual files under `/input/`. Never infer scientific facts from directory labels or filenames alone.
-- **Work**: `/app/work` (`case_plan.json`, `source_ledger.json`, `evidence_digest.md`, `section_payload.json`, `verification_report.json`).
-- **Outputs**: `/app/output/` (`result.json` with `case_id` + all `output_contract` fields, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md`, `provenance_map.json`, plus `.tex`/`.bib`/`.docx`/taxonomy previews when requested).
+- **Work**: `/app/work` (`case_plan.json`, `source_ledger.json`, `evidence_digest.md`, `section_payload_skeleton.json`, `section_payload.json`, `verification_report.json`).
+- **Outputs**: `/app/output/` (`result.json` with `case_id` + all `output_contract` fields, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md`, `provenance_map.json`, plus structured `.tex`/`.bib`/`.docx`/taxonomy previews when requested).
 
 ---
 
-## Mandatory 6-Step Workflow
+## Streamlined 4-Step Workflow (Budget-Aware for 64 Requests)
 
-### Step 1: Inspect Case Contract, Constraints & File Inventory
+### Step 1: One-Command Workspace Prep & Honest Partial Checkpoint
+Run `prepare_workspace.py` (which executes `inspect_case.py` -> `ingest_materials.py` -> `assemble_deliverables.py --checkpoint partial`):
 ```bash
-python3 "$SKILL_DIR/scripts/inspect_case.py" \
+python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
   --input-dir /input \
-  --out /app/work/case_plan.json
-```
-Read `/app/work/case_plan.json` (and `/input/task.md`) to confirm `case_id`, all `output_contract` required fields, `signals.task_mode`, `language`, `citation_style`, `requested_formats`, and `missing_referenced_files`.
-
-### Step 2: Deterministic Ingestion & Conflict/Gap Pre-Audit
-```bash
-python3 "$SKILL_DIR/scripts/ingest_materials.py" \
-  --case-plan /app/work/case_plan.json \
-  --out-ledger /app/work/source_ledger.json \
-  --out-digest /app/work/evidence_digest.md
-```
-Parses `.bib`, `.ris`, `.json`, `.csv`/`.tsv`, `.md`, `.txt`, `.tex`, `.docx`, `.pdf` (with OCR/error detection), and inline `case.json` materials; builds `references_catalog` (`R01..RNN`), extracts own-paper methods/figures/tables/metrics, audits any existing draft, detects cross-source metadata conflicts (`CONF-XX`), and pre-audits gaps (`GAP-XX`).
-
-### Step 3: Save Honest Early Partial Checkpoint
-Immediately persist an early checkpoint so budget exhaustion never leaves `/app/output/result.json` missing:
-```bash
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
-  --case-plan /app/work/case_plan.json \
-  --ledger /app/work/source_ledger.json \
-  --checkpoint partial \
+  --work-dir /app/work \
   --out-dir /app/output
 ```
-- **Empty/Unreadable Short-Circuit**: If `references_catalog` and `own_paper_evidence` are both empty (or all files failed decryption/parsing), do **not** invent citations or metrics. Consult `$SKILL_DIR/resources/edge_cases_and_fallbacks.md`, write an honest `status: "insufficient_material"` payload documenting exact blockers, verify, and assemble.
+This single command:
+1. Parses `case_id`, `output_contract`, `signals.task_mode`, `language`, `citation_style`, `requested_formats`, and missing/corrupt files into `/app/work/case_plan.json`.
+2. Ingests `.bib`, `.ris`, `.json`, `.csv`/`.tsv`, `.md`, `.txt`, `.tex`, `.docx`, `.pdf`, and inline `case.json`/`task.md` materials into `/app/work/source_ledger.json` and `/app/work/evidence_digest.md`.
+3. Emits pre-grounded `/app/work/section_payload_skeleton.json` (with exact `case_id`, verified `references[]`, pre-detected `conflicts[]`, `author_confirmation_items[]`, and `uncertainty[]`) so you never re-type bibliographic metadata by hand.
+4. Saves an honest early `/app/output/result.json` partial checkpoint immediately.
 
-### Step 4: Read `evidence_digest.md` & Author `/app/work/section_payload.json`
-Read `/app/work/evidence_digest.md` (only inspect raw source files when verbatim confirmation is needed). Author `/app/work/section_payload.json` conforming strictly to `$SKILL_DIR/resources/payload_schema.json` and `$SKILL_DIR/resources/templates/intro_rw_template.md`:
-1. **`manuscript_markdown`**: Publication-ready Introduction & Related Work prose matching requested language, audience, and citation format.
-   - Open with domain lineage + concrete technical constraint (no cliché fillers).
-   - Group Related Work into `2–4` technical/problem routes (`related_work_groups[]` + `comparison_matrix[]`), stating each work's conclusions, applicability conditions, and limitations.
-   - Derive `research_gaps[]` from cited limitations/conflicts; mark uncorroborated synthetic inferences inline with `[作者判断]` or `[AUTHOR_JUDGMENT]`.
-   - Bind every entry in `contributions[]` to concrete `own_evidence_locators`, `linked_methods`, `linked_figures_tables`, `linked_metrics`, and explicit `scope_qualification`.
-   - Tag every missing metadata field, missing citation text, conflict, or unverified claim inline as `[待作者确认: GAP-XX]` (or `[AUTHOR_CONFIRM: GAP-XX]`) matched 1-to-1 in `author_confirmation_items[]`.
-2. **`references[]` & `excluded_references[]`**: Include verified metadata (`ref_id`, `cite_key`, `authors`, `year`, `title`, `venue`, `doi_or_id`, `recency_role`, `source_locator`, `formatted_citation`) and justify any excluded candidate references.
-3. **`conflicts[]`, `change_records[]`, `uncertainty[]`**: Disclose every `CONF-XX`, log revisions if revising a draft, and record format/evidence uncertainties (e.g., adopted default when journal style is unspecified).
-4. **`contract_overrides`**: Supply exact values for any custom `output_contract` field names not covered by canonical semantic roles.
+*(Individual stage scripts `inspect_case.py`, `ingest_materials.py`, and `assemble_deliverables.py` remain independently callable if custom debugging is needed.)*
+- **Empty/Unreadable Short-Circuit**: If `references_catalog` and `own_paper_evidence` are both empty (or all files failed decryption/parsing), do **not** invent citations or metrics. Consult `$SKILL_DIR/resources/edge_cases_and_fallbacks.md`, complete `/app/work/section_payload.json` from the skeleton with `status: "insufficient_material"`, verify, and assemble.
 
-### Step 5: 10-Axis Mechanical Verification & Self-Correction Loop
+### Step 2: Read Digest & Complete `/app/work/section_payload.json`
+Read `/app/work/evidence_digest.md` and `/app/work/section_payload_skeleton.json` (inspect raw source files only when verbatim quotes/details are needed; consult `$SKILL_DIR/resources/payload_schema.json` and `$SKILL_DIR/resources/templates/intro_rw_template.md` only if field rules are unclear).
+Edit/complete the skeleton and save as `/app/work/section_payload.json`:
+1. **`manuscript_markdown`**: Publication-ready text matching requested `signals.task_mode`, `language`, audience, and citation format (`[R01]` / `\cite{key}` / author-year per style).
+   - For full `draft_intro_rw` / `revise_and_strengthen` / `bilingual_writing`: cover Background (`立得住`), Taxonomic Related Work (`分得清`, 2–4 routes), Gaps (`说得实`), and Contributions (`对得上`).
+   - For focused `organize_related_work` / `fill_and_audit_citations` / `align_contributions`: prioritize the exact requested deliverables without padding unrequested sections; still anchor every claim and citation.
+   - Mark synthetic inferences inline with `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing metadata/conflicts/unverified claims inline with `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]`.
+2. **Keep Pre-Grounded Metadata Intact**: Retain `references[]`, `conflicts[]`, and `pre_gaps` from `section_payload_skeleton.json` (updating `formatted_citation` and `verification_status` only per schema/conflicts) so `METADATA_YEAR_MISMATCH` never triggers.
+3. **`contract_overrides`**: Supply explicit values only if `case_plan.json` lists custom `output_contract` fields not automatically covered by semantic roles.
+
+### Step 3: Mode-Aware Mechanical Verification & Self-Correction Loop
 ```bash
-python3 "$SKILL_DIR/scripts/verify_intro_rw.py" \
+python3 -B "$SKILL_DIR/scripts/verify_intro_rw.py" \
   --payload /app/work/section_payload.json \
   --ledger /app/work/source_ledger.json \
   --case-plan /app/work/case_plan.json \
   --out /app/work/verification_report.json
 ```
-If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix every reported error (`UNRESOLVED_INLINE_CITATION`, `FABRICATED_REFERENCE`, `METADATA_YEAR_MISMATCH`, `UNBACKED_RESEARCH_GAP`, `UNALIGNED_CONTRIBUTION`, `UNGROUNDED_METRIC`, `UNDISCLOSED_CONFLICT`, `ORPHAN_INLINE_GAP`, etc.) and re-run until `"passed": true`. Also address high-value `warnings` (`HOLLOW_CLICHE_OPENING`, `CITATION_DUMP`, `CONTRIBUTION_OVERCLAIM`).
+If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix every blocking error (`UNRESOLVED_INLINE_CITATION`, `FABRICATED_REFERENCE`, `METADATA_YEAR_MISMATCH`, `UNBACKED_RESEARCH_GAP`, `UNALIGNED_CONTRIBUTION`, `UNGROUNDED_METRIC`, `UNDISCLOSED_CONFLICT`, `ORPHAN_INLINE_GAP`, etc.) and re-run until `"passed": true`. Fix high-value warnings (`HOLLOW_CLICHE_OPENING`, `CITATION_DUMP`, `CONTRIBUTION_OVERCLAIM`).
 
-### Step 6: Assemble Final Verified Deliverables
+### Step 4: Assemble Final Verified Deliverables
 ```bash
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
+python3 -B "$SKILL_DIR/scripts/assemble_deliverables.py" \
   --case-plan /app/work/case_plan.json \
   --ledger /app/work/source_ledger.json \
   --payload /app/work/section_payload.json \
@@ -96,4 +83,4 @@ python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
   --checkpoint final \
   --out-dir /app/output
 ```
-Confirm `/app/output/result.json` contains `case_id`, all `output_contract` keys, honest `status`, `sources`, `uncertainty`, and `change_records`, alongside editable deliverables.
+Confirm `/app/output/result.json` contains `case_id`, every `output_contract` key, honest `status`, `sources`, `uncertainty`, and `change_records`, alongside editable Markdown / structured `.tex` / `.bib` / `.docx` / PNG previews.

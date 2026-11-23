@@ -64,10 +64,12 @@ citation-reference-manager/
 │   ├── parse_manuscript.py
 │   ├── parse_and_dedup_library.py
 │   ├── verify_sources_pre.py
+│   ├── prepare_workspace.py
 │   ├── style_formatters.py
 │   ├── sync_and_format.py
 │   ├── assemble_deliverables.py
-│   └── verify_deliverables.py
+│   ├── verify_deliverables.py
+│   └── finalize_workspace.py
 └── examples/
     ├── minimal_example.md
     ├── sample_manuscript.md
