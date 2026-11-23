@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterPayload",
+  "description": "Structured intermediate authoring payload written by the Agent to /app/work/chapter_payload.json before mechanical verification (verify_chapter.py) and final deliverable assembly (assemble_deliverables.py).",
+  "type": "object",
+  "required": [
+    "case_id",
+    "task_mode",
+    "language",
+    "domain",
+    "manuscript_markdown",
+    "method_steps",
+    "experimental_setup",
+    "parameter_table",
+    "datasets_and_splits",
+    "baseline_comparisons",
+    "reproducibility_checklist",
+    "limitations",
+    "conflicts",
+    "author_confirmation_items",
+    "sources",
+    "uncertainty",
+    "change_records"
+  ],
+  "properties": {
+    "case_id": {"type": "string"},
+    "task_mode": {"type": "string", "enum": ["draft_from_materials", "revise_and_align_draft", "proofread_and_audit", "structured_extraction", "bilingual_writing"]},
+    "language": {"type": "string", "enum": ["zh", "en", "bilingual"]},
+    "domain": {"type": "string", "enum": ["ml_computational", "wetlab_chem_bio_materials", "simulation_engineering", "general_scientific"]},
+    "title": {"type": "string"},
+    "manuscript_markdown": {"type": "string", "description": "Publication-ready, editable Methods & Experiments section. Tag any missing/unverified detail inline with [待作者确认: GAP-XX] or [AUTHOR_CONFIRM: GAP-XX]."},
+    "method_steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step_id", "stage", "input", "operation", "output", "decision_or_stop_condition", "source_locators"],
+        "properties": {
+          "step_id": {"type": "string"},
+          "stage": {"type": "string"},
+          "input": {"type": "string"},
+          "operation": {"type": "string"},
+          "output": {"type": "string"},
+          "decision_or_stop_condition": {"type": "string"},
+          "source_locators": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "experimental_setup": {
+      "type": "object",
+      "properties": {
+        "training_or_preparation_protocol": {"type": "string"},
+        "validation_or_characterization_protocol": {"type": "string"},
+        "testing_or_evaluation_protocol": {"type": "string"},
+        "stage_separation_verified": {"type": "boolean"},
+        "hardware_or_instruments": {"type": "array", "items": {"type": "object"}},
+        "software_or_firmware": {"type": "array", "items": {"type": "object"}},
+        "random_seeds": {"type": "array", "items": {"type": "object"}},
+        "repeat_counts": {"type": "string"},
+        "source_locators": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "parameter_table": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["param_id", "name", "value", "unit", "target_object", "stage", "source_locator", "source_type", "verification_status"],
+        "properties": {
+          "param_id": {"type": "string"},
+          "name": {"type": "string"},
+          "symbol_or_key": {"type": "string"},
+          "canonical_key": {"type": "string"},
+          "value": {},
+          "unit": {"type": "string"},
+          "target_object": {"type": "string"},
+          "stage": {"type": "string"},
+          "source_locator": {"type": "string"},
+          "source_type": {"type": "string", "enum": ["runtime_log", "cli_script", "exp_config", "code_default", "data_table", "paper_source", "lab_note", "narrative_draft", "derived", "author_confirm"]},
+          "verification_status": {"type": "string", "enum": ["verified", "conflict_resolved_with_note", "conflict_unresolved", "draft_only_unverified", "missing_author_confirm", "derived"]},
+          "derivation": {"type": "string"},
+          "verbatim_quote": {"type": "string"},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "datasets_and_splits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "version_or_grade", "scale_or_quantity", "preprocessing", "split_strategy", "subset_roles", "source_locators"],
+        "properties": {
+          "name": {"type": "string"},
+          "version_or_grade": {"type": "string"},
+          "scale_or_quantity": {"type": "string"},
+          "preprocessing": {"type": "string"},
+          "split_strategy": {"type": "string"},
+          "subset_roles": {"type": "string"},
+          "leakage_check": {"type": "string"},
+          "source_locators": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "baseline_comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["baseline_name", "version_or_source", "budget_parity_status", "budget_parity_details", "evaluation_metrics", "statistical_method", "source_locators"],
+        "properties": {
+          "baseline_name": {"type": "string"},
+          "version_or_source": {"type": "string"},
+          "budget_parity_status": {"type": "string", "enum": ["matched", "partially_matched", "unmatched", "unknown_author_confirm"]},
+          "budget_parity_details": {"type": "string"},
+          "evaluation_metrics": {"type": "string"},
+          "statistical_method": {"type": "string"},
+          "source_locators": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "reproducibility_checklist": {
+      "type": "object",
+      "properties": {
+        "code_repository_and_version": {"type": "string"},
+        "environment_specification": {"type": "string"},
+        "reproduction_commands": {"type": "array", "items": {"type": "string"}},
+        "data_or_material_access": {"type": "string"},
+        "random_seeds_and_determinism": {"type": "string"},
+        "expected_compute_or_resources": {"type": "string"},
+        "missing_items": {"type": "array", "items": {"type": "string"}},
+        "source_locators": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["limitation_id", "failure_scenario", "trigger_condition", "affected_scope", "evidence_or_attribution"],
+        "properties": {
+          "limitation_id": {"type": "string"},
+          "failure_scenario": {"type": "string"},
+          "trigger_condition": {"type": "string"},
+          "affected_scope": {"type": "string"},
+          "mitigation_or_boundary": {"type": "string"},
+          "evidence_or_attribution": {"type": "string"},
+          "source_locators": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["conflict_id", "item", "sources_compared", "adopted_value_or_status", "rationale", "needs_author_confirmation"],
+        "properties": {
+          "conflict_id": {"type": "string"},
+          "item": {"type": "string"},
+          "sources_compared": {"type": "array", "items": {"type": "object"}},
+          "adopted_value_or_status": {"type": "string"},
+          "rationale": {"type": "string"},
+          "needs_author_confirmation": {"type": "boolean"}
+        }
+      }
+    },
+    "author_confirmation_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap_id", "pillar", "severity", "location_in_draft", "issue_type", "question", "what_was_checked"],
+        "properties": {
+          "gap_id": {"type": "string"},
+          "pillar": {"type": "string"},
+          "severity": {"type": "string", "enum": ["critical", "important", "recommended"]},
+          "location_in_draft": {"type": "string"},
+          "issue_type": {"type": "string", "enum": ["missing_in_materials", "conflict_between_materials", "unsourced_in_draft", "unreadable_source", "budget_parity_unknown", "version_ambiguous"]},
+          "question": {"type": "string"},
+          "what_was_checked": {"type": "string"},
+          "blocking_reproducibility": {"type": "boolean"}
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_or_item", "source_locator", "verbatim_quote"],
+        "properties": {
+          "claim_or_item": {"type": "string"},
+          "source_locator": {"type": "string"},
+          "source_type": {"type": "string"},
+          "verbatim_quote": {"type": "string"}
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "reason", "details", "human_handoff"],
+        "properties": {
+          "target": {"type": "string"},
+          "reason": {"type": "string"},
+          "details": {"type": "string"},
+          "human_handoff": {"type": "string"}
+        }
+      }
+    },
+    "change_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["change_id", "target", "action", "before", "after", "basis_locator"],
+        "properties": {
+          "change_id": {"type": "string"},
+          "target": {"type": "string"},
+          "action": {"type": "string"},
+          "before": {"type": "string"},
+          "after": {"type": "string"},
+          "basis_locator": {"type": "string"}
+        }
+      }
+    },
+    "contract_overrides": {
+      "type": "object",
+      "description": "Explicit exact-key overrides for any custom fields required by /input/case.json output_contract."
+    }
+  }
+}

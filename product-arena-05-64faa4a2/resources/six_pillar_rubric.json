@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Domain-adaptive 6-pillar completeness and reproducibility rubric for Methods & Experiments academic writing.",
+  "pillars": {
+    "method_steps": {
+      "label_zh": "方法步骤",
+      "label_en": "Method Procedure & Execution Steps",
+      "required_subfields": ["step_id", "stage", "input", "operation", "output", "decision_or_stop_condition", "source_locators"],
+      "check_guidance": "Present an ordered, executable sequence with explicit input, action, output, and stopping/decision criteria rather than collapsing multiple operations into one vague sentence."
+    },
+    "experimental_setup": {
+      "label_zh": "实验设置",
+      "label_en": "Experimental Setup & Environment",
+      "required_subfields": ["stages_separated", "hardware_or_instruments", "software_or_firmware_versions", "runtime_environment", "random_seeds_or_randomization", "repeat_counts"],
+      "check_guidance": "Strictly separate Training/Validation/Testing (or Synthesis/Characterization/Testing) conditions so hyperparameters or sample treatments never bleed across stages."
+    },
+    "parameters_and_provenance": {
+      "label_zh": "参数与来源",
+      "label_en": "Parameters & Source Provenance",
+      "required_subfields": ["name", "value", "unit", "target_object", "stage", "source_locator", "source_type"],
+      "check_guidance": "Every parameter must carry name, exact value, unit, target scope, and concrete source (config/log/code/paper/author_confirm), and prose values must match the table 100%."
+    },
+    "datasets_and_splits": {
+      "label_zh": "数据集与划分 / 样本与材料",
+      "label_en": "Datasets & Splits / Materials & Samples",
+      "required_subfields": ["name", "version_or_grade", "scale_or_quantity", "preprocessing_or_preparation", "split_or_grouping_strategy", "subset_usage"],
+      "check_guidance": "Specify exact dataset version/snapshot (or reagent grade/batch), sample counts, leakage-free preprocessing, split ratios & randomization strategy, and role of every subset."
+    },
+    "baselines_and_controls": {
+      "label_zh": "对照实验与评测",
+      "label_en": "Baselines, Controls & Evaluation",
+      "required_subfields": ["baseline_name_and_version", "budget_or_condition_parity", "evaluation_metrics", "statistical_aggregation_and_tests"],
+      "check_guidance": "Identify exact baseline versions/implementations, explicitly state whether compute/resource/experimental budgets are matched (or document asymmetry), define metrics precisely, and specify statistical reporting."
+    },
+    "reproducibility_and_limitations": {
+      "label_zh": "可复现性与限制条件",
+      "label_en": "Reproducibility Checklist & Failure-Mode Limitations",
+      "required_subfields": ["code_or_protocol_version", "environment_spec", "reproduction_commands_or_sop", "data_or_material_access", "concrete_failure_scenarios"],
+      "check_guidance": "Deliver an actionable reproduction checklist and ground every limitation in a concrete failure scenario, trigger condition, and validity boundary (no generic boilerplate)."
+    }
+  },
+  "domain_slots": {
+    "ml_computational": [
+      {"slot_id": "ML-01", "pillar": "method_steps", "name": "Ordered pipeline steps (input/op/output/stop)", "severity": "critical", "keywords": ["step", "pipeline", "algorithm", "procedure", "workflow", "阶段", "步骤", "流程"], "question_zh": "请确认方法流程中各步骤的精确输入、操作顺序、中间输出及终止/收敛判断条件。", "question_en": "Please confirm the exact input, operation sequence, intermediate output, and stopping/convergence criterion for each step."},
+      {"slot_id": "ML-02", "pillar": "experimental_setup", "name": "Train/Val/Test stage separation", "severity": "critical", "keywords": ["train", "val", "validation", "test", "inference", "eval", "训练", "验证", "测试"], "question_zh": "请确认训练、验证与测试阶段的超参数、批大小及前处理流程是否完全一致，是否存在阶段差异。", "question_en": "Please confirm whether hyperparameters, batch sizes, and preprocessing differ across training, validation, and testing."},
+      {"slot_id": "ML-03", "pillar": "experimental_setup", "name": "Hardware & software/library versions", "severity": "important", "keywords": ["gpu", "cpu", "cuda", "pytorch", "torch", "tensorflow", "python", "a100", "v100", "rtx", "hardware", "硬件", "显卡", "环境"], "question_zh": "请补充实验运行的硬件规格（GPU/CPU 型号与数量）及核心软件/框架版本号（Python、PyTorch/CUDA 等）。", "question_en": "Please provide the hardware specs (GPU/CPU model & count) and core software/framework versions (Python, PyTorch, CUDA, etc.)."},
+      {"slot_id": "ML-04", "pillar": "experimental_setup", "name": "Random seeds & repeat counts", "severity": "critical", "keywords": ["seed", "random_state", "manual_seed", "repeat", "runs", "fold", "seeds", "随机种子", "重复次数"], "question_zh": "请确认实验使用的全部随机种子取值及独立重复实验次数（或交叉验证折数）。", "question_en": "Please confirm the exact random seed(s) and number of independent runs (or CV folds)."},
+      {"slot_id": "ML-05", "pillar": "parameters_and_provenance", "name": "Core optimization & model hyperparameters", "severity": "critical", "keywords": ["lr", "learning_rate", "batch_size", "epochs", "optimizer", "weight_decay", "dropout", "scheduler", "学习率", "批大小", "轮次"], "question_zh": "请核实模型与优化核心超参数（学习率、批大小、训练轮数、优化器、正则化等）的最终生效取值及其配置来源。", "question_en": "Please verify the final effective values and config sources for core model and optimization hyperparameters."},
+      {"slot_id": "ML-06", "pillar": "datasets_and_splits", "name": "Dataset version, scale, preprocessing & split strategy", "severity": "critical", "keywords": ["dataset", "version", "split", "train_test_split", "ratio", "stratified", "preprocess", "normalize", "数据集", "版本", "划分"], "question_zh": "请确认数据集的精确版本号/快照日期、样本总量、预处理是否仅在训练集拟合，以及划分比例与随机方式。", "question_en": "Please confirm the exact dataset version/snapshot, sample count, train-only preprocessing details, and split ratios/strategy."},
+      {"slot_id": "ML-07", "pillar": "baselines_and_controls", "name": "Baseline versions, budget parity & statistical metrics", "severity": "critical", "keywords": ["baseline", "compare", "budget", "metric", "f1", "accuracy", "auc", "rmse", "mae", "std", "p-value", "基线", "对照", "指标", "显著性"], "question_zh": "请确认各基线模型的精确版本/代码实现、与主方法是否采用同等计算与调参预算，以及指标聚合与统计检验方式。", "question_en": "Please confirm exact baseline versions/implementations, compute/tuning budget parity, and metric aggregation/statistical tests."},
+      {"slot_id": "ML-08", "pillar": "reproducibility_and_limitations", "name": "Code commit, exact CLI commands & data access", "severity": "important", "keywords": ["git", "commit", "command", "bash", "python ", "requirements", "docker", "license", "doi", "url", "复现", "命令", "代码版本"], "question_zh": "请补充用于复现的代码仓库版本/Commit Hash、完整执行命令及数据获取方式/访问许可。", "question_en": "Please provide the exact code repository commit hash, reproduction CLI commands, and data access/licensing details."},
+      {"slot_id": "ML-09", "pillar": "reproducibility_and_limitations", "name": "Concrete failure-mode limitations & validity scope", "severity": "important", "keywords": ["limitation", "fail", "failure", "boundary", "regime", "out-of-distribution", "degrad", "限制", "局限", "失效", "适用范围"], "question_zh": "请确认本方法在具体失效场景（如极端分布偏移、小样本、高噪声、硬件受限等）下的适用边界与失效表现。", "question_en": "Please confirm the concrete failure scenarios, trigger regimes, and validity boundaries of the method."}
+    ],
+    "wetlab_chem_bio_materials": [
+      {"slot_id": "WL-01", "pillar": "method_steps", "name": "Executable synthesis/assay SOP steps", "severity": "critical", "keywords": ["synthes", "mix", "stir", "calcin", "anneal", "incubat", "centrifug", "filtrat", "wash", "dry", "合成", "煅烧", "搅拌", "离心", "干燥", "步骤"], "question_zh": "请确认每一步合成/测试操作的具体投料、操作条件、中间产物及终点判据（时间、温度、pH 或色变）。", "question_en": "Please confirm exact inputs, operating steps, intermediate products, and endpoint criteria for each synthesis/assay step."},
+      {"slot_id": "WL-02", "pillar": "experimental_setup", "name": "Instruments, models, calibration & replicates", "severity": "critical", "keywords": ["xrd", "sem", "tem", "xps", "ftir", "gc", "hplc", "icp", "nmr", "bet", "reactor", "autoclave", "replicate", "triplicate", "仪器", "型号", "平行", "校准"], "question_zh": "请补充各表征/测试仪器的精确型号、厂商、校准条件及独立平行实验重复次数（n）。", "question_en": "Please provide exact instrument models, manufacturers, calibration protocols, and independent replicate counts (n)."},
+      {"slot_id": "WL-03", "pillar": "parameters_and_provenance", "name": "Operating parameters (T, P, flow, time, dosage, heating rate)", "severity": "critical", "keywords": ["temperature", "pressure", "flow", "heating rate", "concentration", "ph", "voltage", "current", "loading", "温度", "压力", "流速", "升温速率", "浓度", "负载量"], "question_zh": "请核实关键工艺与测试参数（温度、压力、气液流速、升温速率、反应时间、投料比等）的精确数值、单位与记录来源。", "question_en": "Please verify exact values, units, and log sources for operating parameters (T, P, flow rate, ramp rate, duration, dosage)."},
+      {"slot_id": "WL-04", "pillar": "datasets_and_splits", "name": "Reagents/materials grade, supplier, batch & sample grouping", "severity": "critical", "keywords": ["reagent", "purity", "supplier", "sigma", "aladdin", "sinopharm", "batch", "lot", "sample", "试剂", "纯度", "厂家", "批次", "样品"], "question_zh": "请补充所有关键试剂/原料的纯度等级、供应商、批次信息及样品分组/预处理方式。", "question_en": "Please provide purity grades, suppliers, batch/lot numbers, and sample preparation/grouping rules for all key reagents/materials."},
+      {"slot_id": "WL-05", "pillar": "baselines_and_controls", "name": "Blank/positive/negative controls & statistical error bars", "severity": "critical", "keywords": ["control", "blank", "reference", "benchmark", "commercial", "baseline", "sd", "error bar", "anova", "对照", "空白", "参比", "商业", "误差棒"], "question_zh": "请确认空白对照/阳性对照/商业参比样品的规格、是否在同一测试条件下同基准对比，以及误差棒/统计检验定义。", "question_en": "Please confirm blank/positive/commercial reference specs, matched test conditions, and error-bar/statistical test definitions."},
+      {"slot_id": "WL-06", "pillar": "reproducibility_and_limitations", "name": "Safety/environmental sensitivity & failure modes", "severity": "important", "keywords": ["humidity", "air-sensitive", "glovebox", "deactivat", "sinter", "leach", "stability", "limitation", "失效", "失活", "团聚", "适用范围", "限制"], "question_zh": "请确认实验对环境条件（湿度/氧含量/活化步骤）的敏感性及明确的材料/工艺失效边界。", "question_en": "Please confirm environmental sensitivities (humidity/O2/activation) and concrete failure-mode boundaries."}
+    ],
+    "simulation_engineering": [
+      {"slot_id": "SE-01", "pillar": "method_steps", "name": "Governing equations, discretization & solver workflow", "severity": "critical", "keywords": ["equation", "mesh", "grid", "discret", "solver", "boundary condition", "initial condition", "converg", "控制方程", "网格", "边界条件", "求解器", "收敛"], "question_zh": "请确认控制方程假设、空间/时间离散格式、求解顺序及残差收敛判据。", "question_en": "Please confirm governing equations, discretization schemes, solver sequence, and convergence criteria."},
+      {"slot_id": "SE-02", "pillar": "experimental_setup", "name": "Solver software version, hardware & numerical precision", "severity": "important", "keywords": ["lammps", "vasp", "gromacs", "openfoam", "ansys", "comsol", "cantera", "scipy", "float64", "mpi", "omp", "版本", "精度", "并行"], "question_zh": "请补充仿真软件精确版本、编译/并行环境、数值精度及网格/时间步长无关性验证情况。", "question_en": "Please provide exact simulation software versions, parallel runtime specs, numerical precision, and mesh/timestep independence checks."},
+      {"slot_id": "SE-03", "pillar": "parameters_and_provenance", "name": "Physical constants, force-field/material params & boundary values", "severity": "critical", "keywords": ["timestep", "dt", "cutoff", "ensemble", "nvt", "npt", "reynolds", "viscosity", "conductivity", "时间步长", "截断半径", "系综", "物性"], "question_zh": "请核实所有物性参数、力场/本构模型参数与边界条件取值的来源及量纲单位。", "question_en": "Please verify values, SI units, and provenance for all physical properties, constitutive/force-field parameters, and boundary values."},
+      {"slot_id": "SE-04", "pillar": "datasets_and_splits", "name": "Geometry/input structures & validation datasets", "severity": "critical", "keywords": ["geometry", "domain", "structure", "pdb", "cif", "trajectory", "benchmark", "validation", "几何", "结构文件", "验证集"], "question_zh": "请确认几何模型/初始构型文件版本、尺寸规模及用于校准与验证的实验/参考数据集划分。", "question_en": "Please confirm geometry/initial structure versions, domain sizes, and calibration vs. validation benchmark data."},
+      {"slot_id": "SE-05", "pillar": "baselines_and_controls", "name": "Reference models, analytical benchmarks & error metrics", "severity": "critical", "keywords": ["baseline", "analytical", "reference", "error", "rmse", "l2", "relative", "对照", "解析解", "误差"], "question_zh": "请确认对照模型/解析解基准及其网格/算力预算一致性与误差度量公式。", "question_en": "Please confirm reference/analytical benchmarks, grid/compute parity, and exact error metric definitions."},
+      {"slot_id": "SE-06", "pillar": "reproducibility_and_limitations", "name": "Input decks, random seeds & physical validity regime", "severity": "important", "keywords": ["input", "script", "seed", "regime", "assumption", "limitation", "breakdown", "输入文件", "适用区间", "失效"], "question_zh": "请补充输入卡/运行命令获取方式，并明确模型假设失效的物理参数区间。", "question_en": "Please provide input deck access/commands and specify the physical parameter regimes where model assumptions break down."}
+    ],
+    "general_scientific": [
+      {"slot_id": "GS-01", "pillar": "method_steps", "name": "Ordered executable steps (input/action/output/stop)", "severity": "critical", "keywords": ["step", "procedure", "protocol", "method", "workflow", "步骤", "流程", "方法"], "question_zh": "请确认完整实验/分析流程的每一步输入、操作动作、输出产物及判断/终止条件。", "question_en": "Please confirm exact input, action, output, and stopping/decision criteria for each procedural step."},
+      {"slot_id": "GS-02", "pillar": "experimental_setup", "name": "Stage separation, hardware/software env, seeds & repeats", "severity": "critical", "keywords": ["setup", "environment", "hardware", "software", "version", "seed", "repeat", "设置", "环境", "版本", "重复"], "question_zh": "请确认各阶段实验条件的分离情况、软硬件/仪器版本、随机化设置及重复次数。", "question_en": "Please confirm stage separation, hardware/software/instrument versions, randomization, and repeat counts."},
+      {"slot_id": "GS-03", "pillar": "parameters_and_provenance", "name": "Complete parameter provenance table", "severity": "critical", "keywords": ["parameter", "hyperparameter", "setting", "config", "value", "unit", "参数", "配置", "单位"], "question_zh": "请确认所有关键参数的取值、单位、作用对象及原始记录来源。", "question_en": "Please confirm values, units, target scope, and exact raw sources for all key parameters."},
+      {"slot_id": "GS-04", "pillar": "datasets_and_splits", "name": "Data/materials version, scale, preprocessing & splits", "severity": "critical", "keywords": ["data", "dataset", "sample", "material", "version", "split", "preprocess", "数据", "样本", "材料", "划分"], "question_zh": "请确认数据/材料的精确版本、规模、预处理流程、划分比例及各子集用途。", "question_en": "Please confirm exact data/material versions, scale, preprocessing, split ratios, and subset roles."},
+      {"slot_id": "GS-05", "pillar": "baselines_and_controls", "name": "Controls/baselines, parity, metrics & statistics", "severity": "critical", "keywords": ["baseline", "control", "comparison", "metric", "statist", "对照", "基线", "指标", "统计"], "question_zh": "请确认对照对象版本、条件/预算是否等价、评价指标定义及统计检验方式。", "question_en": "Please confirm control/baseline versions, parity of conditions/budgets, metric definitions, and statistical methods."},
+      {"slot_id": "GS-06", "pillar": "reproducibility_and_limitations", "name": "Reproduction checklist & failure-mode limitations", "severity": "important", "keywords": ["reproduc", "command", "code", "access", "limitation", "failure", "scope", "复现", "限制", "局限", "失效"], "question_zh": "请补充复现所需的代码/协议版本、运行命令、数据获取方式，以及具体失效场景与适用范围。", "question_en": "Please provide reproduction code/protocol version, commands, data access, and concrete failure scenarios/scope."}
+    ]
+  },
+  "boilerplate_limitation_patterns": [
+    "future work will explore",
+    "in the future, we plan to",
+    "more data is needed",
+    "further research is needed",
+    "there are still some limitations",
+    "our method still has room for improvement",
+    "limited by computational resources",
+    "未来将进一步探索",
+    "未来工作将",
+    "仍有一定提升空间",
+    "仍存在一定局限性",
+    "受限于算力",
+    "需要更多数据",
+    "有待进一步研究"
+  ]
+}

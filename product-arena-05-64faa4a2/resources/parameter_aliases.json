@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Canonical scientific parameter alias groups, source precedence tiers, and SI unit conversion factors for cross-artifact alignment and conflict detection.",
+  "source_precedence": {
+    "runtime_log": 100,
+    "cli_script": 90,
+    "exp_config": 80,
+    "data_table": 75,
+    "paper_source": 70,
+    "lab_note": 65,
+    "code_default": 60,
+    "narrative_draft": 30,
+    "unknown": 10
+  },
+  "canonical_aliases": {
+    "learning_rate": ["lr", "learning_rate", "init_lr", "base_lr", "max_lr", "eta", "step_size", "optim_lr", "adam_lr", "学习率"],
+    "batch_size": ["batch_size", "bs", "bsz", "train_batch_size", "per_device_train_batch_size", "global_batch_size", "micro_batch_size", "批大小", "批次大小"],
+    "eval_batch_size": ["eval_batch_size", "val_batch_size", "test_batch_size", "per_device_eval_batch_size", "验证批大小", "测试批大小"],
+    "epochs": ["epochs", "num_epochs", "max_epochs", "n_epochs", "num_train_epochs", "epoch", "训练轮数", "轮次"],
+    "max_steps": ["max_steps", "total_steps", "num_steps", "train_steps", "iters", "max_iters", "迭代步数"],
+    "optimizer": ["optimizer", "optim", "opt", "optimizer_type", "优化器"],
+    "weight_decay": ["weight_decay", "wd", "l2_reg", "l2", "权重衰减"],
+    "dropout": ["dropout", "dropout_rate", "drop_rate", "p_drop", "attn_dropout", "hidden_dropout"],
+    "warmup_steps": ["warmup_steps", "num_warmup_steps", "warmup_iters", "warmup_ratio", "预热步数", "预热比例"],
+    "lr_scheduler": ["scheduler", "lr_scheduler", "lr_scheduler_type", "lr_schedule", "学习率调度"],
+    "random_seed": ["seed", "random_seed", "random_state", "manual_seed", "rng_seed", "seeds", "随机种子"],
+    "num_repeats": ["num_runs", "n_runs", "repeats", "num_repeats", "n_repeats", "replicates", "n_replicates", "num_seeds", "n_folds", "k_folds", "重复次数", "平行次数"],
+    "max_seq_len": ["max_len", "max_length", "max_seq_len", "seq_len", "block_size", "context_length", "最大序列长度"],
+    "gradient_clip": ["grad_clip", "max_grad_norm", "clip_grad", "clip_norm", "梯度裁剪"],
+    "grad_accum_steps": ["grad_accum", "gradient_accumulation_steps", "accum_steps", "梯度累积"],
+    "split_ratio": ["split", "split_ratio", "train_val_test", "val_ratio", "test_size", "val_size", "划分比例"],
+    "temperature": ["temperature", "temp", "reaction_temp", "calcination_temp", "annealing_temp", "t_rxn", "温度", "反应温度", "煅烧温度"],
+    "pressure": ["pressure", "press", "reaction_pressure", "p_rxn", "压力", "反应压力"],
+    "duration": ["time", "duration", "reaction_time", "holding_time", "annealing_time", "residence_time", "反应时间", "保温时间"],
+    "heating_rate": ["heating_rate", "ramp_rate", "ramp", "升温速率"],
+    "flow_rate": ["flow_rate", "gas_flow", "flow", "whsv", "ghsv", "流速", "空速"],
+    "concentration": ["concentration", "conc", "molarity", "wt_pct", "loading", "浓度", "负载量"],
+    "ph": ["ph", "ph_value", "酸碱度"],
+    "rpm": ["rpm", "stirring_speed", "agitation_speed", "centrifuge_speed", "转速"],
+    "timestep": ["dt", "timestep", "time_step", "delta_t", "时间步长"],
+    "cutoff_radius": ["cutoff", "r_cut", "rcut", "cutoff_radius", "截断半径"],
+    "precision": ["fp16", "bf16", "amp", "mixed_precision", "precision", "dtype", "混合精度", "数值精度"]
+  },
+  "unit_conversions": {
+    "time_s": {
+      "s": 1.0, "sec": 1.0, "secs": 1.0, "second": 1.0, "seconds": 1.0, "秒": 1.0,
+      "ms": 0.001, "millisecond": 0.001, "milliseconds": 0.001, "毫秒": 0.001,
+      "us": 1e-6, "μs": 1e-6, "ns": 1e-9, "ps": 1e-12, "fs": 1e-15,
+      "min": 60.0, "mins": 60.0, "minute": 60.0, "minutes": 60.0, "分钟": 60.0,
+      "h": 3600.0, "hr": 3600.0, "hrs": 3600.0, "hour": 3600.0, "hours": 3600.0, "小时": 3600.0,
+      "d": 86400.0, "day": 86400.0, "days": 86400.0, "天": 86400.0
+    },
+    "mass_g": {
+      "g": 1.0, "gram": 1.0, "grams": 1.0, "克": 1.0,
+      "mg": 1e-3, "毫克": 1e-3,
+      "ug": 1e-6, "μg": 1e-6, "微克": 1e-6,
+      "kg": 1000.0, "千克": 1000.0
+    },
+    "volume_ml": {
+      "ml": 1.0, "mL": 1.0, "cm3": 1.0, "cm^3": 1.0, "毫升": 1.0,
+      "ul": 1e-3, "uL": 1e-3, "μl": 1e-3, "μL": 1e-3, "微升": 1e-3,
+      "l": 1000.0, "L": 1000.0, "dm3": 1000.0, "升": 1000.0
+    },
+    "length_m": {
+      "m": 1.0, "米": 1.0,
+      "cm": 1e-2, "厘米": 1e-2,
+      "mm": 1e-3, "毫米": 1e-3,
+      "um": 1e-6, "μm": 1e-6, "微米": 1e-6,
+      "nm": 1e-9, "纳米": 1e-9,
+      "A": 1e-10, "Å": 1e-10
+    },
+    "pressure_pa": {
+      "pa": 1.0, "Pa": 1.0,
+      "kpa": 1e3, "kPa": 1e3,
+      "mpa": 1e6, "MPa": 1e6,
+      "bar": 1e5,
+      "atm": 101325.0,
+      "torr": 133.322,
+      "mmhg": 133.322, "mmHg": 133.322
+    },
+    "voltage_v": {
+      "v": 1.0, "V": 1.0,
+      "mv": 1e-3, "mV": 1e-3,
+      "kv": 1e3, "kV": 1e3
+    },
+    "current_a": {
+      "a": 1.0, "A": 1.0,
+      "ma": 1e-3, "mA": 1e-3,
+      "ua": 1e-6, "uA": 1e-6, "μA": 1e-6
+    },
+    "memory_gb": {
+      "gb": 1.0, "GB": 1.0, "gib": 1.0, "GiB": 1.0,
+      "mb": 0.0009765625, "MB": 0.0009765625,
+      "tb": 1024.0, "TB": 1024.0
+    }
+  }
+}
