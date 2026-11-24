@@ -106,28 +106,48 @@ def strip_non_claim_regions(md: str) -> str:
     return "\n".join(cleaned_lines)
 
 
-def build_grounded_pool(ledger: Dict[str, Any], payload: Dict[str, Any]) -> List[Tuple[float, str]]:
-    """Build pool of (numeric_value, unit) from authoritative ledger entries + explicitly declared derived/draft-audit values."""
-    pool: List[Tuple[float, str]] = []
+def build_grounded_pool(ledger: Dict[str, Any], payload: Dict[str, Any], plan: Optional[Dict[str, Any]] = None) -> List[Tuple[float, str]]:
+    """Build deduplicated pool of (numeric_value, unit) from authoritative ledger entries + derived sums + declared values."""
+    raw_pool: List[Tuple[float, str]] = []
+    unitless_ints: List[int] = []
     for gn in ledger.get("grounded_numbers", []):
         if gn.get("source_tier") in AUTHORITATIVE_TIERS:
-            pool.append((float(gn["value"]), str(gn.get("unit") or "")))
+            v = float(gn["value"])
+            u = str(gn.get("unit") or "")
+            raw_pool.append((v, u))
+            if not u and v.is_integer() and 0 < v <= 10_000_000 and len(unitless_ints) < 40:
+                unitless_ints.append(int(v))
     for p in ledger.get("parameters", []):
         if p.get("source_tier") in AUTHORITATIVE_TIERS:
             nv, nu = parse_numeric_and_unit(p.get("raw_value"))
             if nv is not None:
-                pool.append((nv, str(p.get("unit") or nu)))
+                raw_pool.append((nv, str(p.get("unit") or nu)))
+    # Include pairwise and 3-way sums of small split/sample counts (e.g. 1600 + 200 + 200 = 2000)
+    uniq_ints = list(dict.fromkeys(unitless_ints))[:25]
+    for i in range(len(uniq_ints)):
+        for j in range(i + 1, len(uniq_ints)):
+            s2 = uniq_ints[i] + uniq_ints[j]
+            raw_pool.append((float(s2), ""))
+            for k in range(j + 1, min(len(uniq_ints), i + 8)):
+                raw_pool.append((float(s2 + uniq_ints[k]), ""))
+    # Include explicit numbers in task_md_excerpt if any
+    if plan and plan.get("task_md_excerpt"):
+        for m in re.finditer(r"(?<![A-Za-z0-9_])([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)", str(plan["task_md_excerpt"])):
+            try:
+                raw_pool.append((float(m.group(1)), ""))
+            except ValueError:
+                pass
     # Allow explicitly documented conflict-compared or draft-cited values (so prose can cite old draft values when documenting a change!)
     for c in payload.get("conflicts", []):
         for sc in c.get("sources_compared", []):
             nv, nu = parse_numeric_and_unit(sc.get("value"))
             if nv is not None:
-                pool.append((nv, str(sc.get("unit") or nu)))
+                raw_pool.append((nv, str(sc.get("unit") or nu)))
     for ch in payload.get("change_records", []):
         for field in ("before", "after"):
             for m in re.finditer(r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)", str(ch.get(field) or "")):
                 try:
-                    pool.append((float(m.group(1)), ""))
+                    raw_pool.append((float(m.group(1)), ""))
                 except ValueError:
                     pass
     # Allow explicitly declared derived parameters in parameter_table
@@ -135,8 +155,17 @@ def build_grounded_pool(ledger: Dict[str, Any], payload: Dict[str, Any]) -> List
         if isinstance(row, dict) and row.get("verification_status") in ("derived", "draft_only_unverified", "conflict_unresolved"):
             nv, nu = parse_numeric_and_unit(row.get("value"))
             if nv is not None:
-                pool.append((nv, str(row.get("unit") or nu)))
-    return pool
+                raw_pool.append((nv, str(row.get("unit") or nu)))
+
+    # Deduplicate to keep is_value_grounded O(1)-like fast even on large logs
+    seen: Set[Tuple[float, str]] = set()
+    dedup_pool: List[Tuple[float, str]] = []
+    for pv, pu in raw_pool:
+        key = (round(pv, 8), pu.strip().lower())
+        if key not in seen:
+            seen.add(key)
+            dedup_pool.append((pv, pu.strip()))
+    return dedup_pool
 
 
 def is_value_grounded(
@@ -232,13 +261,13 @@ def audit_chapter(
 
     valid_files = set(ledger.get("valid_files") or [])
     valid_basenames = {Path(vf).name for vf in valid_files}
-    # Compute line counts for real text files if accessible
+    # Compute line counts for real text files if accessible (skip >5MB files to avoid slow I/O or truncated-line mismatch)
     file_line_counts: Dict[str, int] = {}
     for item in plan.get("file_inventory", []):
         if item.get("category") != "binary_or_other":
             try:
                 fp = Path(item["abs_path"])
-                if fp.exists() and fp.suffix.lower() not in (".pdf", ".docx"):
+                if fp.exists() and fp.suffix.lower() not in (".pdf", ".docx") and fp.stat().st_size <= 2_000_000:
                     file_line_counts[item["rel_path"]] = len(fp.read_text(encoding="utf-8", errors="ignore").splitlines())
             except Exception:
                 pass
@@ -253,11 +282,12 @@ def audit_chapter(
             add_err("missing_required_field", req_key, f"Payload missing required key '{req_key}'")
 
     manuscript = str(payload.get("manuscript_markdown") or "")
-    if len(manuscript.strip()) < 40 and ledger.get("stats", {}).get("authoritative_files", 0) > 0:
+    min_prose_len = 15 if str(plan.get("signals", {}).get("task_mode") or "") == "structured_extraction" else 40
+    if len(manuscript.strip()) < min_prose_len and ledger.get("stats", {}).get("authoritative_files", 0) > 0:
         add_err("empty_manuscript", "manuscript_markdown", "manuscript_markdown is empty or too short despite available materials.")
 
     # 2. Numeric & Parameter Grounding Audit (Zero-Hallucination Gate)
-    pool = build_grounded_pool(ledger, payload)
+    pool = build_grounded_pool(ledger, payload, plan)
     param_table = payload.get("parameter_table") if isinstance(payload.get("parameter_table"), list) else []
 
     param_checked = 0

@@ -215,7 +215,8 @@ def classify_file(path: Path, rel: str) -> str:
 
 def detect_task_signals(task_text: str, case_data: Dict[str, Any], sample_texts: List[str]) -> Dict[str, Any]:
     """Detect language, task action mode, requested formats, and content-grounded domain."""
-    combined_task = f"{task_text}\n{json.dumps(case_data, ensure_ascii=False)}"
+    signal_meta = {k: v for k, v in case_data.items() if k not in ("case_id", "id", "task_id", "output_contract", "output_schema")}
+    combined_task = f"{task_text}\n{json.dumps(signal_meta, ensure_ascii=False)}"
     low_task = combined_task.lower()
 
     # Target language
@@ -244,11 +245,11 @@ def detect_task_signals(task_text: str, case_data: Dict[str, Any], sample_texts:
     else:
         task_mode = "draft_from_materials"
 
-    # Requested editable formats / preview rendering
+    # Requested editable formats / preview rendering (avoid triggering latex compilation merely on 'IEEE'/'Springer' style names)
     requested_formats = ["markdown", "json", "csv"]
-    if any(k in low_task for k in (".docx", "docx", "word文档", "word format")):
+    if re.search(r"\bdocx\b|\.docx\b|word文档|word\s+format", low_task):
         requested_formats.append("docx")
-    if any(k in low_task for k in (".tex", "latex", "ieee", "springer", "acm tex")):
+    if re.search(r"\b(?:latex|xelatex|pdflatex)\b|\.tex\b|\\section|\\begin\{document\}|acm\s+tex", low_task):
         requested_formats.append("latex")
     if any(k in low_task for k in ("diagram", "flowchart", "workflow figure", "流程图", "示意图")):
         requested_formats.append("diagram")

@@ -384,7 +384,7 @@ def parse_pdf_pages(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
     pdftotext = shutil.which("pdftotext")
     if pdftotext:
         try:
-            res = subprocess.run([pdftotext, str(path), "-"], capture_output=True, text=True, timeout=30)
+            res = subprocess.run([pdftotext, str(path), "-"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25)
             if res.returncode == 0 and res.stdout.strip():
                 raw_pages = res.stdout.split("\f")
                 for pno, txt in enumerate(raw_pages, start=1):

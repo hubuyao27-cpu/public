@@ -16,104 +16,67 @@ Transform scattered experimental artifacts (configs, code, CLI scripts, logs, ta
 
 ## Core Design Guarantees
 1. **写得全 (Complete 6 Pillars)**: Cover ordered **Method Steps** (`input -> operation -> output -> decision/stop`), stage-separated **Experimental Setup** (Train/Val/Test or Synthesis/Characterization/Testing), **Parameter Provenance Table**, **Datasets/Materials & Splits**, **Baselines/Controls & Budget Parity**, and **Reproducibility Checklist + Failure-Mode Limitations**.
-2. **写得准 (Zero Hallucination & Precedence Alignment)**: Never invent numbers for prose smoothness. Follow explicit source precedence (`runtime_log > cli_script > exp_config > data_table > paper_source > lab_note > code_default > narrative_draft`), disclose every cross-file conflict, and mechanically verify 100% prose-to-table-to-artifact alignment.
+2. **写得准 (Zero Hallucination & Precedence Alignment)**: Never invent numbers for prose smoothness. Follow explicit source precedence (`runtime_log > cli_script > exp_config > data_table > paper_source > lab_note > code_default > narrative_draft`), disclose every cross-file conflict, and mechanically verify prose-to-table-to-artifact alignment.
 3. **做得着 (Executable Reproducibility)**: Deliver concrete commands, code/environment/instrument versions, random seeds, repeat counts, and data/material access paths.
 4. **说得住 (Honest Gaps & Concrete Boundaries)**: Mark missing, conflicting, or draft-only unverified items inline with `[待作者确认: GAP-XX]` (or `[AUTHOR_CONFIRM: GAP-XX]`), compile closed-ended author questions, and ground every limitation in a concrete failure scenario, trigger condition, and validity scope (no generic boilerplate).
 
 ---
 
 ## Runtime Paths & Skill Location
-Resolve `$SKILL_DIR` automatically before running commands:
 ```bash
 SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
 [ -d "$SKILL_DIR/scripts" ] || SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 mkdir -p /app/work /app/output
 ```
-- **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real source files under `/input/`. Read actual files — never assume facts from filenames or domain labels.
-- **Workspace**: `/app/work` (intermediate ledger, digest, payload, audit report).
-- **Outputs**: `/app/output/` (must include `result.json` matching `case_id` and every `output_contract` field, plus editable Markdown/CSV/JSON deliverables and rendered previews when DOCX/LaTeX/diagrams are requested).
+- **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real source files under `/input/`. Never assume facts from filenames or domain labels.
+- **Workspace**: `/app/work` (`case_plan.json`, `fact_ledger.json`, `fact_digest.md`, `chapter_payload_skeleton.json`, `chapter_payload.json`, `verification_report.json`).
+- **Outputs**: `/app/output/` (`result.json` matching `case_id` and every `output_contract` field, `methods_and_experiments.md`, `parameter_table.md/.csv`, `reproducibility_and_author_checklist.md`, `provenance_map.json`, plus `.docx`/`.tex`/diagram and rendered PDF/PNG previews when requested).
 
 ---
 
-## Mandatory 6-Step Execution Workflow
+## Streamlined 3-Step Workflow (Budget-Safe for 64 Requests / 900s)
 
-### Step 1: Inspect Case Contract, Task Constraints & Materials
+### Step 1: One-Command Extraction, Skeleton Generation & Partial Checkpoint
+Run `prepare_workspace.py` (which executes `inspect_case.py` -> `extract_facts.py` -> `assemble_deliverables.py --checkpoint partial`):
 ```bash
-python3 "$SKILL_DIR/scripts/inspect_case.py" \
+python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
   --input-dir /input \
-  --out /app/work/case_plan.json
-```
-Read `/app/work/case_plan.json` (and `/input/task.md`) to confirm:
-- `case_id` and EVERY required key/type in `output_contract`;
-- `signals.task_mode` (`draft_from_materials` | `revise_and_align_draft` | `proofread_and_audit` | `structured_extraction` | `bilingual_writing`), `language` (`zh` | `en` | `bilingual`), `requested_formats`, and content-grounded `detected_domain` (`ml_computational` | `wetlab_chem_bio_materials` | `simulation_engineering` | `general_scientific`);
-- `missing_referenced_files` and `access_warnings`.
-
-### Step 2: Deterministic Multi-Artifact Extraction, Conflict & Gap Pre-Audit
-```bash
-python3 "$SKILL_DIR/scripts/extract_facts.py" \
-  --case-plan /app/work/case_plan.json \
-  --out-ledger /app/work/fact_ledger.json \
-  --out-digest /app/work/fact_digest.md
-```
-This parses all configs, Python AST, shell scripts, logs, CSV/TSV tables, DOCX/MD/TeX/PDFs, detects cross-source parameter conflicts (`CONF-XX`), flags uncorroborated draft-only claims, and pre-audits domain-appropriate 6-pillar gaps (`GAP-XX`).
-
-### Step 3: Save Early Honest Partial Checkpoint
-Immediately persist an honest partial deliverable so tight budgets or unexpected interruptions never leave `/app/output/result.json` empty:
-```bash
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
-  --case-plan /app/work/case_plan.json \
-  --ledger /app/work/fact_ledger.json \
-  --checkpoint partial \
+  --work-dir /app/work \
   --out-dir /app/output
 ```
-- **Exception Short-Circuit**: If `stats.total_files == 0` or all input files failed to read (`permission_denied` / `pdf_encrypted` / `binary_or_corrupt_file`), do **not** fabricate content. Proceed directly to author an honest `unanswerable`/`partial` payload citing exact errors in `uncertainty` and `author_confirmation_items`.
+This single command:
+1. Parses `case_id`, every `output_contract` key, `signals.task_mode`, `language`, `requested_formats`, `detected_domain`, and missing/corrupt files into `/app/work/case_plan.json`.
+2. Extracts configs, Python AST, shell scripts, bounded high-signal runtime logs, CSV/TSV tables, DOCX/MD/TeX/PDFs, and inline `case.json`/`task.md` materials into `/app/work/fact_ledger.json` and `/app/work/fact_digest.md`.
+3. Emits pre-grounded **`/app/work/chapter_payload_skeleton.json`** with `parameter_table[]` (ranked by source precedence), all `CONF-XX` `conflicts[]`, `GAP-XX` `author_confirmation_items[]`, `sources[]`, `uncertainty[]`, hardware/software setup, and reproduction commands already populated!
+4. Saves an honest early `/app/output/result.json` partial checkpoint immediately.
 
-### Step 4: Read `fact_digest.md` & Author `/app/work/chapter_payload.json`
-Read `/app/work/fact_digest.md` (and inspect specific raw files only when extra verbatim detail is needed). Follow the schema in `$SKILL_DIR/resources/payload_schema.json` and templates in `$SKILL_DIR/resources/templates/` to write `/app/work/chapter_payload.json`:
+*(Individual stage scripts `inspect_case.py`, `extract_facts.py`, `verify_chapter.py`, and `assemble_deliverables.py` remain independently callable.)*
+- **Empty/Unreadable Short-Circuit**: If `total_files == 0` and `inline_material_blocks == 0` (or all files failed reading), do **not** invent content — copy the skeleton to `/app/work/chapter_payload.json` citing exact blockers and run Step 3 with `--allow-partial`.
 
-1. **`manuscript_markdown`**: Publication-ready Methods & Experiments text matching the audience, venue, language, and domain evidenced in `/input/`.
+### Step 2: Review `fact_digest.md` & Complete `/app/work/chapter_payload.json`
+Read `/app/work/fact_digest.md` and `/app/work/chapter_payload_skeleton.json` (inspect raw files only when extra verbatim detail is needed; consult `$SKILL_DIR/resources/payload_schema.json` and `$SKILL_DIR/resources/templates/` only if field shapes are unclear).
+Edit `/app/work/chapter_payload_skeleton.json` and save to `/app/work/chapter_payload.json`:
+1. **`manuscript_markdown`**: Publication-ready Methods & Experiments text matching the requested language, venue, `task_mode`, and domain:
    - Separate stages cleanly (Train / Val / Test or Synthesis / Characterization / Testing).
-   - Never collapse multi-step operations into one sentence; state Input -> Operation -> Output -> Stop/Decision criterion.
-   - Cite exact locators (e.g., `` `config.yaml:L12` ``, `` `train.log:L8` ``, `` `paper.pdf:p4_b02` ``) or structured footnote markers as appropriate for the requested format.
-   - Insert explicit inline tags `[待作者确认: GAP-XX]` (Chinese) or `[AUTHOR_CONFIRM: GAP-XX]` (English) at every missing, conflicting, or uncorroborated point.
-2. **Structured 6-Pillar Fields**: Populate `method_steps`, `experimental_setup`, `parameter_table`, `datasets_and_splits`, `baseline_comparisons` (always stating `budget_parity_status`), `reproducibility_checklist`, and `limitations` (every limitation must specify concrete `failure_scenario`, `trigger_condition`, `affected_scope`, and `evidence_or_attribution` — zero boilerplate clichés).
-3. **Conflicts, Gaps, Sources & Changes**:
-   - Disclose EVERY `CONF-XX` from `fact_ledger.json` in `conflicts[]` and `change_records[]` / `uncertainty[]`. For same-tier conflicts, never silently pick a winner — present both values and add a `critical` author question.
-   - Never mark a draft-only uncorroborated claim as `"verified"`; use `verification_status: "draft_only_unverified"` and add an `author_confirmation_items` entry.
-   - Map EVERY inline `GAP-XX` 1-to-1 to a closed-ended question in `author_confirmation_items[]` and mirror major uncertainties into `uncertainty[]`.
-4. **`contract_overrides`**: If `case_plan.json["output_contract"]` defines custom field names beyond standard semantic roles, supply exact values keyed by those field names here.
+   - State `Input -> Operation -> Output -> Stop/Decision criterion` for multi-step procedures.
+   - Cite exact locators (e.g., `` `configs/train.yaml:L6` ``, `` `logs/train.log:L2` ``) and ensure every quantitative parameter in prose matches `parameter_table[]` (keep the skeleton's authoritative values!).
+   - Insert inline tags `[待作者确认: GAP-XX]` (Chinese) or `[AUTHOR_CONFIRM: GAP-XX]` (English) at missing, conflicting, or draft-only unverified points, keeping every inline `GAP-XX` present in `author_confirmation_items[]`.
+2. **Complete Remaining 6-Pillar Arrays**: Fill `method_steps[]`, `datasets_and_splits[]`, `baseline_comparisons[]` (always setting `budget_parity_status`), `limitations[]` (concrete `failure_scenario`, `trigger_condition` >= 15 chars, `affected_scope` >= 10 chars — zero generic boilerplate), and `change_records[]` (when revising a draft or resolving conflicts).
+3. **Keep Pre-Grounded Conflicts & Uncertainties Intact**: Preserve `conflicts[]` and `uncertainty[]` from `chapter_payload_skeleton.json` (refining descriptions as needed) so `undisclosed_conflict` and `missing_uncertainty_disclosure` never trigger. Populate `contract_overrides` if `case_plan.json` defines custom `output_contract` fields.
 
-### Step 5: Mechanical Verification & Self-Correction Loop
+### Step 3: One-Command Verification & Final Assembly (Bounded Self-Correction)
 ```bash
-python3 "$SKILL_DIR/scripts/verify_chapter.py" \
-  --payload /app/work/chapter_payload.json \
-  --ledger /app/work/fact_ledger.json \
-  --case-plan /app/work/case_plan.json \
-  --out /app/work/verification_report.json
+python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+  --work-dir /app/work \
+  --out-dir /app/output \
+  --payload /app/work/chapter_payload.json
 ```
-`verify_chapter.py` mechanically enforces:
-- Zero ungrounded numbers in `manuscript_markdown` and `parameter_table` (with SI unit & scientific-notation equivalence);
-- 100% Prose <-> Parameter Table numeric alignment;
-- Valid file & line-bound `source_locator` references;
-- 100% disclosure of detected cross-source conflicts & draft-only claims;
-- Baseline budget-parity disclosure, anti-boilerplate limitation checks, and 1-to-1 `GAP-XX` alignment.
-
-If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix the exact reported fields in `/app/work/chapter_payload.json`, and re-run `verify_chapter.py` until `"passed": true`.
-
-### Step 6: Assemble Final Verified Deliverables
-```bash
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
-  --case-plan /app/work/case_plan.json \
-  --ledger /app/work/fact_ledger.json \
-  --payload /app/work/chapter_payload.json \
-  --verification /app/work/verification_report.json \
-  --checkpoint final \
-  --out-dir /app/output
-```
-Confirm `/app/output/` contains `result.json`, `methods_and_experiments.md`, `parameter_table.md`, `parameter_table.csv`, `reproducibility_and_author_checklist.md`, `provenance_map.json` (plus `.docx`/`.tex`/diagram and rendered PDF/PNG previews when requested).
+`finalize_workspace.py` runs `verify_chapter.py` AND updates `/app/output/result.json` + all editable deliverables.
+- If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix the exact reported fields in `/app/work/chapter_payload.json`, and re-run `finalize_workspace.py` **at most 2 times**.
+- **Anti-Timeout Guard**: Never enter an unbounded retry loop. If subtle edge-case errors remain after 2 correction passes, run `python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" --work-dir /app/work --out-dir /app/output --payload /app/work/chapter_payload.json --allow-partial` so final deliverables and `/app/output/result.json` are cleanly finalized within the 900s timeout.
 
 ---
 
 ## Strict Honesty & Exception Rules
-- Consult `$SKILL_DIR/resources/failure_modes_and_edge_cases.md` whenever encountering missing files, corrupted configs, encrypted/scanned PDFs, unknown dataset versions, unmatched baseline budgets, or non-ML disciplines.
-- **Never** invent random seeds, split ratios, dataset release versions, hardware models, or baseline compute parity to make prose sound smoother.
+- Consult `$SKILL_DIR/resources/failure_modes_and_edge_cases.md` for missing files, corrupted configs, encrypted/scanned PDFs, unknown dataset versions, unmatched baseline budgets, or non-ML disciplines.
+- **Never** invent random seeds, split ratios, dataset versions, hardware models, or baseline compute parity.

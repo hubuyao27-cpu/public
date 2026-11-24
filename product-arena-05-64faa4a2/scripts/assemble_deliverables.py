@@ -16,8 +16,10 @@ import argparse
 import csv
 import io
 import json
+import re
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -255,15 +257,18 @@ def maybe_export_editable_and_previews(
             doc.save(str(docx_path))
             extra_files.append(docx_path.name)
 
-            # Render PDF + PNG preview via LibreOffice + pdftoppm / pymupdf if installed
+            # Render PDF + PNG preview via LibreOffice + pdftoppm / pymupdf if installed (isolated profile & non-blocking stdin)
             soffice = shutil.which("soffice") or shutil.which("libreoffice")
             if soffice:
-                res = subprocess.run(
-                    [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
+                with tempfile.TemporaryDirectory(prefix="lo_prof_") as lo_prof:
+                    prof_uri = Path(lo_prof).resolve().as_uri()
+                    res = subprocess.run(
+                        [soffice, f"-env:UserInstallation={prof_uri}", "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=25,
+                    )
                 pdf_path = out_dir / "methods_and_experiments.pdf"
                 if res.returncode == 0 and pdf_path.exists():
                     extra_files.append(pdf_path.name)
@@ -277,23 +282,24 @@ def maybe_export_editable_and_previews(
         except Exception as exc:
             preview_notes.append({"target": "methods_and_experiments.docx", "note": f"DOCX export error: {exc}"})
 
-    # Optional LaTeX export + PDF/PNG preview
+    # Optional LaTeX export + PDF/PNG preview (CJK-aware, non-blocking)
     if "latex" in requested_formats:
         tex_path = out_dir / "methods_and_experiments.tex"
-        tex_src = _build_latex_document(payload)
+        tex_src, has_cjk = _build_latex_document(payload)
         tex_path.write_text(tex_src, encoding="utf-8")
         extra_files.append(tex_path.name)
-        compiler = shutil.which("xelatex") or shutil.which("pdflatex")
+        compiler = shutil.which("xelatex") if has_cjk else (shutil.which("pdflatex") or shutil.which("xelatex"))
         if compiler:
             try:
                 res = subprocess.run(
-                    [compiler, "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
+                    [compiler, "-halt-on-error", "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
+                    stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
-                    timeout=60,
+                    timeout=25,
                 )
                 pdf_path = out_dir / "methods_and_experiments.pdf"
-                if pdf_path.exists():
+                if pdf_path.exists() and pdf_path.stat().st_size > 0:
                     extra_files.append(pdf_path.name)
                     extra_files.extend(_render_pdf_preview_pngs(pdf_path, out_dir, "latex_preview"))
                 else:
@@ -301,7 +307,7 @@ def maybe_export_editable_and_previews(
             except Exception as exc:
                 preview_notes.append({"target": tex_path.name, "note": f"LaTeX compile exception: {exc}"})
         else:
-            preview_notes.append({"target": tex_path.name, "note": "xelatex/pdflatex unavailable; .tex source delivered."})
+            preview_notes.append({"target": tex_path.name, "note": "xelatex/LaTeX compiler unavailable for target script; .tex source delivered."})
 
     # Optional workflow diagram PNG preview via matplotlib
     if "diagram" in requested_formats and payload.get("method_steps"):
@@ -317,7 +323,10 @@ def maybe_export_editable_and_previews(
 def _render_pdf_preview_pngs(pdf_path: Path, out_dir: Path, prefix: str, max_pages: int = 3) -> List[str]:
     rendered: List[str] = []
     try:
-        import pymupdf  # type: ignore
+        try:
+            import pymupdf  # type: ignore
+        except ImportError:
+            import fitz as pymupdf  # type: ignore
 
         doc = pymupdf.open(str(pdf_path))
         for i in range(min(len(doc), max_pages)):
@@ -332,7 +341,12 @@ def _render_pdf_preview_pngs(pdf_path: Path, out_dir: Path, prefix: str, max_pag
     pdftoppm = shutil.which("pdftoppm")
     if pdftoppm:
         try:
-            subprocess.run([pdftoppm, "-png", "-r", "150", "-f", "1", "-l", str(max_pages), str(pdf_path), str(out_dir / prefix)], capture_output=True, timeout=30)
+            subprocess.run(
+                [pdftoppm, "-png", "-r", "150", "-f", "1", "-l", str(max_pages), str(pdf_path), str(out_dir / prefix)],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=25,
+            )
             for p in sorted(out_dir.glob(f"{prefix}*.png")):
                 rendered.append(p.name)
         except Exception:
@@ -341,14 +355,17 @@ def _render_pdf_preview_pngs(pdf_path: Path, out_dir: Path, prefix: str, max_pag
 
 
 def _tex_escape(s: str) -> str:
-    rep = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}"}
+    rep = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
     return "".join(rep.get(ch, ch) for ch in str(s))
 
 
-def _build_latex_document(payload: Dict[str, Any]) -> str:
-    title = _tex_escape(payload.get("title") or "Methods and Experiments")
+def _build_latex_document(payload: Dict[str, Any]) -> Tuple[str, bool]:
+    raw_title = str(payload.get("title") or "Methods and Experiments")
+    raw_md = str(payload.get("manuscript_markdown") or "")
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", raw_title + raw_md))
+    title = _tex_escape(raw_title)
     body_lines = []
-    for line in str(payload.get("manuscript_markdown") or "").splitlines():
+    for line in raw_md.splitlines():
         s = line.strip()
         if not s:
             body_lines.append("")
@@ -360,18 +377,19 @@ def _build_latex_document(payload: Dict[str, Any]) -> str:
             body_lines.append(r"\section{" + _tex_escape(s[2:]) + "}")
         else:
             body_lines.append(_tex_escape(s))
-    return (
-        "\\documentclass[11pt]{article}\n"
-        "\\usepackage[utf8]{inputenc}\n"
-        "\\usepackage{booktabs}\n"
-        "\\usepackage[margin=1in]{geometry}\n"
-        f"\\title{{{title}}}\n"
-        "\\date{}\n"
-        "\\begin{document}\n"
-        "\\maketitle\n"
+    doc_cls = "\\documentclass[UTF8]{ctexart}\n" if has_cjk else "\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n"
+    tex = (
+        doc_cls
+        + "\\usepackage{booktabs}\n"
+        + "\\usepackage[margin=1in]{geometry}\n"
+        + f"\\title{{{title}}}\n"
+        + "\\date{}\n"
+        + "\\begin{document}\n"
+        + "\\maketitle\n"
         + "\n".join(body_lines)
         + "\n\\end{document}\n"
     )
+    return tex, has_cjk
 
 
 def _render_workflow_diagram_png(steps: List[Dict[str, Any]], out_path: Path) -> bool:
@@ -380,7 +398,15 @@ def _render_workflow_diagram_png(steps: List[Dict[str, Any]], out_path: Path) ->
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt  # type: ignore
+        from matplotlib import font_manager  # type: ignore
         from matplotlib.patches import FancyBboxPatch  # type: ignore
+
+        avail_fonts = {f.name for f in font_manager.fontManager.ttflist}
+        cjk_prefs = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", "SimHei", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
+        chosen_fonts = [fn for fn in cjk_prefs if fn in avail_fonts]
+        if chosen_fonts:
+            plt.rcParams["font.sans-serif"] = chosen_fonts + ["DejaVu Sans"]
+        plt.rcParams["axes.unicode_minus"] = False
 
         n = min(len(steps), 8)
         fig, ax = plt.subplots(figsize=(9, max(3.5, n * 1.1)))

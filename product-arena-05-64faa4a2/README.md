@@ -33,9 +33,11 @@ submission/
 ├── scripts/
 │   ├── common.py                                # Safe I/O, stdlib fallback parsers, alias & SI unit engine
 │   ├── inspect_case.py                          # Step 1: case.json/task.md/output_contract & file inventory
-│   ├── extract_facts.py                         # Step 2: Fact Ledger, conflict engine & 6-pillar pre-audit
+│   ├── extract_facts.py                         # Step 2: Fact Ledger, conflict engine, skeleton & 6-pillar pre-audit
+│   ├── prepare_workspace.py                     # One-command prep: inspect -> extract -> skeleton -> partial checkpoint
 │   ├── verify_chapter.py                        # Step 5: Mechanical hallucination & alignment verifier
-│   └── assemble_deliverables.py                 # Step 3 & 6: Partial checkpoint & final multi-format assembler
+│   ├── assemble_deliverables.py                 # Step 3 & 6: Partial checkpoint & final multi-format assembler
+│   └── finalize_workspace.py                    # One-command verify + final deliverable assembly
 ├── resources/
 │   ├── six_pillar_rubric.json                   # Domain-adaptive 6-pillar slots & boilerplate detector list
 │   ├── parameter_aliases.json                   # Canonical parameter aliases, source precedence & unit factors

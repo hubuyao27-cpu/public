@@ -431,6 +431,8 @@ def extract_from_log(
     lines = text.splitlines()
     high_signal_lines: List[str] = []
     known_canonical = set(alias_lookup.values())
+    mid_sampled = 0
+    total_lines = len(lines)
 
     for idx, line in enumerate(lines, start=1):
         s = line.strip()
@@ -439,21 +441,20 @@ def extract_from_log(
         loc = f"{rel}:L{idx}"
         low = s.lower()
 
-        # Always harvest numbers from high-signal lines or first/last 150 lines
-        is_signal = (
-            idx <= 120
-            or idx > len(lines) - 100
-            or any(
-                k in low
-                for k in (
-                    "config", "args", "namespace", "seed", "lr", "batch", "epoch", "split", "train", "val", "test",
-                    "gpu", "cuda", "python", "torch", "commit", "metric", "f1", "acc", "rmse", "mae", "auc", "loss",
-                    "temp", "pressure", "flow", "baseline", "final", "best", "summary", "error", "warning",
-                )
+        is_head_tail = idx <= 150 or idx > total_lines - 120
+        is_priority_meta = any(
+            k in low
+            for k in (
+                "config", "args", "namespace", "seed", "split", "gpu", "cuda", "python", "torch",
+                "commit", "baseline", "final", "best", "summary", "macro-f1", "test ", "[eval]", "[cfg]", "[env]", "[data]",
             )
         )
-        if not is_signal:
-            continue
+        if not is_head_tail and not is_priority_meta:
+            if mid_sampled >= 120:
+                continue
+            if not any(k in low for k in ("lr", "batch", "epoch", "metric", "f1", "acc", "rmse", "mae", "auc", "temp", "pressure", "flow", "error", "warning")):
+                continue
+            mid_sampled += 1
 
         grounded_nums.extend(extract_numbers_from_text(s, rel, loc, "runtime_log"))
 
@@ -735,8 +736,11 @@ def detect_conflicts_and_draft_claims(
             by_file[item["file"]].append(item)
 
         conflicting_files: List[List[Dict[str, Any]]] = []
+        top_is_baseline = "baseline" in top_file.lower()
         for fname, f_items in by_file.items():
             if fname == top_file:
+                continue
+            if ("baseline" in fname.lower()) != top_is_baseline:
                 continue
             has_overlap = any(
                 values_equivalent(fi["value"], fi["unit"], ti["value"], ti["unit"], unit_conv)
@@ -1068,7 +1072,12 @@ def extract_from_inline_case_and_task(
     return inline_blocks
 
 
-def extract_facts(case_plan_path: Path, out_ledger_path: Path, out_digest_path: Path) -> Dict[str, Any]:
+def extract_facts(
+    case_plan_path: Path,
+    out_ledger_path: Path,
+    out_digest_path: Path,
+    out_skeleton_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     plan, err = load_json_safe(case_plan_path)
     if err or not isinstance(plan, dict):
         raise SystemExit(f"Failed loading case_plan.json: {err}")
@@ -1115,6 +1124,29 @@ def extract_facts(case_plan_path: Path, out_ledger_path: Path, out_digest_path: 
     inline_blocks = extract_from_inline_case_and_task(
         plan, alias_lookup, params, commands, env_facts, grounded_nums, doc_blocks, excerpts
     )
+
+    # Deduplicate params & grounded_nums to bound ledger size and O(M^2) checks on huge logs
+    dedup_params: List[Dict[str, Any]] = []
+    seen_p_keys = set()
+    for p in params:
+        pk = (p.get("file"), p.get("canonical_key"), str(p.get("raw_value")), p.get("unit"), p.get("stage"))
+        if pk not in seen_p_keys:
+            seen_p_keys.add(pk)
+            dedup_params.append(p)
+        if len(dedup_params) >= 600:
+            break
+    params = dedup_params
+
+    dedup_gnums: List[Dict[str, Any]] = []
+    seen_g_keys = set()
+    for gn in grounded_nums:
+        gk = (round(float(gn["value"]), 6), str(gn.get("unit") or "").lower(), gn.get("source_tier"))
+        if gk not in seen_g_keys:
+            seen_g_keys.add(gk)
+            dedup_gnums.append(gn)
+        if len(dedup_gnums) >= 3500:
+            break
+    grounded_nums = dedup_gnums
 
     conflicts, unsourced_draft, consolidated = detect_conflicts_and_draft_claims(params, alias_cfg)
 
@@ -1181,6 +1213,123 @@ def extract_facts(case_plan_path: Path, out_ledger_path: Path, out_digest_path: 
     save_json(out_ledger_path, ledger)
     out_digest_path.parent.mkdir(parents=True, exist_ok=True)
     out_digest_path.write_text(render_fact_digest_md(plan, ledger), encoding="utf-8")
+
+    # Emit pre-grounded chapter_payload_skeleton.json so the LLM avoids hand-typing boilerplate & missing conflicts
+    skel_path = out_skeleton_path if out_skeleton_path else (out_digest_path.parent / "chapter_payload_skeleton.json")
+    conf_key_set = {c["canonical_key"] for c in conflicts}
+    skel_params: List[Dict[str, Any]] = []
+    for idx, cp in enumerate(consolidated[:60], start=1):
+        ck = cp["canonical_key"]
+        skel_params.append(
+            {
+                "param_id": f"P{idx:02d}",
+                "name": ck,
+                "symbol_or_key": ck,
+                "canonical_key": ck,
+                "value": cp["recommended_value"],
+                "unit": cp["unit"] or "",
+                "target_object": "",
+                "stage": "unspecified",
+                "source_locator": cp["authoritative_locator"],
+                "source_type": cp["authoritative_tier"],
+                "verification_status": "conflict_resolved_with_note" if ck in conf_key_set else "verified",
+                "verbatim_quote": "",
+                "note": "Pre-populated from highest-precedence authoritative artifact.",
+            }
+        )
+    for ud in unsourced_draft[:20]:
+        idx = len(skel_params) + 1
+        skel_params.append(
+            {
+                "param_id": f"P{idx:02d}",
+                "name": ud["canonical_key"],
+                "symbol_or_key": ud.get("raw_key") or ud["canonical_key"],
+                "canonical_key": ud["canonical_key"],
+                "value": ud["value"],
+                "unit": ud.get("unit") or "",
+                "target_object": "",
+                "stage": "unspecified",
+                "source_locator": ud["source_locator"],
+                "source_type": "narrative_draft",
+                "verification_status": "draft_only_unverified",
+                "verbatim_quote": ud.get("verbatim_quote") or "",
+                "note": "Draft-only uncorroborated value; tag with [待作者确认] or remove.",
+            }
+        )
+    skel_uncertainty: List[Dict[str, str]] = []
+    for mf in plan.get("missing_referenced_files", []):
+        skel_uncertainty.append({"target": mf, "reason": "missing_file", "details": f"Referenced file '{mf}' missing under /input/.", "human_handoff": f"Supply '{mf}'."})
+    for iw in warnings:
+        skel_uncertainty.append({"target": iw.get("file", ""), "reason": str(iw.get("issue", "ingestion_warning")), "details": str(iw.get("detail", "")), "human_handoff": "Check or replace unreadable input artifact."})
+    for c in conflicts:
+        skel_uncertainty.append({"target": f"{c['conflict_id']}:{c['canonical_key']}", "reason": "conflict_between_materials", "details": c["resolution_guidance"], "human_handoff": "Confirm authoritative parameter selection."})
+
+    skeleton = {
+        "case_id": plan["case_id"],
+        "task_mode": plan["signals"]["task_mode"],
+        "language": plan["signals"]["language"],
+        "domain": plan["signals"]["detected_domain"],
+        "title": str((plan.get("case_metadata") or {}).get("title") or "Methods and Experiments"),
+        "manuscript_markdown": "",
+        "method_steps": [],
+        "experimental_setup": {
+            "training_or_preparation_protocol": "",
+            "validation_or_characterization_protocol": "",
+            "testing_or_evaluation_protocol": "",
+            "stage_separation_verified": True,
+            "hardware_or_instruments": [{"name": e["text"], "source_locator": e["source_locator"]} for e in env_facts if e["kind"] in ("gpu_hardware", "cpu_hardware", "instrument")][:10],
+            "software_or_firmware": [{"name": e["text"], "source_locator": e["source_locator"]} for e in env_facts if e["kind"] in ("software_version", "git_commit")][:10],
+            "random_seeds": [],
+            "repeat_counts": "",
+            "source_locators": [],
+        },
+        "parameter_table": skel_params,
+        "datasets_and_splits": [],
+        "baseline_comparisons": [],
+        "reproducibility_checklist": {
+            "code_repository_and_version": "",
+            "environment_specification": "",
+            "reproduction_commands": [c["command"] for c in commands[:10]],
+            "data_or_material_access": "",
+            "random_seeds_and_determinism": "",
+            "expected_compute_or_resources": "",
+            "missing_items": [],
+            "source_locators": [c["source_locator"] for c in commands[:10]],
+        },
+        "limitations": [],
+        "conflicts": [
+            {
+                "conflict_id": c["conflict_id"],
+                "item": c["canonical_key"],
+                "sources_compared": c["sources_compared"],
+                "adopted_value_or_status": f"Adopted {c['recommended_authoritative']['value']} {c['recommended_authoritative']['unit']} ({c['recommended_authoritative']['source_locator']})".strip(),
+                "rationale": c["resolution_guidance"],
+                "needs_author_confirmation": True,
+            }
+            for c in conflicts
+        ],
+        "author_confirmation_items": [
+            {
+                "gap_id": g["gap_id"],
+                "pillar": g["pillar"],
+                "severity": g["severity"],
+                "location_in_draft": "Methods and Experiments",
+                "issue_type": "missing_in_materials",
+                "question": g["suggested_question"],
+                "what_was_checked": f"Scanned {len(valid_files)} input file(s).",
+                "blocking_reproducibility": g["severity"] == "critical",
+            }
+            for g in preliminary_gaps
+        ],
+        "sources": [
+            {"claim_or_item": f"{cp['canonical_key']}={cp['recommended_value']}", "source_locator": cp["authoritative_locator"], "source_type": cp["authoritative_tier"], "verbatim_quote": ""}
+            for cp in consolidated[:30]
+        ],
+        "uncertainty": skel_uncertainty,
+        "change_records": [],
+        "contract_overrides": {},
+    }
+    save_json(skel_path, skeleton)
     return ledger
 
 
@@ -1189,10 +1338,13 @@ def main() -> None:
     parser.add_argument("--case-plan", default="/app/work/case_plan.json", help="Path to case_plan.json from inspect_case.py")
     parser.add_argument("--out-ledger", default="/app/work/fact_ledger.json", help="Output path for fact_ledger.json")
     parser.add_argument("--out-digest", default="/app/work/fact_digest.md", help="Output path for compact fact_digest.md")
+    parser.add_argument("--out-skeleton", default=None, help="Optional output path for chapter_payload_skeleton.json")
     args = parser.parse_args()
 
-    ledger = extract_facts(Path(args.case_plan), Path(args.out_ledger), Path(args.out_digest))
-    print(json.dumps({"case_id": ledger["case_id"], "stats": ledger["stats"], "conflicts": [c["conflict_id"] + ":" + c["canonical_key"] for c in ledger["conflicts"]]}, indent=2, ensure_ascii=False))
+    out_dig = Path(args.out_digest)
+    out_skel = Path(args.out_skeleton) if args.out_skeleton else (out_dig.parent / "chapter_payload_skeleton.json")
+    ledger = extract_facts(Path(args.case_plan), Path(args.out_ledger), out_dig, out_skel)
+    print(json.dumps({"case_id": ledger["case_id"], "stats": ledger["stats"], "conflicts": [c["conflict_id"] + ":" + c["canonical_key"] for c in ledger["conflicts"]], "skeleton": str(out_skel)}, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
