@@ -319,8 +319,27 @@ def main() -> None:
             if not s_obj:
                 continue
             ed = edits_by_sid.get(sid)
-            if ed and ed.get("revised_sentence_with_tokens"):
-                tok_str = _register_tokens(str(ed["revised_sentence_with_tokens"]))
+            ed_action = str(ed.get("action") or "").strip().lower() if ed else ""
+            if ed and ed_action == "delete":
+                sent_changes.append({
+                    "change_id": f"CHG_EDIT_{len(sent_changes) + 1:03d}",
+                    "target": sid,
+                    "action": "delete",
+                    "before": s_obj["text"],
+                    "after": "",
+                    "basis": ed.get("anchor_rationale", ""),
+                })
+                continue
+            ed_rev = str(ed.get("revised_sentence_with_tokens") or "") if ed else ""
+            # Use manual edit if it embeds [[CITE...]] tokens or actually modifies text;
+            # guard against unmodified raw-citation "keep" copies bypassing auto-tokenization.
+            use_manual_edit = bool(
+                ed
+                and ed_rev
+                and (bool(CITE_TOKEN_RE.search(ed_rev)) or (ed_rev != s_obj["text"] and ed_action != "keep"))
+            )
+            if use_manual_edit:
+                tok_str = _register_tokens(ed_rev)
                 if tok_str != s_obj["text"]:
                     sent_changes.append({
                         "change_id": f"CHG_EDIT_{len(sent_changes) + 1:03d}",

@@ -373,19 +373,11 @@ def main() -> None:
 
     (out_dir / "verification_worklist.md").write_text("\n".join(wlines) + "\n", encoding="utf-8")
 
-    # Auto-emit ready-to-edit citation_plan_skeleton.json to minimize LLM JSON boilerplate
+    # Auto-emit a clean structural citation_plan_skeleton.json WITHOUT pre-filled lazy "keep"/"Pending" stubs
+    # (untouched sentences auto-tokenize safely; flagged items are surfaced under _review_hints for active authoring)
     out_skel = Path(args.out_skeleton) if args.out_skeleton else (out_dir.parent / "citation_plan_skeleton.json")
     sigs = case_plan.get("signals") or {}
     amb_cands = lib.get("ambiguous_duplicate_candidates") or []
-    dedup_stubs = [
-        {
-            "candidate_id": ac["candidate_id"],
-            "record_ids": [ac["raw_a"]["raw_id"], ac["raw_b"]["raw_id"]],
-            "decision": "keep_separate",
-            "rationale": f"Pending review of Tier-3 candidate ({ac.get('rule', '')})",
-        }
-        for ac in amb_cands
-    ]
 
     flagged_sids: set[str] = set()
     for ph in (ms.get("signals") or {}).get("placeholders") or []:
@@ -398,59 +390,43 @@ def main() -> None:
     for dc in dangling_citations:
         flagged_sids.add(dc["sentence_id"])
 
-    edit_stubs = []
-    for sent in ms.get("sentences", []):
-        if sent["sentence_id"] in flagged_sids:
-            edit_stubs.append({
-                "sentence_id": sent["sentence_id"],
-                "action": "keep",
-                "revised_sentence_with_tokens": sent["text"],
-                "anchor_rationale": "Pending placement/placeholder review",
-            })
+    flagged_hints = [
+        {
+            "sentence_id": sent["sentence_id"],
+            "section": sent.get("section", ""),
+            "original_text": sent["text"],
+        }
+        for sent in ms.get("sentences", [])
+        if sent["sentence_id"] in flagged_sids
+    ]
 
-    claim_stubs = []
-    for ci, sl in enumerate(sentence_links, start=1):
-        rids = sl.get("resolved_ref_ids") or []
-        checks = sl.get("per_ref_checks") or []
-        verdict = "title_metadata_only_unverified_claim"
-        ev_loc = "title_only"
-        if sl.get("unresolved_tokens"):
-            verdict = "fabricated_or_dangling_ref"
-            ev_loc = "unresolved_in_library"
-        elif checks:
-            tiers = [c.get("evidence_tier") for c in checks]
-            if any(c.get("pre_status") == "low_overlap_suspect_mismatch" for c in checks):
-                verdict = "claim_mismatch"
-            elif "local_pdf_fulltext" in tiers:
-                verdict = "supported_by_local_fulltext"
-            elif "library_abstract_and_title" in tiers:
-                verdict = "supported_by_abstract"
-            ev_loc = checks[0].get("evidence_file") or checks[0].get("evidence_tier") or "library_canonical.json"
-        claim_stubs.append({
-            "claim_id": f"CLM_{ci:03d}",
-            "sentence_id": sl["sentence_id"],
-            "section": sl["section"],
-            "claim_excerpt": sl["text"][:180],
-            "cited_ref_ids": rids,
-            "verdict": verdict,
-            "evidence_locator": ev_loc,
-            "evidence_quote": "",
-            "mismatch_detail": "",
-            "needs_human_confirmation": bool(sl.get("unresolved_tokens")) or verdict == "claim_mismatch",
-        })
+    ambiguous_hints = [
+        {
+            "candidate_id": ac["candidate_id"],
+            "record_ids": [ac["raw_a"]["raw_id"], ac["raw_b"]["raw_id"]],
+            "rule": ac.get("rule", ""),
+        }
+        for ac in amb_cands
+    ]
 
     skeleton = {
         "case_id": case_plan.get("case_id", ""),
         "target_style": sigs.get("target_style", "gbt7714_2015_numeric"),
         "in_text_format": sigs.get("in_text_format", "bracket"),
         "actions_performed": sigs.get("requested_actions") or [],
-        "dedup_decisions": dedup_stubs,
+        "dedup_decisions": [],
         "metadata_resolutions": [],
-        "manuscript_edits": edit_stubs,
-        "claim_verifications": claim_stubs,
+        "manuscript_edits": [],
+        "claim_verifications": [],
         "uncertainty": [],
         "human_confirmation_items": [],
         "contract_overrides": {},
+        "_review_hints": {
+            "note": "Read-only checklist of items needing active author decisions before saving citation_plan.json. Put finalized entries in dedup_decisions, manuscript_edits (using [[CITE:REF_XXX]] tokens), and claim_verifications (with verbatim evidence_quote from local evidence).",
+            "ambiguous_candidates_to_decide": ambiguous_hints,
+            "flagged_sentences_to_review": flagged_hints,
+            "cited_sentences_to_verify_count": len(sentence_links),
+        },
     }
     save_json(out_skel, skeleton)
     print(json.dumps({**pre_audit["stats"], "skeleton": str(out_skel)}, ensure_ascii=False, indent=2))

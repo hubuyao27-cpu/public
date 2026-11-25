@@ -13,10 +13,12 @@ from pathlib import Path
 def _run(script: Path, args: list[str], allow_fail: bool = False) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         [sys.executable, "-B", str(script)] + args,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=90,
     )
     if proc.returncode != 0 and not allow_fail:
         raise SystemExit(f"{script.name} failed (rc={proc.returncode}):\n{proc.stdout}\n{proc.stderr}")

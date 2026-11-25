@@ -91,6 +91,9 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
     raw_issues: List[Dict[str, Any]] = []
     missing_chars: List[str] = []
     overfull_hboxes: List[Dict[str, Any]] = []
+    overfull_vboxes: List[Dict[str, Any]] = []
+    undefined_references: List[Dict[str, Any]] = []
+    undefined_citations: List[Dict[str, Any]] = []
     loaded_packages: List[str] = []
 
     i = 0
@@ -122,10 +125,42 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
                 }
             )
 
+        vm = re.search(r"Overfull \\vbox \(([0-9.]+)pt too high\)", line)
+        if vm:
+            overfull_vboxes.append(
+                {
+                    "pt": float(vm.group(1)),
+                    "file": file_stack[-1],
+                    "line": line.strip(),
+                }
+            )
+
+        ur = re.search(r"Reference `([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
+        if ur:
+            undefined_references.append(
+                {
+                    "key": ur.group(1),
+                    "page": ur.group(2),
+                    "line": int(ur.group(3)) if ur.group(3) else None,
+                    "file": file_stack[-1],
+                }
+            )
+
+        uc = re.search(r"Citation `([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
+        if uc:
+            undefined_citations.append(
+                {
+                    "key": uc.group(1),
+                    "page": uc.group(2),
+                    "line": int(uc.group(3)) if uc.group(3) else None,
+                    "file": file_stack[-1],
+                }
+            )
+
         # File-line-error style: ./foo.tex:42: Error message
         fl_m = re.match(r"^(.+\.(?:tex|ltx|sty|cls|bbl)):(\d+):\s*(.+)$", line)
         bang_m = line.startswith("! ")
-        warn_m = re.match(r"^(LaTeX|Package\s+\S+|Class\s+\S+)\s+Warning:\s*(.+)$", line)
+        warn_m = re.match(r"^(LaTeX(?:\s+Font)?|Package\s+\S+|Class\s+\S+|pdfTeX)\s+[Ww]arning:\s*(.+)$", line)
 
         snippet = ""
         err_file = file_stack[-1]
@@ -208,9 +243,12 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
         "errors": errors,
         "warnings": warnings,
         "root_errors": [e for e in errors if not e["cascading_from"]],
+        "undefined_references": undefined_references,
+        "undefined_citations": undefined_citations,
         "missing_characters": missing_chars,
         "overfull_hboxes": overfull_hboxes,
         "large_overfull_hboxes": [o for o in overfull_hboxes if o["pt"] >= 10.0],
+        "overfull_vboxes": overfull_vboxes,
         "loaded_packages": loaded_packages[:120],
         "rerun_requested": rerun_requested,
     }
@@ -248,6 +286,13 @@ def render_pdf_previews(pdf_path: Path, preview_dir: Path) -> Tuple[List[str], D
     }
     if not pdf_path.is_file():
         return previews, pdf_audit
+
+    # Remove stale preview PNGs from prior compilations so page counts match strictly
+    for old_png in preview_dir.glob("page-*.png"):
+        try:
+            old_png.unlink()
+        except OSError:
+            pass
 
     # Method 1: pdftoppm
     if which_tool("pdftoppm"):
@@ -306,79 +351,84 @@ def render_pdf_previews(pdf_path: Path, preview_dir: Path) -> Tuple[List[str], D
     return previews, pdf_audit
 
 
-def compile_project(
-    tex_path: Path,
-    work_dir: Path,
-    preview_dir: Path,
-    skill_dir: Path,
-    engine_arg: str = "auto",
-    bib_arg: str = "auto",
-    max_passes: int = 4,
-    timeout_sec: int = 60,
+def _pick_installed_cjk_font() -> Optional[str]:
+    """Query fc-list for an installed Linux/Windows CJK serif font."""
+    if not which_tool("fc-list"):
+        return None
+    res = run_cmd(["fc-list", ":lang=zh", "family"], timeout=10)
+    if res["returncode"] != 0:
+        return None
+    installed: List[str] = []
+    seen = set()
+    for raw_line in res["stdout"].splitlines():
+        for fam in raw_line.split(","):
+            f = fam.strip()
+            if f and f not in seen:
+                seen.add(f)
+                installed.append(f)
+    for pref in ("Noto Serif CJK SC", "FandolSong", "AR PL UMing CN", "Source Han Serif SC", "Noto Sans CJK SC", "FandolHei", "WenQuanYi Micro Hei", "SimSun", "Microsoft YaHei"):
+        if pref in seen:
+            return pref
+    return installed[0] if installed else None
+
+
+def _run_multipass_engine(
+    build_tex: Path,
+    engine: str,
+    bib_tool: str,
+    taxonomy: Dict[str, Any],
+    max_passes: int,
+    timeout_sec: int,
 ) -> Dict[str, Any]:
-    """Copy project to writable work_dir if external, run multi-pass build, diagnose & preview."""
-    tex_path = tex_path.resolve()
-    work_dir = ensure_dir(work_dir.resolve())
-    taxonomy = load_json_safe(skill_dir / "resources" / "error_taxonomy.json", default={}) or {}
-
-    # Stage inside work_dir unless already under work_dir
-    try:
-        rel_inside = tex_path.relative_to(work_dir)
-        build_tex = tex_path
-    except ValueError:
-        src_root = tex_path.parent
-        for item in src_root.iterdir():
-            dest = work_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest)
-        build_tex = work_dir / tex_path.name
-        rel_inside = Path(tex_path.name)
-
+    """Execute deterministic engine -> bib -> engine* convergence loop inside build_tex.parent."""
     build_dir = build_tex.parent
     stem = build_tex.stem
-    engine, bib_tool = detect_engine_and_bib(build_tex, engine_arg, bib_arg)
-
     commands_executed: List[Dict[str, Any]] = []
     eng_flags = ["-interaction=nonstopmode", "-file-line-error", "-recorder"]
 
-    # Clean stale aux/bcf from previous failed tries? Keep only if intentionally resuming; fresh compile starts clean.
-    for stale_ext in (".aux", ".bcf", ".bbl", ".blg", ".toc", ".out"):
+    for stale_ext in (".aux", ".bcf", ".bbl", ".blg", ".toc", ".out", ".pdf"):
         sp = build_dir / f"{stem}{stale_ext}"
         if sp.is_file():
-            sp.unlink()
+            try:
+                sp.unlink()
+            except OSError:
+                pass
 
     eng_version = ""
     if which_tool(engine):
         ver_res = run_cmd([engine, "--version"], timeout=10)
         eng_version = ((ver_res.get("stdout") or ver_res.get("stderr") or "").splitlines() or [""])[0].strip()
 
-    # Pass 1
     cmd1 = [engine, *eng_flags, build_tex.name]
     r1 = run_cmd(cmd1, cwd=build_dir, timeout=timeout_sec)
     commands_executed.append({"step": "pass_1", "cmd": " ".join(cmd1), "returncode": r1["returncode"], "timed_out": r1["timed_out"], "not_found": r1["not_found"]})
 
     if r1["not_found"]:
         return {
-            "schema_version": "1.0",
-            "status": "compiler_missing",
+            "not_found": True,
             "engine": engine,
             "engine_version": eng_version,
-            "bib_tool": bib_tool,
-            "tex_file": str(rel_inside.as_posix()),
-            "pdf_path": None,
-            "previews": [],
-            "converged": False,
-            "pass_count": 0,
+            "run_bib_tool": None,
             "commands_executed": commands_executed,
-            "log_diagnosis": {"errors": [{"kind": "error", "rule_id": "ERR-NO-COMPILER", "file": build_tex.name, "line": None, "message": f"TeX compiler '{engine}' is not installed on PATH."}], "warnings": [], "root_errors": [], "missing_characters": [], "overfull_hboxes": [], "large_overfull_hboxes": [], "loaded_packages": [], "rerun_requested": False},
+            "converged": False,
+            "diagnosis": {
+                "errors": [{"kind": "error", "rule_id": "ERR-NO-COMPILER", "file": build_tex.name, "line": None, "message": f"TeX compiler '{engine}' is not installed on PATH."}],
+                "warnings": [],
+                "root_errors": [],
+                "undefined_references": [],
+                "undefined_citations": [],
+                "missing_characters": [],
+                "overfull_hboxes": [],
+                "large_overfull_hboxes": [],
+                "overfull_vboxes": [],
+                "loaded_packages": [],
+                "rerun_requested": False,
+            },
             "bib_diagnostics": [],
-            "pdf_audit": {"pdf_exists": False, "page_count": 0, "empty_pages": [], "unresolved_markers": [], "overflow_findings": []},
-            "reproducibility_manifest": {"engine": engine, "engine_version": eng_version, "bib_tool": bib_tool, "commands": [c["cmd"] for c in commands_executed], "fls_inputs": []},
+            "fls_inputs": [],
+            "pdf_path": build_dir / f"{stem}.pdf",
         }
 
-    # Decide bib step from actual generated .bcf / .aux
     bib_diagnostics: List[str] = []
     bcf_file = build_dir / f"{stem}.bcf"
     aux_file = build_dir / f"{stem}.aux"
@@ -403,9 +453,9 @@ def compile_project(
 
     prev_aux_hash = hash_aux_state(build_dir, stem)
     converged = False
-    max_extra = max(1, max_passes - 1)
-    if run_bib_tool and max_extra < 2:
-        max_extra = 2
+    max_extra = max(2, max_passes - 1)
+    if run_bib_tool and max_extra < 3:
+        max_extra = 3
 
     log_path = build_dir / f"{stem}.log"
     for p_idx in range(2, 2 + max_extra):
@@ -418,23 +468,171 @@ def compile_project(
         if rn["returncode"] == 0 and new_aux_hash == prev_aux_hash and not rerun_needed and (not run_bib_tool or p_idx >= 3):
             converged = True
             break
-        prev_aux_hash = new_aux_hash
-        if rn["returncode"] != 0 and p_idx >= 2 and not run_bib_tool:
-            # No reason to loop if fatal syntax error persists without bib changes
+        if rn["returncode"] != 0 and new_aux_hash == prev_aux_hash and not rerun_needed and p_idx >= 2 and not run_bib_tool:
             break
+        prev_aux_hash = new_aux_hash
 
     log_txt, _ = read_text_safe(log_path)
     diagnosis = parse_tex_log(log_txt, taxonomy, build_tex.name)
     fls_inputs = parse_fls_inputs(build_dir / f"{stem}.fls")
+    return {
+        "not_found": False,
+        "engine": engine,
+        "engine_version": eng_version,
+        "run_bib_tool": run_bib_tool,
+        "commands_executed": commands_executed,
+        "converged": converged,
+        "diagnosis": diagnosis,
+        "bib_diagnostics": bib_diagnostics,
+        "fls_inputs": fls_inputs,
+        "pdf_path": build_dir / f"{stem}.pdf",
+    }
 
-    pdf_path = build_dir / f"{stem}.pdf"
+
+def compile_project(
+    tex_path: Path,
+    work_dir: Path,
+    preview_dir: Path,
+    skill_dir: Path,
+    engine_arg: str = "auto",
+    bib_arg: str = "auto",
+    max_passes: int = 5,
+    timeout_sec: int = 60,
+    auto_fallback: bool = True,
+) -> Dict[str, Any]:
+    """Copy project to writable work_dir if external, run multi-pass build, diagnose & preview."""
+    tex_path = tex_path.resolve()
+    work_dir = ensure_dir(work_dir.resolve())
+    taxonomy = load_json_safe(skill_dir / "resources" / "error_taxonomy.json", default={}) or {}
+
+    # Stage inside work_dir unless already under work_dir
+    try:
+        rel_inside = tex_path.relative_to(work_dir)
+        build_tex = tex_path
+    except ValueError:
+        src_root = tex_path.parent
+        for item in src_root.iterdir():
+            dest = work_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dest)
+        build_tex = work_dir / tex_path.name
+        rel_inside = Path(tex_path.name)
+
+    build_dir = build_tex.parent
+    engine, bib_tool = detect_engine_and_bib(build_tex, engine_arg, bib_arg)
+    fallback_notes: List[str] = []
+    fallback_preview_used = False
+
+    run_res = _run_multipass_engine(build_tex, engine, bib_tool, taxonomy, max_passes, timeout_sec)
+    if run_res["not_found"]:
+        return {
+            "schema_version": "1.0",
+            "status": "compiler_missing",
+            "engine": engine,
+            "engine_version": run_res["engine_version"],
+            "bib_tool": bib_tool,
+            "tex_file": str(rel_inside.as_posix()),
+            "pdf_path": None,
+            "previews": [],
+            "converged": False,
+            "pass_count": 0,
+            "commands_executed": run_res["commands_executed"],
+            "fallback_notes": fallback_notes,
+            "fallback_preview_used": False,
+            "log_diagnosis": run_res["diagnosis"],
+            "bib_diagnostics": [],
+            "pdf_audit": {"pdf_exists": False, "page_count": 0, "empty_pages": [], "unresolved_markers": [], "overflow_findings": []},
+            "reproducibility_manifest": {"engine": engine, "engine_version": run_res["engine_version"], "bib_tool": bib_tool, "commands": [c["cmd"] for c in run_res["commands_executed"]], "fls_inputs": []},
+        }
+
+    # Auto-fallback 1: pdflatex hit UTF-8/CJK/glyph error -> retry cleanly with xelatex
+    diag = run_res["diagnosis"]
+    rule_ids = {e.get("rule_id") for e in diag["errors"]}
+    if (
+        auto_fallback
+        and engine == "pdflatex"
+        and engine_arg == "auto"
+        and which_tool("xelatex")
+        and ("ERR-UTF8-INPUTENC" in rule_ids or bool(diag["missing_characters"]))
+    ):
+        xe_res = _run_multipass_engine(build_tex, "xelatex", bib_tool, taxonomy, max_passes, timeout_sec)
+        if not xe_res["not_found"] and (
+            len(xe_res["diagnosis"]["errors"]) < len(diag["errors"])
+            or (xe_res["pdf_path"].is_file() and not run_res["pdf_path"].is_file())
+            or (not xe_res["diagnosis"]["missing_characters"] and bool(diag["missing_characters"]))
+        ):
+            run_res = xe_res
+            engine = "xelatex"
+            diag = run_res["diagnosis"]
+            rule_ids = {e.get("rule_id") for e in diag["errors"]}
+            fallback_notes.append("Auto-fallback: switched engine from pdflatex to xelatex due to UTF-8/CJK glyph errors.")
+
+    pdf_path = run_res["pdf_path"]
+    commands_executed = run_res["commands_executed"]
+    converged = run_res["converged"]
+    bib_diagnostics = run_res["bib_diagnostics"]
+    fls_inputs = run_res["fls_inputs"]
+    eng_version = run_res["engine_version"]
+    run_bib_tool = run_res["run_bib_tool"]
+
+    # Auto-fallback 2: missing CJK font or non-mandatory .sty prevented PDF generation -> build non-destructive preview copy
+    if auto_fallback and (not pdf_path.is_file() or "ERR-FONT-NOT-FOUND" in rule_ids or bool(diag["missing_characters"])):
+        fb_dir = work_dir / "_fallback_preview"
+        if fb_dir.exists():
+            shutil.rmtree(fb_dir, ignore_errors=True)
+        shutil.copytree(build_dir, fb_dir, ignore=shutil.ignore_patterns("_fallback_preview", "*.aux", "*.log", "*.pdf", "*.fls"))
+        fb_tex = fb_dir / build_tex.name
+        fb_src, _ = read_text_safe(fb_tex)
+        patched = False
+        if "ERR-FONT-NOT-FOUND" in rule_ids or bool(diag["missing_characters"]):
+            cjk_font = _pick_installed_cjk_font()
+            if cjk_font:
+                new_src = re.sub(r"\\setCJKmainfont(?:\[[^\]]*\])?\{[^}]+\}", f"\\\\setCJKmainfont{{{cjk_font}}}", fb_src)
+                if new_src == fb_src and re.search(r"\\documentclass(?:\[[^\]]*\])?\{ctex", fb_src):
+                    new_src = re.sub(r"\\documentclass(?:\[([^\]]*)\])?\{(ctex\w+)\}", lambda m: f"\\documentclass[UTF8,fontset=fandol]{{{m.group(2)}}}", fb_src, count=1)
+                if new_src != fb_src:
+                    fb_tex.write_text(new_src, encoding="utf-8")
+                    patched = True
+                    fallback_notes.append(f"Diagnostic CJK font fallback tested with verified installed font '{cjk_font}' (update source .tex to adopt permanently).")
+        if not patched and not pdf_path.is_file() and "ERR-MISSING-STY-CLS" in rule_ids:
+            missing_stys = []
+            for e in diag["errors"]:
+                m_sty = re.search(r"File `([^']+\.sty)' not found", e.get("message", ""))
+                if m_sty:
+                    missing_stys.append(m_sty.group(1)[:-4])
+            if missing_stys:
+                new_src = fb_src
+                for sty in missing_stys:
+                    new_src = re.sub(rf"^\s*\\usepackage(?:\[[^\]]*\])?\{{{re.escape(sty)}\}}.*$", f"% [AUTO-FALLBACK COMMENTED MISSING STY: {sty}]", new_src, flags=re.M)
+                if new_src != fb_src:
+                    fb_tex.write_text(new_src, encoding="utf-8")
+                    patched = True
+                    fallback_notes.append(f"Diagnostic missing-.sty fallback preview attempted after commenting optional missing package(s): {missing_stys}.")
+        if patched:
+            fb_res = _run_multipass_engine(fb_tex, "xelatex" if which_tool("xelatex") and (has_cjk(fb_tex.read_text(encoding="utf-8", errors="ignore")) or engine == "xelatex") else engine, bib_tool, taxonomy, 3, timeout_sec)
+            if fb_res["pdf_path"].is_file() and not pdf_path.is_file():
+                pdf_path = fb_res["pdf_path"]
+                fallback_preview_used = True
+                fallback_notes.append(f"Fallback preview PDF generated at {pdf_path.name}; fix primary .tex source before marking status='completed'.")
+
     previews, pdf_audit = render_pdf_previews(pdf_path, preview_dir)
 
     last_rc = commands_executed[-1]["returncode"]
-    if not converged and last_rc == 0 and not diagnosis["errors"] and not diagnosis["rerun_requested"]:
+    if not converged and last_rc == 0 and not diag["errors"] and not diag["rerun_requested"]:
         converged = True
 
-    if last_rc == 0 and not diagnosis["errors"] and pdf_path.is_file() and not diagnosis["missing_characters"] and not pdf_audit["unresolved_markers"]:
+    if (
+        last_rc == 0
+        and not diag["errors"]
+        and pdf_path.is_file()
+        and not fallback_preview_used
+        and not diag["missing_characters"]
+        and not diag["undefined_references"]
+        and not diag["undefined_citations"]
+        and not pdf_audit["unresolved_markers"]
+    ):
         status = "compiled_clean"
     elif pdf_path.is_file():
         status = "compiled_with_issues"
@@ -454,7 +652,9 @@ def compile_project(
         "converged": converged,
         "pass_count": sum(1 for c in commands_executed if c["step"].startswith("pass_")),
         "commands_executed": commands_executed,
-        "log_diagnosis": diagnosis,
+        "fallback_notes": fallback_notes,
+        "fallback_preview_used": fallback_preview_used,
+        "log_diagnosis": diag,
         "bib_diagnostics": bib_diagnostics[:60],
         "pdf_audit": pdf_audit,
         "reproducibility_manifest": {
@@ -463,7 +663,7 @@ def compile_project(
             "bib_tool": run_bib_tool or "none",
             "commands": [c["cmd"] for c in commands_executed],
             "converged": converged,
-            "loaded_packages": diagnosis["loaded_packages"],
+            "loaded_packages": diag["loaded_packages"],
             "fls_inputs": fls_inputs,
         },
     }
@@ -478,9 +678,28 @@ def render_compile_summary(report: Dict[str, Any]) -> str:
         "",
         f"- **Status**: `{report['status']}` | **Engine**: `{report['engine']}` | **Bib**: `{report['bib_tool']}` | **Passes**: {report['pass_count']} | **Converged**: {report['converged']}",
         f"- **PDF**: `{report['pdf_path'] or 'none'}` ({pa.get('page_count', 0)} pages) | **PNG Previews**: {len(report['previews'])}",
-        f"- **Errors**: {len(diag['errors'])} total ({len(diag['root_errors'])} root causes) | **Warnings**: {len(diag['warnings'])} | **Missing glyphs**: {len(diag['missing_characters'])} | **Large overfull hbox (>=10pt)**: {len(diag['large_overfull_hboxes'])}",
+        f"- **Errors**: {len(diag['errors'])} total ({len(diag['root_errors'])} root causes) | **Warnings**: {len(diag['warnings'])} | **Undefined refs/cites**: {len(diag.get('undefined_references', []))}/{len(diag.get('undefined_citations', []))} | **Missing glyphs**: {len(diag['missing_characters'])} | **Overfull hbox**: {len(diag['overfull_hboxes'])} ({len(diag['large_overfull_hboxes'])} >=10pt)",
         "",
     ]
+    if report.get("fallback_notes"):
+        lines.append("## Fallback & Recovery Notes")
+        for fn in report["fallback_notes"]:
+            lines.append(f"- {fn}")
+        lines.append("")
+
+    if diag.get("undefined_references") or diag.get("undefined_citations"):
+        lines.append("## Undefined References & Citations")
+        for ur in diag.get("undefined_references", [])[:20]:
+            lines.append(f"- Undefined reference `{ur['key']}` (page {ur['page']}, {ur['file']}:{ur['line']})")
+        for uc in diag.get("undefined_citations", [])[:20]:
+            lines.append(f"- Undefined citation `{uc['key']}` (page {uc['page']}, {uc['file']}:{uc['line']})")
+        lines.append("")
+
+    if diag.get("overfull_hboxes"):
+        lines.append("## Overfull \\hbox Warnings")
+        for oh in diag["overfull_hboxes"][:20]:
+            lines.append(f"- `{oh['file']}` ({oh['pt']}pt): {oh['line']}")
+        lines.append("")
     if diag["errors"]:
         lines.append("## Errors (Root Causes Highlighted)")
         for e in diag["errors"][:30]:
@@ -521,8 +740,9 @@ def main() -> None:
     parser.add_argument("--skill-dir", default=None, help="Optional Skill root directory.")
     parser.add_argument("--engine", default="auto", choices=["auto", "pdflatex", "xelatex", "lualatex"])
     parser.add_argument("--bib", default="auto", choices=["auto", "bibtex", "biber", "none"])
-    parser.add_argument("--max-passes", type=int, default=4)
+    parser.add_argument("--max-passes", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--no-auto-fallback", action="store_true", help="Disable non-destructive engine/font/package fallback diagnostics.")
     parser.add_argument("--out-report", default="/app/work/compile_report.json")
     parser.add_argument("--out-summary", default="/app/work/compile_summary.md")
     args = parser.parse_args()
@@ -537,6 +757,7 @@ def main() -> None:
         bib_arg=args.bib,
         max_passes=args.max_passes,
         timeout_sec=args.timeout,
+        auto_fallback=not args.no_auto_fallback,
     )
     save_json(Path(args.out_report), report)
     sum_path = Path(args.out_summary)

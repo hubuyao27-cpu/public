@@ -35,11 +35,13 @@ An Agent Skill built for **Harbor / DeepSeek Harness** and local CLI workflows t
 │   └── failure_modes_and_edge_cases.md  # Decision tree for missing .cls/fonts/assets/corrupt inputs
 └── scripts/
     ├── common.py                        # Shared IO, TeX comment stripping, brace/cmd parsing, contract mapper
-    ├── inspect_case.py                  # Step 1: Inspect /input contract, inventory, live TeX & fc-list fonts
-    ├── analyze_latex.py                 # Step 2: Static include/bib/ref/brace/table audit & source fact mining
-    ├── compile_and_diagnose.py          # Step 4: Multi-pass compiler, log parser, PDF audit & PNG previews
-    ├── verify_deliverable.py            # Step 5: 6-axis verification gate (exit 0 only if clean)
-    └── assemble_deliverables.py         # Step 3 & 6: Partial checkpoint & final /app/output packager
+    ├── inspect_case.py                  # Step 1a: Inspect /input contract, inline fields, live TeX & fc-list fonts
+    ├── analyze_latex.py                 # Step 1b: Static include/bib/ref/brace/table audit & source fact mining
+    ├── prepare_workspace.py             # Step 1 wrapper: inspect -> stage /app/work/src -> analyze -> partial checkpoint
+    ├── compile_and_diagnose.py          # Step 2: Multi-pass compiler (up to 5 passes), auto-fallback, log & PDF audit
+    ├── verify_deliverable.py            # Step 4a: 6-axis verification gate (including undefined refs/cites check)
+    ├── assemble_deliverables.py         # Step 4b: Packager emitting compile_diagnostics & before_after_diff in result.json
+    └── finalize_workspace.py            # Step 4 wrapper: compile -> verify -> assemble final /app/output
 ```
 
 ---

@@ -240,10 +240,23 @@ def main() -> None:
                 if not matched_any:
                     err("ungrounded_evidence_quote", f"{cv.get('claim_id')}: evidence_quote not found in local evidence/abstract for {rids}")
 
-    # 8. Raw placeholders must not remain untouched
+    # 8. Raw placeholders & unreviewed skeleton stubs must not remain untouched
     raw_ph_re = re.compile(r"\[(?:REF|CITE|CITATION NEEDED|\?|待引用|待补引)\]", re.I)
-    if raw_ph_re.search(body_text):
-        err("raw_placeholder_left_behind", "Original raw placeholder ([REF]/[?]/[待引用]) still remains in revised_manuscript.md")
+    m_ph = raw_ph_re.search(body_text)
+    if m_ph:
+        snippet = body_text[max(0, m_ph.start() - 30) : min(len(body_text), m_ph.end() + 30)].replace("\n", " ")
+        err("raw_placeholder_left_behind", f"Original raw placeholder `{m_ph.group(0)}` still remains in revised_manuscript.md near `{snippet}`")
+
+    if len(ms.get("sentences", [])) > 0:
+        if not revised_md.strip() or "Awaiting final citation_plan synchronization" in revised_md:
+            err("missing_final_manuscript", "revised_manuscript.md is empty or still contains partial checkpoint stub")
+
+    stub_re = re.compile(r"Pending (?:review|placement)|REVIEW_REQUIRED", re.I)
+    for section_k in ("dedup_decisions", "manuscript_edits", "claim_verifications"):
+        for item in plan.get(section_k) or []:
+            if isinstance(item, dict) and stub_re.search(json.dumps(item, ensure_ascii=False)):
+                err("unreviewed_plan_stub", f"Unreviewed placeholder text left in citation_plan.json[{section_k}]: {item}")
+                break
 
     # 9. Harbor result.json contract compliance
     if not result_json:

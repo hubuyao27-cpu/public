@@ -19,6 +19,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -106,12 +107,25 @@ def _render_office_or_tex_previews(
         soffice = shutil.which("soffice") or shutil.which("libreoffice")
         if soffice:
             try:
-                proc = subprocess.run(
-                    [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(artifact_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
+                with tempfile.TemporaryDirectory(prefix="lo_prof_") as lo_dir:
+                    lo_uri = Path(lo_dir).resolve().as_uri()
+                    proc = subprocess.run(
+                        [
+                            soffice,
+                            f"-env:UserInstallation={lo_uri}",
+                            "--headless",
+                            "--norestore",
+                            "--convert-to",
+                            "pdf",
+                            "--outdir",
+                            str(out_dir),
+                            str(artifact_path),
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
                 cand = out_dir / f"{artifact_path.stem}.pdf"
                 if proc.returncode == 0 and cand.exists() and cand.stat().st_size > 0:
                     pdf_path = cand
@@ -129,9 +143,10 @@ def _render_office_or_tex_previews(
             try:
                 proc = subprocess.run(
                     [tex_bin, "-interaction=nonstopmode", "-output-directory", str(out_dir), str(artifact_path)],
+                    stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
-                    timeout=60,
+                    timeout=30,
                 )
                 cand = out_dir / f"{artifact_path.stem}.pdf"
                 if cand.exists() and cand.stat().st_size > 0:
@@ -168,8 +183,9 @@ def _render_office_or_tex_previews(
                 try:
                     subprocess.run(
                         [pdftoppm, "-png", "-r", "150", "-f", "1", "-l", "3", str(pdf_path), str(out_dir / f"{prefix}_preview")],
+                        stdin=subprocess.DEVNULL,
                         capture_output=True,
-                        timeout=30,
+                        timeout=25,
                     )
                     for png in sorted(out_dir.glob(f"{prefix}_preview*.png")):
                         previews.append(png.name)

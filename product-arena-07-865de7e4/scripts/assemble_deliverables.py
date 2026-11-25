@@ -12,6 +12,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import shutil
 import stat
@@ -45,6 +46,125 @@ SOURCE_COPY_EXTS = {
     ".eps",
     ".svg",
 }
+
+
+def build_compile_diagnostics(compile_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build structured compile warnings, undefined refs/cites, overfull hboxes, and fallback record for result.json."""
+    if not compile_report:
+        return {
+            "status": "not_run",
+            "engine": None,
+            "bib_tool": "none",
+            "pass_count": 0,
+            "converged": False,
+            "page_count": 0,
+            "preview_count": 0,
+            "fallback_notes": [],
+            "fallback_preview_used": False,
+            "errors": [],
+            "root_errors": [],
+            "warnings": [],
+            "undefined_references": [],
+            "undefined_citations": [],
+            "overfull_hboxes": [],
+            "large_overfull_hboxes": [],
+            "overfull_vboxes": [],
+            "missing_characters": [],
+            "bib_diagnostics": [],
+            "pdf_audit": {},
+        }
+    diag = compile_report.get("log_diagnosis") or {}
+    pa = compile_report.get("pdf_audit") or {}
+    return {
+        "status": compile_report.get("status"),
+        "engine": compile_report.get("engine"),
+        "engine_version": compile_report.get("engine_version", ""),
+        "bib_tool": compile_report.get("bib_tool", "none"),
+        "pass_count": compile_report.get("pass_count", 0),
+        "converged": bool(compile_report.get("converged")),
+        "page_count": pa.get("page_count", 0),
+        "preview_count": len(compile_report.get("previews") or []),
+        "fallback_notes": compile_report.get("fallback_notes") or [],
+        "fallback_preview_used": bool(compile_report.get("fallback_preview_used")),
+        "errors": diag.get("errors", [])[:40],
+        "root_errors": diag.get("root_errors", [])[:20],
+        "warnings": diag.get("warnings", [])[:60],
+        "undefined_references": diag.get("undefined_references", [])[:40],
+        "undefined_citations": diag.get("undefined_citations", [])[:40],
+        "overfull_hboxes": diag.get("overfull_hboxes", [])[:40],
+        "large_overfull_hboxes": diag.get("large_overfull_hboxes", [])[:25],
+        "overfull_vboxes": diag.get("overfull_vboxes", [])[:20],
+        "missing_characters": diag.get("missing_characters", [])[:30],
+        "bib_diagnostics": (compile_report.get("bib_diagnostics") or [])[:40],
+        "pdf_audit": pa,
+    }
+
+
+def compute_before_after_diff(case_plan: Dict[str, Any], out_dir: Path) -> List[Dict[str, Any]]:
+    """Compute itemized unified diffs between original /input .tex/.bib files and delivered /app/output files."""
+    input_dir = Path(case_plan.get("input_dir") or "")
+    diffs: List[Dict[str, Any]] = []
+    if not out_dir.is_dir():
+        return diffs
+
+    delivered_files = [
+        p for p in sorted(out_dir.rglob("*"))
+        if p.is_file() and p.suffix.lower() in {".tex", ".ltx", ".bib", ".cls", ".sty", ".bst"}
+    ]
+    for dp in delivered_files[:15]:
+        rel = dp.relative_to(out_dir).as_posix()
+        after_txt, err_a = read_text_safe(dp)
+        if err_a:
+            continue
+        orig_cand = input_dir / rel if input_dir.is_dir() else None
+        if orig_cand is not None and not orig_cand.is_file():
+            # Fallback match by basename inside /input
+            matches = [Path(f["abs_path"]) for f in case_plan.get("files", []) if Path(f["rel_path"]).name == dp.name]
+            orig_cand = matches[0] if matches else None
+
+        if orig_cand is not None and orig_cand.is_file():
+            before_txt, err_b = read_text_safe(orig_cand)
+            if err_b:
+                before_txt = ""
+            if before_txt == after_txt:
+                diffs.append({"file": rel, "status": "unchanged", "lines_added": 0, "lines_removed": 0, "unified_diff": ""})
+            else:
+                diff_lines = list(
+                    difflib.unified_diff(
+                        before_txt.splitlines(),
+                        after_txt.splitlines(),
+                        fromfile=f"before/{rel}",
+                        tofile=f"after/{rel}",
+                        n=2,
+                        lineterm="",
+                    )
+                )
+                added = sum(1 for ln in diff_lines if ln.startswith("+") and not ln.startswith("+++"))
+                removed = sum(1 for ln in diff_lines if ln.startswith("-") and not ln.startswith("---"))
+                clipped = diff_lines[:180]
+                if len(diff_lines) > 180:
+                    clipped.append(f"... [{len(diff_lines) - 180} more diff lines truncated]")
+                diffs.append(
+                    {
+                        "file": rel,
+                        "status": "modified",
+                        "lines_added": added,
+                        "lines_removed": removed,
+                        "unified_diff": "\n".join(clipped),
+                    }
+                )
+        else:
+            line_cnt = len(after_txt.splitlines())
+            diffs.append(
+                {
+                    "file": rel,
+                    "status": "added",
+                    "lines_added": line_cnt,
+                    "lines_removed": 0,
+                    "unified_diff": f"--- /dev/null\n+++ after/{rel}\n@@ -0,0 +1,{line_cnt} @@\n(new generated file, {line_cnt} lines)",
+                }
+            )
+    return diffs
 
 
 def build_shell_script(compile_report: Optional[Dict[str, Any]], primary_tex_rel: str) -> str:
@@ -164,11 +284,34 @@ def render_provenance_report(
                 "## Build & Reproducibility",
                 f"- Engine: `{compile_report.get('engine')}` ({compile_report.get('engine_version') or 'version not reported'})",
                 f"- Bibliography tool: `{compile_report.get('bib_tool')}` | Passes: {compile_report.get('pass_count')} | Converged: {compile_report.get('converged')}",
-                f"- Errors: {len(diag.get('errors', []))} | Warnings: {len(diag.get('warnings', []))} | Missing glyphs: {len(diag.get('missing_characters', []))}",
+                f"- Errors: {len(diag.get('errors', []))} | Warnings: {len(diag.get('warnings', []))} | Undefined refs/cites: {len(diag.get('undefined_references', []))}/{len(diag.get('undefined_citations', []))} | Overfull hbox: {len(diag.get('overfull_hboxes', []))} ({len(diag.get('large_overfull_hboxes', []))} >=10pt) | Missing glyphs: {len(diag.get('missing_characters', []))}",
                 f"- Page count: {compile_report.get('pdf_audit', {}).get('page_count', 0)} | Previews: {len(compile_report.get('previews', []))}",
                 "",
             ]
         )
+        if compile_report.get("fallback_notes"):
+            lines.append("### Fallback & Recovery Notes")
+            for fn in compile_report["fallback_notes"]:
+                lines.append(f"- {fn}")
+            lines.append("")
+        if diag.get("undefined_references") or diag.get("undefined_citations"):
+            lines.append("### Undefined References & Citations")
+            for ur in diag.get("undefined_references", [])[:20]:
+                lines.append(f"- Ref `{ur['key']}` (page {ur['page']}, {ur['file']}:{ur['line']})")
+            for uc in diag.get("undefined_citations", [])[:20]:
+                lines.append(f"- Cite `{uc['key']}` (page {uc['page']}, {uc['file']}:{uc['line']})")
+            lines.append("")
+        if diag.get("overfull_hboxes"):
+            lines.append("### Overfull \\hbox Warnings")
+            for oh in diag.get("overfull_hboxes", [])[:20]:
+                lines.append(f"- `{oh['file']}` ({oh['pt']}pt): {oh['line']}")
+            lines.append("")
+        if diag.get("warnings"):
+            lines.append("### Compilation Warnings")
+            for w in diag.get("warnings", [])[:25]:
+                loc = f"{w.get('file')}:{w.get('line')}" if w.get("line") else str(w.get("file") or "")
+                lines.append(f"- `[{w.get('rule_id', 'WARN')}]` `{loc}` — {w.get('message')}")
+            lines.append("")
 
     if payload.get("change_records"):
         lines.append("## Change Records")
@@ -306,12 +449,22 @@ def assemble(
             if not any(x.get("path") == "reproducibility_manifest.json" for x in copied_outputs):
                 copied_outputs.append({"path": "reproducibility_manifest.json", "role": "reproducibility_manifest"})
 
+    compile_diagnostics = build_compile_diagnostics(compile_report)
+    before_after_diff = compute_before_after_diff(case_plan, out_dir) if checkpoint == "final" else []
+
     # Write provenance markdown report
     report_md_name = "initial_audit_digest.md" if checkpoint == "partial" else "compilation_and_provenance_report.md"
-    (out_dir / report_md_name).write_text(
-        render_provenance_report(case_plan, audit, payload, compile_report, verification, checkpoint),
-        encoding="utf-8",
-    )
+    report_md_text = render_provenance_report(case_plan, audit, payload, compile_report, verification, checkpoint)
+    if before_after_diff:
+        diff_lines = ["", "## Source Before/After Diff Summary"]
+        for d in before_after_diff:
+            diff_lines.append(f"- `{d['file']}` (`{d['status']}`, +{d['lines_added']}/-{d['lines_removed']})")
+            if d["status"] == "modified" and d.get("unified_diff"):
+                diff_lines.append("```diff")
+                diff_lines.append(d["unified_diff"][:3000])
+                diff_lines.append("```")
+        report_md_text += "\n".join(diff_lines) + "\n"
+    (out_dir / report_md_name).write_text(report_md_text, encoding="utf-8")
 
     result: Dict[str, Any] = {
         "case_id": case_plan["case_id"],
@@ -322,6 +475,8 @@ def assemble(
         "output_files": copied_outputs,
         "template_compliance": payload.get("template_compliance", {}),
         "compile_provenance": (compile_report or {}).get("reproducibility_manifest", {}),
+        "compile_diagnostics": compile_diagnostics,
+        "before_after_diff": before_after_diff,
         "verification": {
             "passed": verification.get("passed") if verification else False,
             "error_count": verification.get("error_count") if verification else None,

@@ -117,6 +117,10 @@ def verify_deliverable(
                 errors.append({"axis": "compile", "code": "VER-NOT-CONVERGED", "message": "Multi-pass compilation did not converge (rerun warnings or unstable aux state)."})
             if diag.get("missing_characters"):
                 errors.append({"axis": "compile", "code": "VER-MISSING-GLYPHS", "message": f"{len(diag['missing_characters'])} missing glyph(s) detected in .log (e.g., {diag['missing_characters'][0]})."})
+            if diag.get("undefined_references"):
+                errors.append({"axis": "compile", "code": "VER-UNDEF-REFERENCES", "message": f"{len(diag['undefined_references'])} undefined reference(s) in .log: {diag['undefined_references'][:5]}."})
+            if diag.get("undefined_citations"):
+                errors.append({"axis": "compile", "code": "VER-UNDEF-CITATIONS", "message": f"{len(diag['undefined_citations'])} undefined citation(s) in .log: {diag['undefined_citations'][:5]}."})
             if pa.get("unresolved_markers"):
                 errors.append({"axis": "compile", "code": "VER-PDF-UNRESOLVED-MARKER", "message": f"Literal unresolved markers (?? / [?]) detected in rendered PDF: {pa['unresolved_markers']}."})
             if pa.get("empty_pages"):

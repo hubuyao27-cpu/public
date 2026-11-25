@@ -121,6 +121,7 @@ def run_cmd(
             actual_cmd,
             cwd=str(cwd) if cwd else None,
             env=merged_env,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,

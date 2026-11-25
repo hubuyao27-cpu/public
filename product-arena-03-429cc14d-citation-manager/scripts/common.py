@@ -274,7 +274,8 @@ def parse_author_name(raw: str) -> Dict[str, Any]:
                 cleaned = tok.replace(".", "").replace("-", "")
                 return 1 <= len(cleaned) <= 2 and cleaned.isupper()
 
-            if len(tokens[0].replace(".", "")) > 2 and all(_is_initial_tok(t) for t in tokens[1:]):
+            first_no_dot = tokens[0].replace(".", "")
+            if len(first_no_dot) >= 2 and "." not in tokens[0] and all(_is_initial_tok(t) for t in tokens[1:]):
                 family = tokens[0]
                 given = " ".join(tokens[1:])
             else:
@@ -296,7 +297,7 @@ def parse_author_name(raw: str) -> Dict[str, Any]:
         else:
             initials_list.append(gp[0].upper())
 
-    family_norm = family.title() if family.isupper() and len(family) > 2 else family
+    family_norm = family.title() if family.isupper() and len(family) >= 2 else family
     surname_key = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", family.lower())
     return {
         "raw": s_clean,

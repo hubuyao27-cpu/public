@@ -334,6 +334,11 @@ def inspect_case(input_dir: Path, task_path_override: Optional[Path] = None) -> 
     files, access_warnings, tex_candidates = inventory_inputs(input_dir)
     missing_refs = detect_missing_referenced_files(task_text, case_json, input_dir, files)
     env_info = probe_tex_environment()
+
+    inline_keys = [
+        k for k in ("source_tex", "tex", "tex_source", "latex", "latex_source", "manuscript", "draft", "draft_text", "bib_text", "bibtex", "references")
+        if isinstance(case_json.get(k), str) and case_json.get(k).strip()
+    ]
     signals = infer_signals(task_text, case_json, files)
 
     return {
@@ -346,6 +351,7 @@ def inspect_case(input_dir: Path, task_path_override: Optional[Path] = None) -> 
         "task_text_preview": task_text[:4000],
         "output_contract": output_contract,
         "signals": signals,
+        "inline_material_keys": inline_keys,
         "candidate_entry_tex": tex_candidates,
         "files": files,
         "stats": {
@@ -355,6 +361,7 @@ def inspect_case(input_dir: Path, task_path_override: Optional[Path] = None) -> 
             "bib_files": sum(1 for f in files if f["category"] == "bib_database"),
             "class_or_style_files": sum(1 for f in files if f["category"] == "tex_class_or_style"),
             "non_tex_sources": sum(1 for f in files if f["category"] in {"draft_or_doc", "word_doc", "pdf_doc", "tabular_data", "structured_data"}),
+            "inline_material_count": len(inline_keys),
         },
         "access_warnings": access_warnings,
         "missing_referenced_files": missing_refs,
