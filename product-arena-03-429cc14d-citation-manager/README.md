@@ -80,24 +80,38 @@ citation-reference-manager/
 
 ## 5. Standalone Usage & Verification
 
-Run the complete pipeline against any local case directory `--input-dir` (see [`examples/minimal_example.md`](examples/minimal_example.md) for a walkthrough):
+Run the streamlined 2-command wrapper pipeline against any local case directory `--input-dir` (see [`examples/minimal_example.md`](examples/minimal_example.md) for a walkthrough; all individual stage scripts remain callable for debugging):
 
 ```bash
 export SKILL_DIR=/path/to/citation-reference-manager
-python3 "$SKILL_DIR/scripts/inspect_case.py" --input-dir ./case_in --out ./work/case_plan.json
-python3 "$SKILL_DIR/scripts/parse_manuscript.py" --case-plan ./work/case_plan.json --out-dir ./work/manuscript
-python3 "$SKILL_DIR/scripts/parse_and_dedup_library.py" --case-plan ./work/case_plan.json --manuscript ./work/manuscript/manuscript_parsed.json --rules "$SKILL_DIR/resources/dedup_rules.json" --style-rules "$SKILL_DIR/resources/style_rules.json" --out-dir ./work/library
-python3 "$SKILL_DIR/scripts/verify_sources_pre.py" --case-plan ./work/case_plan.json --library ./work/library/library_canonical.json --evidence ./work/library/evidence_fulltexts.json --manuscript ./work/manuscript/manuscript_parsed.json --out-dir ./work/verify
-# Author ./work/citation_plan.json following resources/plan_schema.json, then:
-python3 "$SKILL_DIR/scripts/sync_and_format.py" --case-plan ./work/case_plan.json --library ./work/library/library_canonical.json --manuscript ./work/manuscript/manuscript_parsed.json --pre-audit ./work/verify/pre_audit.json --plan ./work/citation_plan.json --style-rules "$SKILL_DIR/resources/style_rules.json" --out-dir ./work/synced
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" --case-plan ./work/case_plan.json --library ./work/library/library_canonical.json --manuscript ./work/manuscript/manuscript_parsed.json --pre-audit ./work/verify/pre_audit.json --plan ./work/citation_plan.json --synced ./work/synced/sync_result.json --checkpoint final --out-dir ./output
-python3 "$SKILL_DIR/scripts/verify_deliverables.py" --case-plan ./work/case_plan.json --library ./work/library/library_canonical.json --evidence ./work/library/evidence_fulltexts.json --manuscript ./work/manuscript/manuscript_parsed.json --pre-audit ./work/verify/pre_audit.json --plan ./work/citation_plan.json --synced ./work/synced/sync_result.json --output-dir ./output --out ./work/verification_report.json
+
+# Step 1: Inspect, parse manuscript & library, dedup, pre-audit, emit skeleton + early partial checkpoint
+python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
+  --input-dir ./case_in --work-dir ./work --out-dir ./output
+
+# Step 2: Review ./work/library/library_digest.md, ./work/manuscript/manuscript_claims_digest.md,
+#         ./work/verify/verification_worklist.md and author ./work/citation_plan.json
+
+# Step 3: Deterministic sync/renumbering, deliverable assembly, 10-invariant verification, final result.json
+python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+  --work-dir ./work --out-dir ./output --plan ./work/citation_plan.json
 ```
 
 ---
 
-## 6. Known Limitations & Maintenance
+## 6. Design Trade-Offs & Alternatives Considered
 
+- **Symbolic `[[CITE:REF_XXX]]` Tokenization vs. Direct LLM Renumbering**: Asking an LLM to hand-renumber citations across prose, captions, tables, and footnotes regularly drifts on insertions/deletions/reordering. Separating semantic placement (Agent emits stable `[[CITE:REF_XXX]]` tokens) from deterministic formatting/numbering (`sync_and_format.py`) eliminates off-by-one and bidirectional mismatch bugs.
+- **Zero-Dependency Pure-Python Engine vs. External `citeproc-py` / `pybtex` / JabRef**: Harbor sandboxes vary in preinstalled packages. Borrowing fault-tolerant BibTeX brace-state & LaTeX-accent stripping patterns from high-star ecosystems (`JabRef/jabref`, `sciunto-org/python-bibtexparser`) in pure Python stdlib guarantees portability while keeping runtime under a few seconds.
+- **3-Tier Guarded Union-Find Deduplication vs. Aggressive Fuzzy Merging**: Transitive merges can accidentally collapse distinct works by the same author. Two-phase guarded Union-Find explicitly checks every merge against `protected_non_duplicate` (distinct DOIs, disjoint pages) and `recycled_doi_conflict` sets, routing borderline cases to explicit Agent/human review (`AMB_XXX`).
+
+---
+
+## 7. Goals, Non-Goals & Known Limits
+
+- **Goals**: Deterministic 1-to-1 citation sync, explainable multi-format library dedup without false merges, 8 major citation styles + lossless BibTeX/RIS/CSL-JSON/CSV exports, and 10-invariant mechanical verification.
+- **Non-Goals**: Live online Crossref/OpenAlex/CNKI API scraping or automatic fabrication of missing bibliographic fields.
 - **Offline DOI Lookup**: In network-isolated Harbor runs, DOIs are syntax-validated (`^10\.\d{4,9}/...`) and cross-checked against local evidence PDFs only, honestly tagged `not_checked_offline`.
-- **Scanned PDFs**: Image-only PDFs without an embedded text layer cannot be full-text verified without OCR; flagged transparently in `uncertainty`.
-- **Version**: `1.0.0` (2026-11-23). Designed for Harbor (`product-arena-03-429cc14d`) and general academic writing workflows.
+- **Scanned PDFs**: Image-only PDFs automatically attempt bounded local `tesseract` OCR (when `tesseract` + `pdftoppm`/`pymupdf` are present, capped at 6 pages / 20s); otherwise flagged transparently in `uncertainty`.
+- **Security**: All optional `.tex` preview subprocesses run with `-no-shell-escape` and hard timeouts.
+- **Version**: `1.1.0` (2026-11-25). Designed for Harbor (`product-arena-03-429cc14d`) and general academic writing workflows.

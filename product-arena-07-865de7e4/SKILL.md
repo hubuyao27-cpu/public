@@ -23,15 +23,17 @@ Transform messy drafts, broken TeX projects, or multi-format research inputs int
 ---
 
 ## Runtime Paths & Budget Discipline (64 Requests / 900s)
-Resolve `$SKILL_DIR` cleanly before calling scripts (works under Harbor `/skills/weekly-skill` and local checkouts):
+Resolve `$SKILL_DIR` cleanly before calling scripts (works under Harbor `/skills/weekly-skill`, `/app/submission`, or local checkouts):
 ```bash
-SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
-[ -d "$SKILL_DIR/scripts" ] || SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+SKILL_DIR="${SKILL_DIR:-}"
+for d in "$SKILL_DIR" "/skills/weekly-skill" "/app/submission" "."; do
+  [ -n "$d" ] && [ -f "$d/scripts/prepare_workspace.py" ] && SKILL_DIR="$d" && break
+done
 mkdir -p /app/work/src /app/work/build /app/work/previews /app/output
 ```
-- **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real files under `/input/` (plus any inline `case.json` `.tex`/`.bib` fields). Never assume facts from labels or filenames.
-- **Workspace**: `/app/work/src/` holds editable sources (never compile inside read-only `/input`).
-- **Outputs**: `/app/output/` (`result.json` with `case_id`, every `output_contract` field, `compile_diagnostics`, and `before_after_diff`; editable `.tex`/`.bib`; `build.sh`; `reproducibility_manifest.json`; compiled `.pdf`; `previews/page-*.png`; `compilation_and_provenance_report.md`).
+- **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real files under `/input/` (plus any inline `case.json` `.tex`/`.bib`/`manuscript`/`draft`/`references` fields, materialized automatically into `/app/work/src/` and `/app/work/baseline_src/`). Never assume facts from labels or filenames.
+- **Workspace**: `/app/work/src/` holds editable sources (never compile inside read-only `/input`, and NEVER leave backup/scratch `.tex` copies like `main_old.tex` inside `/app/work/src/` because `verify_deliverable.py` and `assemble_deliverables.py` scan every `.tex` under `/app/work/src/`).
+- **Outputs**: `/app/output/` (`result.json` with `case_id`, every `output_contract` field, `compile_diagnostics`, and `before_after_diff`; editable `.tex`/`.bib` and all figures including `.pdf` vector figures; `build.sh`; `reproducibility_manifest.json`; compiled `.pdf`; `previews/page-*.png`; `compilation_and_provenance_report.md`).
 
 ---
 
@@ -49,43 +51,47 @@ Read `/app/work/case_plan.json` and `/app/work/latex_digest.md` (plus `/input/ta
 - **Exception Short-Circuit**: If `/input/` has `0` readable files or a missing mandatory publisher `.cls` / unrecoverable access error, consult `$SKILL_DIR/resources/failure_modes_and_edge_cases.md` and emit an honest `"partial"` or `"unable_to_determine"` deliverable rather than fabricating missing classes or data.
 
 ### Step 2: Author/Repair Editable Sources & Multi-Pass Compile Loop
-1. Edit or author clean `.tex`/`.bib` files inside `/app/work/src/` following `$SKILL_DIR/resources/latex_quality_checklist.md` and `$SKILL_DIR/resources/template_profiles.json`.
-   - Annotate non-trivial data/edits concisely via `% [SRC: file:line]` and missing/conflicting items via `% [AUTHOR_CONFIRM: GAP-XX]`.
-   - For CJK documents, use `xelatex` and ONLY select fonts verified in `case_plan.json["environment"]["cjk_fonts"]` (or `\documentclass[UTF8,fontset=fandol]{ctexart}` / `Noto Serif CJK SC`).
-2. Run deterministic multi-pass compilation, log diagnosis, auto-fallback check, PDF audit, and clean PNG preview rendering:
+1. Select `<MAIN_TEX>` inside `/app/work/src/`: use `candidate_entry_tex[0]` when present (if multiple entry `.tex` exist, pick the root manuscript named in `/input/task.md`; if `0` `.tex` files exist in a `draft_to_latex` task, create `/app/work/src/main.tex`). Edit or author clean `.tex`/`.bib` files inside `/app/work/src/` following `$SKILL_DIR/resources/latex_quality_checklist.md` and `$SKILL_DIR/resources/template_profiles.json`.
+   - Annotate non-trivial data/edits concisely via `% [SRC: file:line]` and missing/conflicting items via `% [AUTHOR_CONFIRM: GAP-XX description]`.
+   - For CJK documents, use `xelatex` and check `case_plan.json["environment"]["fandol_available"]` and `["cjk_fonts"]`: use `\documentclass[UTF8,fontset=fandol]{ctexart}` ONLY when `fandol_available` is `true`; otherwise use `\documentclass[UTF8,fontset=none]{ctexart}` + `\setCJKmainfont{<verified font from cjk_fonts>}` (e.g., `Noto Serif CJK SC`).
+   - Never wrap tables in `\resizebox` or `\scalebox`; fix wide tables structurally (`tabularx`, `p{width}`, `\small`, `\tabcolsep`) so `Overfull \hbox` stays `< 10.0pt`.
+2. Run deterministic multi-pass compilation, log diagnosis, auto-fallback check, PDF audit, and clean PNG preview rendering (pass `--project-root /app/work/src` whenever `<MAIN_TEX>` lives in a subdirectory like `paper/main.tex`; optional flags: `--engine auto|pdflatex|xelatex|lualatex`, `--bib auto|bibtex|biber|none`, `--max-passes 5`):
 ```bash
 python3 -B "$SKILL_DIR/scripts/compile_and_diagnose.py" \
   --tex /app/work/src/<MAIN_TEX> \
+  --project-root /app/work/src \
   --work-dir /app/work/build \
   --preview-dir /app/work/previews \
   --out-report /app/work/compile_report.json \
   --out-summary /app/work/compile_summary.md
 ```
-3. Read `/app/work/compile_summary.md`. Fix **root causes first** in `/app/work/src/` (consulting `$SKILL_DIR/resources/error_taxonomy.json` and any `Fallback & Recovery Notes` with verified installed CJK fonts) and re-run `compile_and_diagnose.py` until `status == "compiled_clean"`, `0` errors, `0` undefined references/citations, `0` missing glyphs, `0` `??`/`[?]` markers, and acceptable `Overfull \hbox` widths (or an honest unresolvable blocker is confirmed).
+3. Read `/app/work/compile_summary.md`. Fix **root causes first** in `/app/work/src/` (consulting `$SKILL_DIR/resources/error_taxonomy.json` and any `Fallback & Recovery Notes` with verified installed CJK fonts) and re-run `compile_and_diagnose.py` until `status == "compiled_clean"`, `0` errors, `0` undefined references/citations, `0` missing glyphs, `0` `??`/`[?]` markers, and `Overfull \hbox` `< 10.0pt` (or an honest unresolvable blocker is confirmed).
 4. Visually inspect rendered `/app/work/previews/page-*.png` if image viewing is available to confirm zero clipped tables or blank pages.
 
 ### Step 3: Author Grounded `/app/work/deliverable_payload.json`
-Write `/app/work/deliverable_payload.json` conforming to `$SKILL_DIR/resources/payload_schema.json`, honestly recording:
-- `case_id`, `status` (`completed` | `partial` | `unable_to_determine`), `summary`, `primary_tex_path`, `template_compliance`;
+Write `/app/work/deliverable_payload.json` conforming to `$SKILL_DIR/resources/payload_schema.json` (every list field MUST be an array of JSON objects, never raw strings), honestly recording:
+- `case_id`, `status` (`completed` | `partial` | `unable_to_determine`), `summary`, `primary_tex_path` (relative to `/app/work/src/`, e.g., `main.tex` or `paper/main.tex`), `output_files[]` (array of `{"path", "role"}` objects; auto-merged with copied sources/PDF/previews), `template_compliance` (use exact case-sensitive `template_name` keys from `template_profiles.json`: `IEEEtran`, `acmart`, `elsarticle`, `llncs`, `sn-jnl`, `neurips`, `icml`, `ctexart`, `ctexbook`, `revtex4-2`, `beamer`, `article`);
 - `sources[]` mapping delivered numbers/equations/tables/citations back to exact `/input` locators;
 - `change_records[]` with before/after descriptions and engineering rationale for every substantive fix;
-- `author_confirmation_items[]` 1-to-1 with every `% [AUTHOR_CONFIRM: GAP-XX]` tag in `.tex`;
+- `author_confirmation_items[]` 1-to-1 with every `% [AUTHOR_CONFIRM: GAP-XX ...]` tag in `.tex`;
 - `uncertainty[]`, concrete `limitations[]`, and `contract_overrides` for any custom `output_contract` keys.
 
 ### Step 4: One-Command Compile, 6-Axis Verification & Final Deliverable Assembly
 ```bash
 python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
   --tex /app/work/src/<MAIN_TEX> \
+  --project-root /app/work/src \
   --payload /app/work/deliverable_payload.json \
   --work-dir /app/work \
   --out-dir /app/output
 ```
-This runs `compile_and_diagnose.py` -> `verify_deliverable.py` -> `assemble_deliverables.py --checkpoint final`, guaranteeing `/app/output/` contains `result.json` (with `case_id`, all `output_contract` keys, `compile_diagnostics`, and `before_after_diff`), editable `.tex`/`.bib`, `build.sh`, `reproducibility_manifest.json`, compiled `.pdf`, `previews/page-*.png`, and `compilation_and_provenance_report.md`.
+*(For honest blocked/unrecoverable cases with 0 usable files or missing mandatory `.cls`, pass `--skip-compile` — `--tex` becomes optional and stale `compile_report.json` is ignored. Supports `--engine`, `--bib`, `--max-passes 5`, `--timeout 300`, and skips redundant recompilation if `/app/work/src` is unchanged since a clean Step 2 run.)*
+This runs `compile_and_diagnose.py` -> `verify_deliverable.py` -> `assemble_deliverables.py --checkpoint final`, guaranteeing `/app/output/` contains `result.json` (with `case_id`, all `output_contract` keys, `compile_diagnostics`, and `before_after_diff`), editable `.tex`/`.bib`/figures, `build.sh`, `reproducibility_manifest.json`, compiled `.pdf`, `previews/page-*.png`, and `compilation_and_provenance_report.md`.
 - If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix reported `.tex`/`.bib`/payload defects, and re-run `finalize_workspace.py` until `"passed": true`. *(All individual stage scripts remain directly callable if needed.)*
 
 ---
 
 ## Strict Honesty Rules
 - **Never** invent BibTeX metadata, DOIs, numeric measurements, or missing `.cls`/`.png` binaries.
-- **Never** mask wide-table overflow with `\resizebox` or suppress fatal errors/fallback previews into fake `"completed"` / `"compiled_clean"` status.
+- **Never** mask wide-table overflow with `\resizebox`/`\scalebox` or suppress fatal errors/fallback previews into fake `"completed"` / `"compiled_clean"` status.
 - Always map every missing/conflicting fact to `author_confirmation_items[]` and `uncertainty[]`.

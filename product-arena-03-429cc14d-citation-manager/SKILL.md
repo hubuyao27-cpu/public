@@ -15,10 +15,12 @@ Transform messy academic drafts and heterogeneous reference libraries into **pub
 
 ## Runtime Paths & Budget Discipline (64 Requests / 900s)
 
-Resolve `$SKILL_DIR` first (works under Harbor `/skills/weekly-skill` or local checkouts):
+Resolve `$SKILL_DIR` first (works under Harbor `/skills/weekly-skill`, `/app/submission`, or local checkouts):
 ```bash
-SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
-[ -d "$SKILL_DIR/scripts" ] || SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+SKILL_DIR="${SKILL_DIR:-}"
+for d in "$SKILL_DIR" "/skills/weekly-skill" "/app/submission" "."; do
+  [ -n "$d" ] && [ -f "$d/scripts/prepare_workspace.py" ] && SKILL_DIR="$d" && break
+done
 mkdir -p /app/work /app/output
 ```
 
@@ -44,19 +46,24 @@ This single command:
 3. Cross-checks citations against local evidence PDFs/abstracts (`verification_worklist.md`), emits a clean template `/app/work/citation_plan_skeleton.json` (with `_review_hints` listing every item needing review), and persists an early honest partial `/app/output/result.json`.
 
 *(All individual stage scripts remain directly callable if step-by-step debugging is needed.)*
-- **Exception Short-Circuit**: If both disk files and inline materials are empty or completely unreadable (`corrupt_or_unreadable` / encrypted), do **not** invent references or prose; write honest `uncertainty[]` and `human_confirmation_items[]` in `/app/work/citation_plan.json` and proceed directly to Step 3.
-- **Library-Only Mode**: If there is no manuscript text and the task only asks to deduplicate, clean, or convert references, keep `manuscript_edits: []` — `sync_and_format.py` automatically formats all canonical references.
+- **Exception Short-Circuit**: If both disk files and inline materials are empty or completely unreadable (`corrupt_or_unreadable` / encrypted), do **not** invent references or prose; write honest `uncertainty[]` and `human_confirmation_items[]` in `/app/work/citation_plan.json` and run Step 3 (`finalize_workspace.py`) so `result.json` exits cleanly with `status: "unable_to_determine"` or `"partial"`.
+- **Library-Only Mode**: If `manuscript_parsed.json` has `0` sentences (`total_sentences == 0`) and the task only asks to deduplicate, clean, or convert references, keep `manuscript_edits: []` — `sync_and_format.py` automatically formats all canonical references.
 
 ### Step 2: Read Compact Digests & Author `/app/work/citation_plan.json`
-Read `/app/work/library/library_digest.md`, `/app/work/manuscript/manuscript_claims_digest.md`, `/app/work/verify/verification_worklist.md`, and `/app/work/case_plan.json` (inspect raw files or local evidence PDFs only where needed). Author `/app/work/citation_plan.json` conforming to `$SKILL_DIR/resources/plan_schema.json` (using `/app/work/citation_plan_skeleton.json` as structural reference, never leaving unreviewed placeholder text):
-1. **`dedup_decisions`**: Explicitly decide `"merge"` or `"keep_separate"` with concrete rationale for every `AMB_XXX` entry in `ambiguous_duplicate_candidates`. Never merge distinct works by the same author or `recycled_doi_conflicts`.
-2. **`metadata_resolutions`**: Resolve field conflicts or fill verified fields **only** from raw library records or local evidence PDFs (citing exact `source_locator`). Never fabricate missing DOIs, volumes, issues, or page ranges.
-3. **`manuscript_edits`**: Only include sentences that actually need insertion, paragraph-end `[1-4]` cluster splitting, dangling-ref replacement, or clause-level relocation (all other clean sentences are automatically tokenized and renumbered in order):
-   - Embed `[[CITE:REF_001]]` or `[[CITE:REF_001,REF_002]]` (or `[[CITE_NARR:REF_001]]` for narrative author-year like `Smith (2020)`) at the **exact supported clause**, right before clause/sentence punctuation — never dump citations at paragraph ends or near captions.
-   - Replace every raw placeholder (`[REF]`, `[?]`, `[待引用]`) with verified `[[CITE:...]]` tokens if supported, or explicit `[证据不足/待人工核验]` / `[INSUFFICIENT_EVIDENCE]` if no library record supports the claim (and log a matching entry in `human_confirmation_items`).
-   - If the task asks to reorder chapters/sections, populate `section_order_override`.
-4. **`claim_verifications`**: Audit every cited sentence honestly with per-claim verdicts (`supported_by_local_fulltext`, `supported_by_abstract`, `title_metadata_only_unverified_claim`, `claim_mismatch`, `fabricated_or_dangling_ref`, `metadata_conflict`, `insufficient_evidence_in_library`). Paste exact short verbatim `evidence_quote` substrings **only** when verified in local abstracts/PDFs, and explain every contradiction in `mismatch_detail`.
-5. **`human_confirmation_items` & `contract_overrides`**: Document every dangling citation, recycled DOI conflict, claim mismatch, or evidence gap in `human_confirmation_items[]` and `uncertainty[]`. Populate `contract_overrides` for any custom keys declared in `case_plan.json["output_contract_parsed"]`.
+Read `/input/task.md` (if present), `/app/work/case_plan.json`, `/app/work/library/library_digest.md`, `/app/work/manuscript/manuscript_claims_digest.md`, and `/app/work/verify/verification_worklist.md` (inspect `/app/work/library/evidence_fulltexts.json` when verifying local PDF claims/quotes). Author `/app/work/citation_plan.json` conforming to `$SKILL_DIR/resources/plan_schema.json` (using `/app/work/citation_plan_skeleton.json` as structural reference, never leaving unreviewed placeholder text):
+0. **Confirm `target_style`, `in_text_format`, & `requested_output_formats`**: Verify auto-detected `target_style` and `in_text_format` against `/input/task.md` & `case.json`! Legal `(target_style, in_text_format)` pairs:
+   - `gbt7714_2015_numeric`: `superscript_bracket` (`<sup>[1]</sup>`), `bracket` (`[1]`), `superscript_md`, `footnote`, or `latex_cite` (`.tex`)
+   - `gbt7714_2015_author_year` / `apa7` / `apa6` / `chicago_author_date`: `author_year` (`(Smith, 2020)`) or `latex_cite` (`\citep`/`\citet` for `.tex`)
+   - `ieee`: `bracket_separate` (`[1]–[3], [5]`), `bracket`, or `latex_cite` | `nature`: `superscript_html` (`<sup>1</sup>`) or `latex_cite` | `vancouver`: `bracket` or `superscript_bracket`
+   - Optionally set `"requested_output_formats": ["docx"]` or `["tex"]` if the prompt requests Word/LaTeX output not auto-detected.
+1. **`dedup_decisions`**: Explicitly decide `"merge"` or `"keep_separate"` with concrete rationale for every `AMB_XXX` entry in `ambiguous_duplicate_candidates` (use canonical `REF_XXX` or `RAW_XXX` IDs). Never merge distinct works by the same author or `recycled_doi_conflicts`.
+2. **`metadata_resolutions`**: Resolve field conflicts or fill verified fields **only** from raw library records or local evidence PDFs (citing exact `source_locator`). Use canonical field names (`venue`, `issue`, `authors: list[str]`, bare `doi: "10.xxxx/..."`, `pages`, `year: int`, `publisher`, `city`, `arxiv_id`, `url`; common aliases `journal`/`booktitle`/`number`/`author`/`page` are also normalized). Never fabricate missing DOIs, volumes, issues, or page ranges.
+3. **`manuscript_edits`**: Only include sentences that actually need insertion, paragraph-end `[1-4]` cluster splitting, dangling-ref replacement, ambiguous author-year disambiguation (`_review_hints.ambiguous_marker_links_to_disambiguate`), deletion (`"action": "delete"`), or clause-level relocation (all other clean sentences are automatically tokenized and renumbered in order):
+   - Embed `[[CITE:REF_001]]` or `[[CITE:REF_001,REF_002]]` (or `[[CITE_NARR:REF_001]]` for narrative citations like `Smith (2020)` or `Smith<sup>[1]</sup>`) at the **exact supported clause**, right before clause/sentence punctuation — never dump citations at paragraph ends or near captions.
+   - Replace every raw placeholder (`[REF]`, `[?]`, `[待引用]`, `[CITATION]`, `[TODO:...]`) with verified `[[CITE:...]]` tokens if supported, or explicit `[证据不足/待人工核验]` / `[INSUFFICIENT_EVIDENCE]` if no library record supports the claim (and log a matching entry in `human_confirmation_items`).
+   - If the task asks to reorder chapters/sections, populate `section_order_override` (child subsections stay attached to their parent section).
+4. **`claim_verifications`**: Audit every cited sentence honestly with per-claim verdicts (`supported_by_local_fulltext`, `supported_by_abstract`, `title_metadata_only_unverified_claim`, `claim_mismatch`, `fabricated_or_dangling_ref`, `metadata_conflict`, `insufficient_evidence_in_library`). Paste exact short verbatim `evidence_quote` substrings (`>= 12` chars copied verbatim from `library_digest.md` abstracts or `evidence_fulltexts.json` pages; leave `""` if only title/metadata exists!), and explain every contradiction in `mismatch_detail`.
+5. **`human_confirmation_items` & `contract_overrides`**: Document every dangling citation, recycled DOI conflict, claim mismatch, or evidence gap in `human_confirmation_items[]` and `uncertainty[]`. Populate `contract_overrides` for any custom keys declared in `case_plan.json["output_contract_parsed"]` (values are automatically coerced to the declared contract type).
 
 ### Step 3: One-Command Synchronization, 10-Invariant Verification & Final Assembly
 ```bash

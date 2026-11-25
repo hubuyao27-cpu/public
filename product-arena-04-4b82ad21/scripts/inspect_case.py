@@ -17,7 +17,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from common import load_json_safe, posix_rel, read_text_safe, save_json
+from common import (
+    infer_semantic_role,
+    load_json_safe,
+    parse_output_contract,
+    posix_rel,
+    read_text_safe,
+    save_json,
+)
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".pytest_cache"}
 CONTROL_NAMES = {"case.json", "task.md", "case_plan.json", "result.json"}
@@ -26,146 +33,53 @@ BIB_EXTS = {".bib", ".ris", ".enw"}
 TEXT_DOC_EXTS = {".md", ".markdown", ".txt", ".tex", ".rst", ".docx", ".pdf"}
 TABLE_EXTS = {".csv", ".tsv"}
 CODE_CONFIG_EXTS = {".py", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".log"}
-BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pt", ".pth", ".ckpt", ".bin", ".npy", ".npz", ".zip", ".tar", ".gz", ".exe", ".dll"}
+BINARY_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pt", ".pth", ".ckpt",
+    ".bin", ".npy", ".npz", ".zip", ".tar", ".gz", ".exe", ".dll",
+}
+
+LIT_DIR_NAMES = {"papers", "paper", "literature", "lit", "refs", "references", "prior", "prior_work", "related", "related_work", "corpus", "survey", "sources"}
+OWN_DIR_NAMES = {"own_paper", "our_paper", "my_paper", "results", "experiments", "experiment", "evaluation", "ablation", "metrics", "figures", "tables", "methods"}
+DRAFT_DIR_NAMES = {"draft", "drafts", "existing_draft", "manuscript_draft"}
 
 
-def infer_semantic_role(field_name: str, desc: str = "") -> str:
-    k = f"{field_name} {desc}".lower()
-    if any(w in k for w in ("case_id", "caseid", "task_id")):
-        return "case_id"
-    if k.strip() in ("status", "run_status", "execution_status") or "status" in field_name.lower():
-        return "status"
-    if any(w in k for w in ("manuscript", "intro_and_related", "intro_text", "introduction_and_related", "related_work_text", "revised_text", "output_text", "draft_text", "article", "markdown", "prose")):
-        return "manuscript_markdown"
-    if any(w in k for w in ("background", "research_background", "context_section")):
-        return "research_background"
-    if any(w in k for w in ("matrix", "comparison_table", "rw_table", "comparison_matrix", "literature_table")):
-        return "comparison_matrix"
-    if any(w in k for w in ("related_work", "rw_group", "taxonomy", "literature_group", "route")):
-        return "related_work_groups"
-    if any(w in k for w in ("gap", "research_gap", "open_problem")):
-        return "research_gaps"
-    if any(w in k for w in ("contrib", "contribution", "contrib_audit")):
-        return "contributions"
-    if any(w in k for w in ("claim_citation", "claim_map", "citation_map", "claim_to_citation")):
-        return "claim_citation_map"
-    if any(w in k for w in ("reference", "bib", "citation_check", "citation_list", "citation_audit", "cited_work")):
-        return "references"
-    if any(w in k for w in ("conflict", "discrepanc", "mismatch", "inconsisten")):
-        return "conflicts"
-    if any(w in k for w in ("confirm", "question", "author_confirm", "todo_author", "open_issue")):
-        return "author_confirmation_items"
-    if any(w in k for w in ("change", "revision", "diff", "edit_log", "modification")):
-        return "change_records"
-    if any(w in k for w in ("uncertain", "unknown", "warning", "limit", "boundary")):
-        return "uncertainty"
-    if any(w in k for w in ("source", "provenance", "evidence", "traceability")):
-        return "sources"
-    if any(w in k for w in ("file", "artifact", "deliverable", "preview", "path")):
-        return "deliverable_files"
-    if any(w in k for w in ("verif", "audit", "metric", "check")):
-        return "verification_summary"
-    if any(w in k for w in ("summary", "overview", "abstract")):
-        return "summary"
-    return "custom"
+def _peek_ambiguous_file(path: Path) -> str:
+    """Inspect first ~2KB of an ambiguous top-level paper.pdf/main.tex to distinguish own-paper vs literature."""
+    ext = path.suffix.lower()
+    sample = ""
+    if ext in (".tex", ".md", ".markdown", ".txt", ".rst"):
+        txt, err = read_text_safe(path)
+        if not err and txt:
+            sample = txt[:2500]
+    elif ext == ".pdf":
+        try:
+            import pypdf  # type: ignore
 
-
-def parse_output_contract(contract: Any) -> Dict[str, Any]:
-    fields: List[Dict[str, Any]] = []
-    if contract is None:
-        return {"raw_type": "none", "fields": [], "required_keys": []}
-
-    if isinstance(contract, dict):
-        if isinstance(contract.get("properties"), dict):
-            req_set = set(contract.get("required") or [])
-            for k, spec in contract["properties"].items():
-                sd = spec if isinstance(spec, dict) else {"example": spec}
-                ftype = str(sd.get("type", type(spec).__name__))
-                desc = str(sd.get("description", ""))
-                fields.append(
-                    {
-                        "name": k,
-                        "expected_type": ftype,
-                        "required": (k in req_set) if req_set else True,
-                        "description": desc,
-                        "semantic_role": infer_semantic_role(k, desc),
-                    }
-                )
-            return {"raw_type": "json_schema", "fields": fields, "required_keys": [f["name"] for f in fields if f["required"]]}
-
-        if "fields" in contract and isinstance(contract["fields"], (dict, list)):
-            return parse_output_contract(contract["fields"])
-
-        meta_keys = {"type", "description", "format", "required", "$schema", "title"}
-        req_list = contract.get("required") if isinstance(contract.get("required"), list) else None
-        for k, val in contract.items():
-            if k in meta_keys and len(contract) > 1:
-                continue
-            if isinstance(val, dict) and ("type" in val or "description" in val):
-                ftype = str(val.get("type", "object"))
-                desc = str(val.get("description", ""))
-                req = bool(val.get("required", True))
-            else:
-                ftype = type(val).__name__ if val is not None else "any"
-                desc = val if isinstance(val, str) else ""
-                req = (k in req_list) if req_list is not None else True
-            fields.append(
-                {
-                    "name": k,
-                    "expected_type": ftype,
-                    "required": req,
-                    "description": desc,
-                    "semantic_role": infer_semantic_role(k, desc),
-                }
-            )
-        if req_list:
-            existing = {f["name"] for f in fields}
-            for rk in req_list:
-                if rk not in existing:
-                    fields.append(
-                        {
-                            "name": rk,
-                            "expected_type": "any",
-                            "required": True,
-                            "description": "",
-                            "semantic_role": infer_semantic_role(rk),
-                        }
-                    )
-        return {"raw_type": "dict_template", "fields": fields, "required_keys": [f["name"] for f in fields if f["required"]]}
-
-    if isinstance(contract, list):
-        for item in contract:
-            if isinstance(item, str):
-                fields.append(
-                    {
-                        "name": item,
-                        "expected_type": "any",
-                        "required": True,
-                        "description": "",
-                        "semantic_role": infer_semantic_role(item),
-                    }
-                )
-            elif isinstance(item, dict) and ("name" in item or "key" in item):
-                name = str(item.get("name") or item.get("key"))
-                desc = str(item.get("description", ""))
-                fields.append(
-                    {
-                        "name": name,
-                        "expected_type": str(item.get("type", "any")),
-                        "required": bool(item.get("required", True)),
-                        "description": desc,
-                        "semantic_role": infer_semantic_role(name, desc),
-                    }
-                )
-        return {"raw_type": "list", "fields": fields, "required_keys": [f["name"] for f in fields if f["required"]]}
-
-    return {"raw_type": type(contract).__name__, "fields": [], "required_keys": []}
+            reader = pypdf.PdfReader(str(path))
+            if not reader.is_encrypted and reader.pages:
+                sample = (reader.pages[0].extract_text() or "")[:2500]
+        except Exception:
+            sample = ""
+    if not sample:
+        return "literature_source"
+    low = sample.lower()
+    own_cues = (
+        "our method", "our model", "our experiments", "our results", "we propose",
+        "本文方法", "本文提出", "本文实验", "实验结果", "实验设置",
+        r"\section{method", r"\section{experiment",
+    )
+    if any(c in low for c in own_cues):
+        if any(c in low for c in (r"\section{introduction", "# introduction", "## 1. 引言", "## 引言")):
+            return "own_paper_draft"
+        return "own_paper_evidence"
+    return "literature_source"
 
 
 def classify_file(path: Path, rel: str) -> str:
     name_low = path.name.lower()
     rel_low = rel.lower()
     ext = path.suffix.lower()
+    parent_parts = [pt.lower() for pt in Path(rel).parts[:-1]]
 
     if name_low in CONTROL_NAMES:
         return "control"
@@ -174,10 +88,25 @@ def classify_file(path: Path, rel: str) -> str:
     if ext in BIB_EXTS or any(w in name_low for w in ("bib", "citation", "references", "ref_list", "library")):
         if ext in (".bib", ".ris", ".enw", ".json", ".csv", ".tsv", ".md", ".txt", ".tex"):
             return "bibliography"
-    if any(w in rel_low for w in ("draft", "existing_intro", "old_intro", "manuscript_draft", "raw_draft")):
+
+    # Directory-aware priority prevents papers/smith_methods.pdf from becoming own_paper_evidence
+    if any(pt in DRAFT_DIR_NAMES for pt in parent_parts) or any(
+        w in name_low for w in ("draft", "existing_intro", "old_intro", "manuscript_draft", "raw_draft")
+    ):
         return "own_paper_draft"
-    if any(w in rel_low for w in ("result", "experiment", "eval", "metric", "ablation", "figure", "table", "own_paper", "our_paper", "methods")):
+    if any(pt in LIT_DIR_NAMES for pt in parent_parts):
+        return "literature_source"
+    if any(pt in OWN_DIR_NAMES for pt in parent_parts):
         return "own_paper_evidence"
+
+    # Top-level filename heuristics
+    if any(
+        w in name_low
+        for w in ("own_paper", "our_paper", "own_result", "our_result", "result", "experiment", "eval", "metric", "ablation", "figure", "table", "methods")
+    ):
+        return "own_paper_evidence"
+    if name_low in ("paper.pdf", "main.tex", "manuscript.pdf", "manuscript.tex", "submission.pdf"):
+        return _peek_ambiguous_file(path)
     if any(w in rel_low for w in ("paper", "lit", "prior", "related", "source", "ref", "survey", "corpus")):
         return "literature_source"
     if ext in TABLE_EXTS or ext in CODE_CONFIG_EXTS:
@@ -188,62 +117,85 @@ def classify_file(path: Path, rel: str) -> str:
 
 
 def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
-    blob = f"{task_text}\n{json.dumps({k: v for k, v in case_data.items() if k in ('title', 'task', 'instruction', 'prompt', 'language', 'citation_style', 'style', 'venue', 'audience', 'format', 'output_format', 'formats')}, ensure_ascii=False)}"
+    meta_subset = {
+        k: v
+        for k, v in case_data.items()
+        if k in ("title", "task", "instruction", "prompt", "language", "target_language", "citation_style", "reference_format", "style", "venue", "audience", "format", "output_format", "formats")
+    }
+    blob = f"{task_text}\n{json.dumps(meta_subset, ensure_ascii=False)}"
     low = blob.lower()
 
-    # Language
-    explicit_lang = str(case_data.get("language") or case_data.get("target_language") or "").lower()
-    if "bilingual" in low or "双语" in blob or ("中文" in blob and "english" in low):
+    # 1. Language: honor explicit case_data["language"] / target_language FIRST
+    explicit_lang = str(case_data.get("language") or case_data.get("target_language") or "").strip().lower()
+    if any(w in explicit_lang for w in ("bilingual", "双语", "zh+en", "en+zh", "zh-en", "en-zh")):
         lang = "bilingual"
-    elif explicit_lang.startswith("en") or ("english" in low and "中文" not in blob):
-        lang = "en"
-    elif explicit_lang.startswith("zh") or re.search(r"[\u4e00-\u9fff]", task_text):
+    elif explicit_lang.startswith("zh") or explicit_lang in ("cn", "chinese", "中文"):
         lang = "zh"
-    else:
+    elif explicit_lang.startswith("en") or explicit_lang in ("english", "英文"):
         lang = "en"
+    else:
+        if "bilingual" in low or "双语" in blob or "中英文" in blob or "中英双语" in blob:
+            lang = "bilingual"
+        elif re.search(r"(?:write|draft|output)\s+(?:in\s+)?english|用英文(?:撰写|写作|输出)|英文撰写", low):
+            lang = "en"
+        elif re.search(r"[\u4e00-\u9fff]", task_text or blob):
+            lang = "zh"
+        else:
+            lang = "en"
 
-    # Citation style
-    explicit_style = str(case_data.get("citation_style") or case_data.get("reference_format") or "").lower()
-    if "apa" in explicit_style or re.search(r"\bapa\b|author[- ]year|著者-出版年", low):
+    # 2. Citation style: honor explicit fields first, require style context for 'nature'
+    explicit_style = str(case_data.get("citation_style") or case_data.get("reference_format") or case_data.get("style") or "").strip().lower()
+    if "apa" in explicit_style or "author" in explicit_style:
         cstyle = "apa_author_year"
-    elif "gb/t" in low or "7714" in low or "gbt7714" in explicit_style:
+    elif "7714" in explicit_style or "gbt" in explicit_style or "gb/t" in explicit_style:
         cstyle = "gbt7714"
-    elif "ieee" in low:
+    elif "ieee" in explicit_style:
         cstyle = "ieee_numeric"
-    elif "nature" in low:
+    elif "nature" in explicit_style:
+        cstyle = "nature_numeric"
+    elif "bib" in explicit_style or "latex" in explicit_style:
+        cstyle = "bibtex_latex"
+    elif re.search(r"\bapa\b|author[- ]year|著者-出版年", low):
+        cstyle = "apa_author_year"
+    elif "gb/t" in low or "7714" in low or "gbt7714" in low:
+        cstyle = "gbt7714"
+    elif re.search(r"\bieee\b", low):
+        cstyle = "ieee_numeric"
+    elif re.search(r"\bnature\s*(?:style|format|citation|reference|journal|numeric|格式|引用|期刊)|(?:style|format|citation|格式|引用)[^.\n]{0,20}\bnature\b", low):
         cstyle = "nature_numeric"
     elif re.search(r"\bbibtex\b|\\cite|\blatex\b|\.tex\b", low):
         cstyle = "bibtex_latex"
     else:
         cstyle = "unspecified"
 
-    # Task mode
-    has_intro_cue = bool(re.search(r"\bintroduction\b|引言", low))
-    has_rw_cue = bool(re.search(r"related work|相关工作", low))
-    if any(w in low for w in ("bilingual", "双语")):
+    # 3. Task mode: strip '修改记录/revision log' before checking revision cues
+    mode_blob = re.sub(r"修改记录|修改日志|修改差异|change_records|revision\s+log", " ", low)
+    has_intro_cue = bool(re.search(r"\bintroduction\b|引言", mode_blob))
+    has_rw_cue = bool(re.search(r"related work|相关工作", mode_blob))
+    if lang == "bilingual" or any(w in mode_blob for w in ("bilingual", "双语")):
         tmode = "bilingual_writing"
-    elif any(w in low for w in ("revise", "rewrite", "polish", "修改", "改写", "润色", "重构")):
+    elif re.search(r"\b(?:revise|rewrite|polish)\b|修改(?:草稿|现有|已有|原文|引言|相关工作)|改写|润色|重构", mode_blob):
         tmode = "revise_and_strengthen"
-    elif any(w in low for w in ("audit", "verify", "check", "核对", "补引", "补全引用", "校对")) and not (has_intro_cue or has_rw_cue):
+    elif any(w in mode_blob for w in ("audit", "verify", "check", "核对", "补引", "补全引用", "校对")) and not (has_intro_cue or has_rw_cue):
         tmode = "fill_and_audit_citations"
-    elif (has_rw_cue or any(w in low for w in ("group", "matrix", "compare", "分组", "梳理相关工作", "对比路线"))) and not has_intro_cue:
+    elif (has_rw_cue or any(w in mode_blob for w in ("group", "matrix", "compare", "分组", "梳理相关工作", "对比路线"))) and not has_intro_cue:
         tmode = "organize_related_work"
-    elif any(w in low for w in ("contribution", "贡献对齐", "贡献表述")) and not (has_intro_cue or has_rw_cue):
+    elif any(w in mode_blob for w in ("contribution", "贡献对齐", "贡献表述")) and not (has_intro_cue or has_rw_cue):
         tmode = "align_contributions"
     else:
         tmode = "draft_intro_rw"
 
-    # Requested output formats (avoid matching substrings like 'text'/'context' as 'tex')
+    # 4. Requested output formats (avoid matching 'text'/'context' as 'tex', 'word limit' as 'docx', bare 'taxonomy' as diagram)
     req_fmts = ["md"]
     if re.search(r"\b(?:latex|xelatex|pdflatex|tex)\b|\.tex\b|\\cite", low):
         req_fmts.append("tex")
     if re.search(r"\bbibtex\b|\.bib\b", low):
         req_fmts.append("bib")
-    if re.search(r"\bdocx\b|\.docx\b|\bword\b|word文档", low):
+    if re.search(r"\b(?:docx|ms\s*word|microsoft\s*word)\b|\.docx\b|word\s*文档", low):
         req_fmts.append("docx")
     if re.search(r"\bcsv\b|\.csv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", low):
         req_fmts.append("csv")
-    if re.search(r"\bdiagram\b|\btaxonomy\b|路线图|关系图|演化图|结构图", low):
+    if re.search(r"\b(?:diagram|flowchart)\b|\btaxonomy\s+(?:diagram|figure|chart|plot)\b|路线图|关系图|演化图|结构图", low):
         req_fmts.append("diagram")
 
     venue = str(case_data.get("venue") or case_data.get("audience") or case_data.get("journal") or "").strip()

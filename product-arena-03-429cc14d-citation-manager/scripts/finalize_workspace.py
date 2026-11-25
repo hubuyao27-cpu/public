@@ -97,6 +97,7 @@ def main() -> None:
             "--synced", str(sync_json),
             "--verification", str(ver_json),
             "--checkpoint", "final",
+            "--skip-previews",
             "--out-dir", str(out_dir),
         ],
     )

@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -40,11 +42,23 @@ SOURCE_COPY_EXTS = {
     ".bst",
     ".def",
     ".clo",
+    ".bbx",
+    ".cbx",
+    ".lbx",
+    ".cfg",
+    ".fd",
+    ".ttf",
+    ".otf",
+    ".pdf",
     ".png",
     ".jpg",
     ".jpeg",
     ".eps",
     ".svg",
+    ".csv",
+    ".dat",
+    ".tikz",
+    ".pgf",
 }
 
 
@@ -101,7 +115,8 @@ def build_compile_diagnostics(compile_report: Optional[Dict[str, Any]]) -> Dict[
 
 
 def compute_before_after_diff(case_plan: Dict[str, Any], out_dir: Path) -> List[Dict[str, Any]]:
-    """Compute itemized unified diffs between original /input .tex/.bib files and delivered /app/output files."""
+    """Compute itemized unified diffs between original /input (or inline baseline_src) and delivered /app/output files."""
+    baseline_dir = Path(case_plan.get("baseline_dir") or "") if case_plan.get("baseline_dir") else None
     input_dir = Path(case_plan.get("input_dir") or "")
     diffs: List[Dict[str, Any]] = []
     if not out_dir.is_dir():
@@ -116,11 +131,17 @@ def compute_before_after_diff(case_plan: Dict[str, Any], out_dir: Path) -> List[
         after_txt, err_a = read_text_safe(dp)
         if err_a:
             continue
-        orig_cand = input_dir / rel if input_dir.is_dir() else None
-        if orig_cand is not None and not orig_cand.is_file():
-            # Fallback match by basename inside /input
-            matches = [Path(f["abs_path"]) for f in case_plan.get("files", []) if Path(f["rel_path"]).name == dp.name]
-            orig_cand = matches[0] if matches else None
+        orig_cand = None
+        if baseline_dir is not None and (baseline_dir / rel).is_file():
+            orig_cand = baseline_dir / rel
+        elif input_dir.is_dir() and (input_dir / rel).is_file():
+            orig_cand = input_dir / rel
+        if orig_cand is None:
+            matches = [Path(f["abs_path"]) for f in case_plan.get("files", []) if Path(f["rel_path"]).name == dp.name and Path(f["abs_path"]).is_file()]
+            if matches and (baseline_dir is None or matches[0].resolve() != dp.resolve()):
+                orig_cand = matches[0]
+            if baseline_dir is not None and (baseline_dir / dp.name).is_file():
+                orig_cand = baseline_dir / dp.name
 
         if orig_cand is not None and orig_cand.is_file():
             before_txt, err_b = read_text_safe(orig_cand)
@@ -167,22 +188,75 @@ def compute_before_after_diff(case_plan: Dict[str, Any], out_dir: Path) -> List[
     return diffs
 
 
-def build_shell_script(compile_report: Optional[Dict[str, Any]], primary_tex_rel: str) -> str:
-    """Emit reproducible build.sh reflecting the verified engine and multi-pass commands."""
-    lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'cd "$(dirname "$0")"', ""]
+def build_shell_script(compile_report: Optional[Dict[str, Any]], primary_tex_rel: str, out_dir: Optional[Path] = None) -> str:
+    """Emit reproducible build.sh with safe quoting and TEXINPUTS/BIBINPUTS/BSTINPUTS for subdirectories."""
+    lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"', 'cd "$ROOT_DIR"', ""]
+    tex_rel_use = primary_tex_rel or (compile_report or {}).get("tex_file") or "main.tex"
+    if out_dir and out_dir.is_dir():
+        tex_subdirs = sorted({p.parent.relative_to(out_dir).as_posix() for p in out_dir.rglob("*") if p.is_file() and p.suffix.lower() in {".cls", ".sty", ".def", ".clo", ".tex", ".ltx", ".bbx", ".cbx", ".lbx"}})
+        bib_subdirs = sorted({p.parent.relative_to(out_dir).as_posix() for p in out_dir.rglob("*.bib") if p.is_file()})
+        bst_subdirs = sorted({p.parent.relative_to(out_dir).as_posix() for p in out_dir.rglob("*.bst") if p.is_file()})
+        if any(d != "." for d in tex_subdirs) or (Path(tex_rel_use).parent.as_posix() not in {"", "."}):
+            t_paths = ":".join([".", "$ROOT_DIR"] + [f"$ROOT_DIR/{d}" for d in tex_subdirs if d != "."])
+            b_paths = ":".join([".", "$ROOT_DIR"] + [f"$ROOT_DIR/{d}" for d in bib_subdirs if d != "."])
+            s_paths = ":".join([".", "$ROOT_DIR"] + [f"$ROOT_DIR/{d}" for d in bst_subdirs if d != "."])
+            lines.append(f'export TEXINPUTS="{t_paths}:"')
+            lines.append(f'export BIBINPUTS="{b_paths}:"')
+            lines.append(f'export BSTINPUTS="{s_paths}:"')
+            lines.append("")
+
+    tex_dir = Path(tex_rel_use).parent.as_posix()
+    if tex_dir and tex_dir != "." and (out_dir is None or (out_dir / tex_rel_use).is_file()):
+        lines.append(f"cd {shlex.quote(tex_dir)}")
     if compile_report and compile_report.get("reproducibility_manifest", {}).get("commands"):
-        tex_dir = Path(primary_tex_rel).parent.as_posix()
-        if tex_dir and tex_dir != ".":
-            lines.append(f'cd "{tex_dir}"')
         for cmd in compile_report["reproducibility_manifest"]["commands"]:
             lines.append(cmd)
     else:
         engine = (compile_report or {}).get("engine", "pdflatex")
-        tex_name = Path(primary_tex_rel).name if primary_tex_rel else "main.tex"
-        lines.append(f"{engine} -interaction=nonstopmode -file-line-error -recorder {tex_name}")
-        lines.append(f"{engine} -interaction=nonstopmode -file-line-error -recorder {tex_name}")
+        tex_name = shlex.quote(Path(tex_rel_use).name)
+        lines.append(f"{shlex.quote(engine)} -no-shell-escape -interaction=nonstopmode -file-line-error -recorder {tex_name}")
+        lines.append(f"{shlex.quote(engine)} -no-shell-escape -interaction=nonstopmode -file-line-error -recorder {tex_name}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _coerce_contract_value(val: Any, etype: str, status: str, summary: str) -> Any:
+    et = (etype or "any").lower()
+    if val is None:
+        if et in {"array", "list"}:
+            return []
+        if et in {"object", "dict"}:
+            return {}
+        if et in {"boolean", "bool"}:
+            return status == "completed"
+        if et in {"integer", "int"}:
+            return 0
+        if et in {"number", "float"}:
+            return 0.0
+        return str(summary or "")
+    if et in {"string", "str"}:
+        return val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
+    if et in {"array", "list"}:
+        if isinstance(val, list):
+            return val
+        return [val] if val not in (None, "") else []
+    if et in {"object", "dict"}:
+        if isinstance(val, dict):
+            return val
+        return {"value": val} if val not in (None, "") else {}
+    if et in {"boolean", "bool"}:
+        return bool(val)
+    if et in {"integer", "int"}:
+        try:
+            return int(val)
+        except Exception:
+            return 0
+    if et in {"number", "float"}:
+        try:
+            return float(val)
+        except Exception:
+            return 0.0
+    return val
 
 
 def populate_contract_fields(
@@ -191,6 +265,8 @@ def populate_contract_fields(
     payload: Dict[str, Any],
     compile_report: Optional[Dict[str, Any]],
     primary_tex_content: str,
+    rendered_pdf_rel: Optional[str] = None,
+    rendered_previews_rel: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Ensure result.json contains case_id and EVERY key from input output_contract with matching types."""
     overrides = payload.get("contract_overrides") or {}
@@ -202,8 +278,8 @@ def populate_contract_fields(
         "summary": payload.get("summary", ""),
         "primary_tex_content": primary_tex_content,
         "rendered_outputs": {
-            "pdf_path": (compile_report or {}).get("pdf_path"),
-            "previews": (compile_report or {}).get("previews", []),
+            "pdf_path": rendered_pdf_rel,
+            "previews": rendered_previews_rel or [],
         },
         "bibliography": {
             "bib_tool": (compile_report or {}).get("bib_tool", "none"),
@@ -216,43 +292,29 @@ def populate_contract_fields(
         "author_confirmation_items": payload.get("author_confirmation_items", []),
         "uncertainty": payload.get("uncertainty", []),
         "limitations": payload.get("limitations", []),
-        "output_files": payload.get("output_files", []),
+        "output_files": result.get("output_files", payload.get("output_files", [])),
     }
 
+    status_s = str(payload.get("status", "partial"))
+    summary_s = str(payload.get("summary", ""))
     for fspec in fields:
         fname = fspec["name"]
+        etype = fspec.get("expected_type", "any").lower()
         if fname in overrides:
-            result[fname] = overrides[fname]
+            result[fname] = _coerce_contract_value(overrides[fname], etype, status_s, summary_s)
+            continue
+        if fname == "output_files" and "output_files" in result:
+            result[fname] = _coerce_contract_value(result["output_files"], etype, status_s, summary_s)
             continue
         if fname in payload:
-            result[fname] = payload[fname]
+            result[fname] = _coerce_contract_value(payload[fname], etype, status_s, summary_s)
             continue
         if fname in result:
+            result[fname] = _coerce_contract_value(result[fname], etype, status_s, summary_s)
             continue
         role = fspec.get("semantic_role", "custom")
-        etype = fspec.get("expected_type", "any").lower()
         val = role_values.get(role)
-        if val is None:
-            if etype in {"array", "list"}:
-                val = []
-            elif etype in {"object", "dict"}:
-                val = {}
-            elif etype in {"boolean", "bool"}:
-                val = payload.get("status") == "completed"
-            elif etype in {"integer", "int", "number", "float"}:
-                val = 0
-            else:
-                val = str(payload.get("summary") or "")
-        else:
-            # Coerce type cleanly if schema expects string vs dict/list
-            if etype in {"string", "str"} and isinstance(val, (dict, list)):
-                import json
-                val = json.dumps(val, ensure_ascii=False)
-            elif etype in {"array", "list"} and not isinstance(val, list):
-                val = [val] if val else []
-            elif etype in {"object", "dict"} and not isinstance(val, dict):
-                val = {"value": val}
-        result[fname] = val
+        result[fname] = _coerce_contract_value(val, etype, status_s, summary_s)
 
     return result
 
@@ -313,30 +375,52 @@ def render_provenance_report(
                 lines.append(f"- `[{w.get('rule_id', 'WARN')}]` `{loc}` — {w.get('message')}")
             lines.append("")
 
+        pa_ov = (compile_report.get("pdf_audit") or {}).get("overflow_findings") or []
+        if pa_ov:
+            lines.append("### PDF Visual Margin Overflow Findings")
+            for ov in pa_ov[:15]:
+                lines.append(f"- Page {ov.get('page')} (x1={ov.get('x1')}/{ov.get('page_width')}): `{ov.get('snippet')}`")
+            lines.append("")
+
     if payload.get("change_records"):
         lines.append("## Change Records")
         for cr in payload["change_records"]:
-            lines.append(f"- `{cr.get('file')}` ({cr.get('locator', '-')}) [{cr.get('change_type')}]: {cr.get('description')} — Reason: {cr.get('reason')}")
+            if isinstance(cr, dict):
+                lines.append(f"- `{cr.get('file')}` ({cr.get('locator', '-')}) [{cr.get('change_type')}]: {cr.get('description')} — Reason: {cr.get('reason')}")
+            else:
+                lines.append(f"- {cr}")
         lines.append("")
 
     if payload.get("sources"):
         lines.append("## Fact & Source Mapping")
         for src in payload["sources"]:
-            lines.append(f"- `{src.get('fact_or_target')}` <- `{src.get('source_locator')}` -> `{src.get('target_locator', '-')}` ({src.get('verification_status', 'verified')})")
+            if isinstance(src, dict):
+                lines.append(f"- `{src.get('fact_or_target')}` <- `{src.get('source_locator')}` -> `{src.get('target_locator', '-')}` ({src.get('verification_status', 'verified')})")
+            else:
+                lines.append(f"- {src}")
         lines.append("")
 
     if payload.get("author_confirmation_items") or payload.get("uncertainty"):
         lines.append("## Uncertainties & Items Requiring Author Confirmation")
         for u in payload.get("uncertainty", []):
-            lines.append(f"- **[{u.get('id', 'UNC')}]** ({u.get('category')}): {u.get('description')} (Impact: {u.get('impact')})")
+            if isinstance(u, dict):
+                lines.append(f"- **[{u.get('id', 'UNC')}]** ({u.get('category')}): {u.get('description')} (Impact: {u.get('impact')})")
+            else:
+                lines.append(f"- {u}")
         for q in payload.get("author_confirmation_items", []):
-            lines.append(f"- **[{q.get('gap_id')}]** `{q.get('target_file')}`: {q.get('question')} -> Suggested: {q.get('suggested_action')}")
+            if isinstance(q, dict):
+                lines.append(f"- **[{q.get('gap_id')}]** `{q.get('target_file')}`: {q.get('question')} -> Suggested: {q.get('suggested_action')}")
+            else:
+                lines.append(f"- {q}")
         lines.append("")
 
     if payload.get("limitations"):
         lines.append("## Concrete Limitations")
         for lim in payload["limitations"]:
-            lines.append(f"- **{lim.get('scenario')}**: {lim.get('cause')} (Scope: {lim.get('scope')})")
+            if isinstance(lim, dict):
+                lines.append(f"- **{lim.get('scenario')}**: {lim.get('cause')} (Scope: {lim.get('scope')})")
+            else:
+                lines.append(f"- {lim}")
         lines.append("")
 
     if audit.get("findings") and checkpoint == "partial":
@@ -384,17 +468,44 @@ def assemble(
             "limitations": [{"scenario": "Early partial checkpoint", "cause": "Authoring/compile verification loop has not run yet.", "scope": "Replace via --checkpoint final once verification passes."}],
         }
 
-    copied_outputs: List[Dict[str, Any]] = list(payload.get("output_files") or [])
+    copied_outputs: List[Dict[str, Any]] = [
+        x if isinstance(x, dict) else {"path": str(x), "role": "declared_output"}
+        for x in (payload.get("output_files") or [])
+    ]
     primary_tex_content = ""
+    rendered_pdf_rel: Optional[str] = None
+    rendered_previews_rel: List[str] = []
 
     if checkpoint == "final":
+        # Clean stale partial digest and stale preview PNGs from prior attempts
+        stale_partial = out_dir / "initial_audit_digest.md"
+        if stale_partial.is_file():
+            try:
+                stale_partial.unlink()
+            except OSError:
+                pass
+        prev_out_clean = out_dir / "previews"
+        if prev_out_clean.is_dir():
+            for old_png in prev_out_clean.glob("page-*.png"):
+                try:
+                    old_png.unlink()
+                except OSError:
+                    pass
+
         src_dir = tex_source_dir
+        if src_dir is None and compile_report and compile_report.get("project_root"):
+            src_dir = Path(compile_report["project_root"])
         if src_dir is None and compile_report and compile_report.get("build_dir"):
             src_dir = Path(compile_report["build_dir"])
 
+        compiled_pdf_resolved = Path(compile_report["pdf_path"]).resolve() if (compile_report and compile_report.get("pdf_path")) else None
         if src_dir and src_dir.is_dir():
             for p in sorted(src_dir.rglob("*")):
                 if p.is_dir():
+                    continue
+                if any(part.startswith("_fallback") or part in {".git", "__pycache__"} for part in p.parts):
+                    continue
+                if compiled_pdf_resolved and p.resolve() == compiled_pdf_resolved:
                     continue
                 rel = p.relative_to(src_dir).as_posix()
                 if p.suffix.lower() in SOURCE_COPY_EXTS:
@@ -404,29 +515,31 @@ def assemble(
                     if not any(x.get("path") == rel for x in copied_outputs):
                         copied_outputs.append({"path": rel, "role": "editable_source_or_asset"})
 
-        # Copy compiled PDF if present
+        # Copy compiled PDF if present (output-relative path)
         if compile_report and compile_report.get("pdf_path"):
             pdf_p = Path(compile_report["pdf_path"])
             if pdf_p.is_file():
                 dest_pdf = out_dir / pdf_p.name
                 shutil.copy2(pdf_p, dest_pdf)
+                rendered_pdf_rel = pdf_p.name
                 if not any(x.get("path") == pdf_p.name for x in copied_outputs):
                     copied_outputs.append({"path": pdf_p.name, "role": "compiled_pdf"})
 
-        # Copy rendered PNG previews
+        # Copy rendered PNG previews (output-relative paths)
         if compile_report and compile_report.get("previews"):
             prev_out = ensure_dir(out_dir / "previews")
-            for idx, prev_str in enumerate(compile_report["previews"], start=1):
+            for prev_str in compile_report["previews"]:
                 pp = Path(prev_str)
                 if pp.is_file():
                     dest_png = prev_out / pp.name
                     shutil.copy2(pp, dest_png)
                     rel_png = f"previews/{pp.name}"
+                    rendered_previews_rel.append(rel_png)
                     if not any(x.get("path") == rel_png for x in copied_outputs):
                         copied_outputs.append({"path": rel_png, "role": "rendered_preview"})
 
         # Read primary .tex text for result.json embedding if contract asks for tex source
-        prim_rel = str(payload.get("primary_tex_path") or "")
+        prim_rel = str(payload.get("primary_tex_path") or (compile_report or {}).get("tex_file") or "")
         if prim_rel:
             for cand in (out_dir / prim_rel, out_dir / Path(prim_rel).name):
                 if cand.is_file():
@@ -435,7 +548,7 @@ def assemble(
 
         # Write build.sh and reproducibility_manifest.json
         build_sh = out_dir / "build.sh"
-        build_sh.write_text(build_shell_script(compile_report, prim_rel), encoding="utf-8")
+        build_sh.write_text(build_shell_script(compile_report, prim_rel, out_dir=out_dir), encoding="utf-8")
         try:
             mode = build_sh.stat().st_mode
             build_sh.chmod(mode | stat.S_IXUSR | stat.S_IXGRP)
@@ -489,7 +602,15 @@ def assemble(
         "limitations": payload.get("limitations", []),
     }
 
-    result = populate_contract_fields(result, case_plan, payload, compile_report, primary_tex_content)
+    result = populate_contract_fields(
+        result,
+        case_plan,
+        payload,
+        compile_report,
+        primary_tex_content,
+        rendered_pdf_rel=rendered_pdf_rel,
+        rendered_previews_rel=rendered_previews_rel,
+    )
     out_json = out_dir / "result.json"
     save_json(out_json, result)
     return out_json

@@ -20,6 +20,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
 NUMBER_RE = re.compile(r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?%?")
+SKIP_SCAN_ENVS = ("verbatim", "verbatim*", "lstlisting", "minted", "comment", "filecontents", "filecontents*")
+_SHORTHAND_TYPES = {
+    "string": "string",
+    "str": "string",
+    "text": "string",
+    "array": "array",
+    "list": "array",
+    "object": "object",
+    "dict": "object",
+    "map": "object",
+    "boolean": "boolean",
+    "bool": "boolean",
+    "integer": "integer",
+    "int": "integer",
+    "number": "number",
+    "float": "number",
+}
 
 
 def resolve_skill_dir(hint: Optional[str] = None) -> Path:
@@ -159,6 +176,25 @@ def run_cmd(
         }
 
 
+def mask_verbatim_and_verb(src: str) -> str:
+    """Replace verbatim environments and \\verb|...| bodies with spaces while preserving line numbers."""
+    chars = list(src)
+
+    def blank_span(start: int, end: int) -> None:
+        for idx in range(start, end):
+            if chars[idx] != "\n":
+                chars[idx] = " "
+
+    env_alt = "|".join(re.escape(e) for e in SKIP_SCAN_ENVS)
+    for m in re.finditer(rf"\\begin\{{({env_alt})\}}.*?\\end\{{\1\}}", src, re.S):
+        blank_span(m.start(), m.end())
+
+    for m in re.finditer(r"\\verb\*?([^\s\w])(.*?)\1", src):
+        blank_span(m.start(), m.end())
+
+    return "".join(chars)
+
+
 def strip_tex_comments_preserve_lines(text: str) -> str:
     """Strip unescaped LaTeX % comments while preserving exact line count and offsets per line."""
     out_lines: List[str] = []
@@ -183,6 +219,11 @@ def strip_tex_comments_preserve_lines(text: str) -> str:
             i += 1
         out_lines.append(core[:cut] + (" " * (len(core) - cut)) + nl)
     return "".join(out_lines)
+
+
+def sanitize_tex_for_scan(text: str) -> str:
+    """Mask verbatim/\\verb BEFORE stripping % comments so \\verb|100% {a}| never corrupts braces."""
+    return strip_tex_comments_preserve_lines(mask_verbatim_and_verb(text))
 
 
 def extract_braced_arg(text: str, open_idx: int) -> Tuple[str, int]:
@@ -217,8 +258,8 @@ def extract_tex_commands(
     cmd_names: Tuple[str, ...],
     strip_comments: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Extract LaTeX commands \\name[opt]{arg} (and optional second {arg2}) with exact line numbers."""
-    src = strip_tex_comments_preserve_lines(text) if strip_comments else text
+    """Extract LaTeX commands \\name[opt1][opt2]{arg} with exact line numbers, verbatim-safe."""
+    src = sanitize_tex_for_scan(text) if strip_comments else text
     alt = "|".join(re.escape(c) for c in cmd_names)
     pat = re.compile(rf"\\({alt})\b\*?")
     results: List[Dict[str, Any]] = []
@@ -231,14 +272,34 @@ def extract_tex_commands(
         idx = m.end()
         while idx < n and src[idx] in " \t":
             idx += 1
-        opt = None
-        if idx < n and src[idx] == "[":
+        # Allow a single newline (not blank line) before optional/required args
+        if idx < n and src[idx] in "\r\n":
+            nl_end = idx + (2 if src[idx : idx + 2] == "\r\n" else 1)
+            j_ws = nl_end
+            while j_ws < n and src[j_ws] in " \t":
+                j_ws += 1
+            if j_ws < n and src[j_ws] in "[{":
+                idx = j_ws
+
+        opts: List[str] = []
+        while idx < n and src[idx] == "[":
             end_opt = src.find("]", idx + 1)
             if end_opt != -1 and "\n\n" not in src[idx:end_opt]:
-                opt = src[idx + 1 : end_opt].strip()
+                opts.append(src[idx + 1 : end_opt].strip())
                 idx = end_opt + 1
-                while idx < n and src[idx] in " \t\r\n":
+                while idx < n and src[idx] in " \t":
                     idx += 1
+                if idx < n and src[idx] in "\r\n":
+                    nl_end = idx + (2 if src[idx : idx + 2] == "\r\n" else 1)
+                    j_ws = nl_end
+                    while j_ws < n and src[j_ws] in " \t":
+                        j_ws += 1
+                    if j_ws < n and src[j_ws] in "[{":
+                        idx = j_ws
+            else:
+                break
+        opt = opts[0] if opts else None
+
         args: List[str] = []
         while idx < n and src[idx] == "{":
             arg, nxt = extract_braced_arg(src, idx)
@@ -254,6 +315,7 @@ def extract_tex_commands(
             {
                 "command": cmd,
                 "opt": opt,
+                "opts": opts,
                 "arg": args[0] if args else "",
                 "args": args,
                 "line": line_number_at(src, m.start()),
@@ -299,36 +361,86 @@ def which_tool(name: str) -> Optional[str]:
 
 def infer_semantic_role(field_name: str, desc: str = "") -> str:
     """Map an arbitrary output_contract field key to a canonical semantic role."""
-    k = f"{field_name} {desc}".lower()
-    if any(w in k for w in ("case_id", "caseid", "task_id")):
+    fn = field_name.lower().strip()
+    k = f"{fn} {desc}".lower()
+    if any(w in fn for w in ("case_id", "caseid", "task_id")) or any(w in k for w in ("case_id", "caseid", "task_id")):
         return "case_id"
-    if any(w in k for w in ("status", "run_status", "execution_status")):
+    if fn in {"status", "run_status", "execution_status"} or any(w in fn for w in ("status",)):
         return "status"
-    if any(w in k for w in ("latex", "tex_source", "main_tex", "manuscript", "compiled_tex", "revised_tex", "article", "content", "writing", "output_text")):
+    # Check file/path and error/warning/diagnostic suffixes BEFORE generic 'latex'/'manuscript'
+    if fn.endswith(("_path", "_paths", "_file", "_files")) or fn in {"output_files", "deliverables", "deliverable_files", "artifacts", "files"}:
+        if any(w in fn for w in ("pdf", "preview", "rendered")):
+            return "rendered_outputs"
+        return "output_files"
+    if fn.endswith(("_error", "_errors", "_warning", "_warnings", "_log", "_logs", "_diagnostics")) or any(
+        w in fn for w in ("compile", "build", "reproduc", "engine", "manifest", "diagnostic")
+    ) or re.search(r"\blog\b", fn):
+        return "compile_provenance"
+    if fn.endswith(("_tex", "_latex")) or any(w in fn for w in ("latex", "tex_source", "main_tex", "manuscript", "compiled_tex", "revised_tex", "article", "content", "writing", "output_text")):
+        return "primary_tex_content"
+    if any(w in fn for w in ("pdf", "preview", "rendered")):
+        return "rendered_outputs"
+    if any(w in fn for w in ("bib", "citation", "reference_list")):
+        return "bibliography"
+    if any(w in fn for w in ("template", "compliance", "checklist")):
+        return "template_compliance"
+    if any(w in fn for w in ("source", "provenance", "evidence", "mapping", "traceability", "fact_map")):
+        return "sources"
+    if any(w in fn for w in ("change", "diff", "revision", "edit_log", "modification")):
+        return "change_records"
+    if any(w in fn for w in ("confirm", "question", "gap", "missing", "todo_author", "open_issue", "human_confirm")):
+        return "author_confirmation_items"
+    if any(w in fn for w in ("uncertain", "unknown", "risk", "manual_takeover")):
+        return "uncertainty"
+    if any(w in fn for w in ("limitation", "failure", "boundary", "caveat", "scope")):
+        return "limitations"
+    if any(w in fn for w in ("latex", "tex_source", "main_tex", "manuscript", "compiled_tex", "revised_tex", "article", "content", "writing", "output_text")):
+        return "primary_tex_content"
+    if any(w in fn for w in ("summary", "overview", "abstract", "report")):
+        return "summary"
+    # Secondary fallback using description text (word-boundary safe for 'log')
+    if any(w in k for w in ("compile", "build", "warning", "error", "reproduc", "engine", "manifest")) or re.search(r"\blog\b", k):
+        return "compile_provenance"
+    if any(w in k for w in ("latex", "tex_source", "main_tex", "manuscript")):
         return "primary_tex_content"
     if any(w in k for w in ("pdf", "preview", "rendered")):
         return "rendered_outputs"
     if any(w in k for w in ("bib", "citation", "reference_list")):
         return "bibliography"
-    if any(w in k for w in ("compile", "build", "log", "warning", "error", "reproduc", "engine", "manifest")):
-        return "compile_provenance"
-    if any(w in k for w in ("template", "compliance", "checklist", "format")):
-        return "template_compliance"
-    if any(w in k for w in ("source", "provenance", "evidence", "mapping", "traceability", "fact_map")):
+    if any(w in k for w in ("source", "provenance", "evidence")):
         return "sources"
-    if any(w in k for w in ("change", "diff", "revision", "edit_log", "modification")):
+    if any(w in k for w in ("change", "diff", "revision")):
         return "change_records"
-    if any(w in k for w in ("confirm", "question", "gap", "missing", "todo_author", "open_issue", "human_confirm")):
+    if any(w in k for w in ("confirm", "question", "gap")):
         return "author_confirmation_items"
-    if any(w in k for w in ("uncertain", "unknown", "risk", "manual_takeover")):
+    if any(w in k for w in ("uncertain", "risk")):
         return "uncertainty"
-    if any(w in k for w in ("limitation", "failure", "boundary", "caveat", "scope")):
+    if any(w in k for w in ("limitation", "caveat")):
         return "limitations"
     if any(w in k for w in ("file", "artifact", "deliverable", "path")):
         return "output_files"
-    if any(w in k for w in ("summary", "overview", "abstract", "report")):
+    if any(w in k for w in ("summary", "overview", "report")):
         return "summary"
     return "custom"
+
+
+def _infer_type_from_val(val: Any) -> Tuple[str, str]:
+    if isinstance(val, str):
+        s_low = val.strip().lower()
+        if s_low in _SHORTHAND_TYPES:
+            return _SHORTHAND_TYPES[s_low], ""
+        return "string", val
+    if isinstance(val, bool):
+        return "boolean", ""
+    if isinstance(val, int):
+        return "integer", ""
+    if isinstance(val, float):
+        return "number", ""
+    if isinstance(val, list):
+        return "array", ""
+    if isinstance(val, dict):
+        return "object", ""
+    return "any", ""
 
 
 def parse_output_contract(contract: Any) -> Dict[str, Any]:
@@ -342,7 +454,11 @@ def parse_output_contract(contract: Any) -> Dict[str, Any]:
             req_set = set(contract.get("required") or [])
             for k, spec in contract["properties"].items():
                 sd = spec if isinstance(spec, dict) else {"example": spec}
-                ftype = str(sd.get("type", type(spec).__name__))
+                raw_t = sd.get("type")
+                if raw_t:
+                    ftype = _SHORTHAND_TYPES.get(str(raw_t).strip().lower(), str(raw_t))
+                else:
+                    ftype, _ = _infer_type_from_val(spec)
                 desc = str(sd.get("description", ""))
                 fields.append(
                     {
@@ -362,18 +478,26 @@ def parse_output_contract(contract: Any) -> Dict[str, Any]:
         if "fields" in contract and isinstance(contract["fields"], (dict, list)):
             return parse_output_contract(contract["fields"])
 
-        meta_keys = {"type", "description", "format", "required", "$schema", "title"}
+        is_schema_wrapper = (
+            "$schema" in contract
+            or (contract.get("type") == "object" and isinstance(contract.get("required"), list))
+        )
+        schema_meta_keys = {"$schema", "additionalProperties"}
+        if is_schema_wrapper:
+            schema_meta_keys |= {"type", "description", "format", "required", "title"}
         req_list = contract.get("required") if isinstance(contract.get("required"), list) else None
         for k, val in contract.items():
-            if k in meta_keys and len(contract) > 1:
+            if k in schema_meta_keys and len(contract) > 1:
+                continue
+            if k == "required" and isinstance(val, list) and len(contract) > 1:
                 continue
             if isinstance(val, dict) and ("type" in val or "description" in val):
-                ftype = str(val.get("type", "object"))
+                raw_t = str(val.get("type", "object")).strip().lower()
+                ftype = _SHORTHAND_TYPES.get(raw_t, raw_t)
                 desc = str(val.get("description", ""))
                 req = bool(val.get("required", True))
             else:
-                ftype = type(val).__name__ if val is not None else "any"
-                desc = val if isinstance(val, str) else ""
+                ftype, desc = _infer_type_from_val(val)
                 req = (k in req_list) if req_list is not None else True
             fields.append(
                 {

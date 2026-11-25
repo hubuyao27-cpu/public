@@ -13,12 +13,12 @@
   "language": "zh",
   "citation_style": "gbt7714",
   "output_contract": {
-    "required": ["case_id", "status", "manuscript_markdown", "related_work_matrix", "research_gaps", "contributions", "references", "sources", "uncertainty", "change_records"],
+    "required": ["case_id", "status", "manuscript_markdown", "comparison_matrix", "research_gaps", "contributions", "references", "sources", "uncertainty", "change_records"],
     "properties": {
       "case_id": { "type": "string" },
       "status": { "type": "string" },
       "manuscript_markdown": { "type": "string" },
-      "related_work_matrix": { "type": "array" },
+      "comparison_matrix": { "type": "array" },
       "research_gaps": { "type": "array" },
       "contributions": { "type": "array" },
       "references": { "type": "array" },
@@ -62,42 +62,42 @@
 
 ---
 
-## 2. 标准调用命令
+## 2. 精简 4 步标准调用命令
 
 ```bash
 SKILL_DIR="/skills/weekly-skill"
 mkdir -p /app/work /app/output
 
-# Step 1 & 2: 检查契约并生成精炼证据摘要
-python3 "$SKILL_DIR/scripts/inspect_case.py" --input-dir /input --out /app/work/case_plan.json
-python3 "$SKILL_DIR/scripts/ingest_materials.py" --case-plan /app/work/case_plan.json \
-  --out-ledger /app/work/source_ledger.json --out-digest /app/work/evidence_digest.md
+# Step 1: 一键预准备（检查契约 -> 证据抽取与 skeleton 生成 -> 落盘 partial 断点）
+python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
+  --input-dir /input --work-dir /app/work --out-dir /app/output
 
-# Step 3: 尽早落盘 partial 断点
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" --case-plan /app/work/case_plan.json \
-  --ledger /app/work/source_ledger.json --checkpoint partial --out-dir /app/output
+# Step 2: 阅读 /app/work/evidence_digest.md 与 section_payload_skeleton.json，
+# 补全 /app/work/section_payload.json（长正文可选写为 /app/work/manuscript.md 并通过 manuscript_file 引用）
 
-# Step 4: 阅读 /app/work/evidence_digest.md，写入 /app/work/section_payload.json
-# （此处由 Agent 基于 digest 与模板生成结构化 JSON）
-
-# Step 5: 十轴机械核验
-python3 "$SKILL_DIR/scripts/verify_intro_rw.py" --payload /app/work/section_payload.json \
-  --ledger /app/work/source_ledger.json --case-plan /app/work/case_plan.json \
+# Step 3: 十轴机械核验
+python3 -B "$SKILL_DIR/scripts/verify_intro_rw.py" \
+  --payload /app/work/section_payload.json \
+  --ledger /app/work/source_ledger.json \
+  --case-plan /app/work/case_plan.json \
   --out /app/work/verification_report.json
 
-# Step 6: 组装最终产物
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" --case-plan /app/work/case_plan.json \
-  --ledger /app/work/source_ledger.json --payload /app/work/section_payload.json \
-  --verification /app/work/verification_report.json --checkpoint final --out-dir /app/output
+# Step 4: 组装最终产物（自动将内文 [R01]/[R02] 渲染为目标格式 [1]/[2]）
+python3 -B "$SKILL_DIR/scripts/assemble_deliverables.py" \
+  --case-plan /app/work/case_plan.json \
+  --ledger /app/work/source_ledger.json \
+  --payload /app/work/section_payload.json \
+  --verification /app/work/verification_report.json \
+  --checkpoint final --out-dir /app/output
 ```
 
 ---
 
 ## 3. 示意输出片段（ILLUSTRATIVE OUTPUT）
 
-### 3.1 `introduction_and_related_work.md`（节选）
+### 3.1 `introduction_and_related_work.md`（节选，已自动渲染为 GB/T 7714 数字引文）
 > **1. 引言**  
-> 化工精馏塔稳态严格模拟需迭代求解高维 MESH 方程组，在回流比宽范围变工况优化中单次求解耗时成为在线调度瓶颈[R02]。早期研究采用固定操作条件下的降阶代理模型[R01]，虽降低了计算开销，但在进料组成或回流比越界时误差显著增大；近期图神经网络代理方法[R02]改善了拓扑表达，却缺乏质量守恒硬约束，在稀疏采样边界条件下仍可能违背相平衡关系。结合文献局限与工程观测[作者判断]，现有路线在**“跨回流比（1.5–3.0）泛化精度”**与**“物理守恒一致性”**之间仍存在明显缺口。  
+> 化工精馏塔稳态严格模拟需迭代求解高维 MESH 方程组，在回流比宽范围变工况优化中单次求解耗时成为在线调度瓶颈[2]。早期研究采用固定操作条件下的降阶代理模型[1]，虽降低了计算开销，但在进料组成或回流比越界时误差显著增大；近期图神经网络代理方法[2]改善了拓扑表达，却缺乏质量守恒硬约束，在稀疏采样边界条件下仍可能违背相平衡关系。结合文献局限与工程观测[作者判断]，现有路线在**“跨回流比（1.5–3.0）泛化精度”**与**“物理守恒一致性”**之间仍存在明显缺口。  
 > 为此，本文提出物理约束自适应代理模型 PC-Surrogate（见 `Section 3.2` 与 `Fig. 1`），在 12 块理论板甲醇-水分离工况（回流比 1.5–3.0）下将塔顶纯度预测 MAE 控制在 0.42 mol%，并将推理速度较严格求解提升 38.5x（见 `Table 2`）。
 
 ### 3.2 `result.json` 结构示意（节选）

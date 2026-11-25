@@ -35,13 +35,13 @@ When executing LaTeX writing, migration, or compilation tasks under strict Harbo
 - First search `/input/` case-insensitively (`fig1.pdf`, `figures/fig1.png`, etc.) and update `\graphicspath` or path spelling.
 - If the figure binary genuinely does not exist in `/input/`:
   - **NEVER** draw a fake blank PNG or invent scientific plots to hide a missing figure.
-  - Guard the `\includegraphics` with a clearly commented placeholder or `\fbox{\parbox{0.8\linewidth}{[MISSING FIGURE: fig1.png — AUTHOR_CONFIRM: GAP-XX]}}` so compilation succeeds honestly, and log `GAP-XX` in `uncertainty[]` and `author_confirmation_items[]`.
+  - Guard the `\includegraphics` with a clearly commented placeholder or `\fbox{\parbox{0.8\linewidth}{[MISSING FIGURE: fig1.png --- AUTHOR\_CONFIRM: GAP-XX]}}` (always escaping `_` as `\_` and using ASCII `---` so `pdflatex` compiles cleanly) and log `GAP-XX` in `uncertainty[]` and `author_confirmation_items[]`.
 
 ## 6. Missing / Conflicting Numbers, Citations, or Draft Inputs
 - **Conflicting sources** (e.g., `draft.md` says `92.4%` while `results.csv` says `91.8%`): do NOT silently pick one unless hierarchy is explicitly given in `task.md`. Disclose both in `uncertainty[]` and `author_confirmation_items[]` and mark `[AUTHOR_CONFIRM: GAP-XX]` in `.tex`.
-- **Missing citations**: never invent BibTeX entries, authors, DOIs, or publication years. Mark `\cite{MISSING_REF}` cleanly as a flagged comment/todo (`GAP-XX`) or keep existing placeholder key flagged in `author_confirmation_items[]` and explain why `.bib` lacks it.
+- **Missing citations**: never invent BibTeX entries, authors, DOIs, or publication years. Comment out the unresolved `\cite{MISSING_REF}` so compilation stays clean (never leave an active undefined `\cite{...}` that triggers `VER-UNRESOLVED-CITE-IN-DELIVERABLE`), annotate `% [AUTHOR_CONFIRM: GAP-XX missing bib entry for MISSING_REF]`, and record `GAP-XX` in `author_confirmation_items[]`.
 - **Encrypted / scanned / unreadable PDFs or permission errors**: report `"status": "unable_to_determine"` (or `"partial"` if other readable files exist) with exact OS/PDF error messages in `uncertainty[]`.
 
 ## 7. Budget & Early Checkpoint Rule (64 requests / 900s)
-- Immediately after `analyze_latex.py`, run `assemble_deliverables.py --checkpoint partial` so `/app/output/result.json` always exists even under timeout pressure.
-- Keep `compile_and_diagnose.py` bounded (`--max-passes 4`, per-command timeout `60s`) so a broken infinite loop never hangs the container.
+- Run `prepare_workspace.py` in Step 1 so `/app/output/result.json` always exists as an early partial checkpoint even under timeout pressure.
+- Keep `compile_and_diagnose.py` bounded (`--max-passes 5`, per-command timeout `60s`, wrapper timeout `300s`) so a broken infinite loop never hangs the container.

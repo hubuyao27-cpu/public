@@ -4,10 +4,10 @@
   "rules": [
     {
       "id": "ERR-UNCLOSED-BRACE",
-      "pattern": "Runaway argument\\?|File ended while scanning use of",
+      "pattern": "Runaway argument\\?|File ended while scanning use of|Paragraph ended before .* was complete",
       "category": "syntax_balance",
       "severity": "fatal",
-      "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-UNCLOSED-ENV", "ERR-EMERGENCY-STOP"],
+      "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-ENV-MISMATCH", "ERR-PERMISSION-IO"],
       "root_cause": "An opening '{' or delimited macro argument was never closed before the end of a paragraph or file.",
       "fix_recipe": "Run analyze_latex.py brace-stack detector to jump directly to the unclosed opening '{' line rather than fixing at EOF.",
       "fallback": "If external macro breaks across paragraphs, replace \\par/blank line inside short-arg command or supply missing '}'."
@@ -164,13 +164,13 @@
     },
     {
       "id": "ERR-UNDEF-CITATION",
-      "pattern": "Citation `([^']+)' on page [0-9]+ undefined|Empty bibliography",
+      "pattern": "Citation [`']([^']+)' on page \\S+ undefined|Empty bibliography|The following entry could not be found",
       "category": "bibliography",
       "severity": "warning_escalated",
       "cascading_followups": ["ERR-RERUN-NEEDED"],
       "root_cause": "Citation key missing or misspelled in .bib, bibliography pass (bibtex/biber) not run, or bibtex/biber engine mismatch (natbib vs biblatex).",
       "fix_recipe": "Align \\cite{key} with .bib keys, match bib tool (biber for biblatex, bibtex for \\bibliographystyle), and run engine -> bib -> engine -> engine.",
-      "fallback": "If citation is missing from input materials, NEVER invent bib metadata; flag [AUTHOR_CONFIRM: GAP-XX]."
+      "fallback": "If citation is missing from input materials, NEVER invent bib metadata; comment out unresolved cite and flag [AUTHOR_CONFIRM: GAP-XX]."
     },
     {
       "id": "ERR-UNDEF-REF",
@@ -301,6 +301,26 @@
       "root_cause": "Text inside itemize/enumerate/description/thebibliography without \\item, or empty bibliography environment.",
       "fix_recipe": "Add \\item or move stray text outside the list environment.",
       "fallback": "Ensure at least one \\bibitem or \\bibliography source exists."
+    },
+    {
+      "id": "ERR-MINTED-SHELL-ESCAPE",
+      "pattern": "Package minted Error|You must invoke LaTeX with the -shell-escape flag",
+      "category": "security_sandbox",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-PERMISSION-IO"],
+      "root_cause": "minted requires -shell-escape (disabled by default for sandbox safety).",
+      "fix_recipe": "Replace minted code blocks with listings (\\usepackage{listings}) or standard verbatim so compilation works safely under -no-shell-escape.",
+      "fallback": "Document minted/shell-escape limitation in uncertainty[] if minted is explicitly mandated."
+    },
+    {
+      "id": "ERR-FONT-ENGINE-MISMATCH",
+      "pattern": "Fatal fontspec error|requires either XeTeX or LuaTeX|cannot be used with pdftex",
+      "category": "encoding_engine",
+      "severity": "fatal",
+      "cascading_followups": ["ERR-PERMISSION-IO"],
+      "root_cause": "Package fontspec/xeCJK/ctex/unicode-math was compiled with pdflatex instead of xelatex/lualatex.",
+      "fix_recipe": "Switch compiler engine to xelatex (or lualatex) and remove legacy inputenc/fontenc calls.",
+      "fallback": "If pdflatex is mandatory, replace fontspec with T1 fontenc and pure ASCII math/symbols."
     }
   ]
 }

@@ -98,8 +98,8 @@
       "reason": "glossaries requires hyperref loaded before it to create clickable glossary links."
     },
     {
-      "first": "hyperref",
-      "second": "algorithm",
+      "first": "algorithm",
+      "second": "hyperref",
       "reason": "Load algorithm before hyperref (and algorithmic/algpseudocode after or per hyperref docs) to prevent \\theHalgorithm anchor warnings."
     }
   ],

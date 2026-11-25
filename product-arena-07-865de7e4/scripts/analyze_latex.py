@@ -29,11 +29,13 @@ from common import (
     has_cjk,
     line_number_at,
     load_json_safe,
+    mask_verbatim_and_verb,
     normalize_num_str,
     posix_rel,
     read_text_safe,
     resolve_skill_dir,
     run_cmd,
+    sanitize_tex_for_scan,
     save_json,
     strip_tex_comments_preserve_lines,
     which_tool,
@@ -43,31 +45,40 @@ SKIP_SCAN_ENVS = ("verbatim", "verbatim*", "lstlisting", "minted", "comment", "f
 MATH_ENVS = {"equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*", "flalign", "flalign*", "alignat", "alignat*", "eqnarray", "eqnarray*", "split", "cases"}
 CITE_CMDS = ("cite", "citep", "citet", "citealp", "citealt", "citeauthor", "citeyear", "autocite", "parencite", "textcite", "footcite", "fullcite", "nocite")
 REF_CMDS = ("ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref")
+URL_LIKE_BIB_FIELDS = {"url", "doi", "eprint", "file", "howpublished", "issn", "isbn", "link"}
 
 
-def mask_verbatim_and_verb(src: str) -> str:
-    """Replace verbatim environments and \\verb|...| bodies with spaces while preserving line numbers."""
-    chars = list(src)
-
-    def blank_span(start: int, end: int) -> None:
-        for idx in range(start, end):
-            if chars[idx] != "\n":
-                chars[idx] = " "
-
-    env_alt = "|".join(re.escape(e) for e in SKIP_SCAN_ENVS)
-    for m in re.finditer(rf"\\begin\{{({env_alt})\}}.*?\\end\{{\1\}}", src, re.S):
-        blank_span(m.start(), m.end())
-
-    for m in re.finditer(r"\\verb\*?([^\s\w])(.*?)\1", src):
-        blank_span(m.start(), m.end())
-
-    return "".join(chars)
+def check_template_requirement(req: str, clean_tex: str) -> bool:
+    """Evaluate a template_profiles.json requirement string accurately on sanitized TeX."""
+    if " or " in req:
+        return any(check_template_requirement(part.strip(), clean_tex) for part in req.split(" or "))
+    m_dc = re.match(r"^\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}$", req.strip())
+    if m_dc:
+        cls_name = m_dc.group(1)
+        return bool(re.search(rf"\\documentclass(?:\[[^\]]*\])?\{{{re.escape(cls_name)}\}}", clean_tex))
+    m_up = re.match(r"^\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}$", req.strip())
+    if m_up:
+        pkg_pat = m_up.group(1)
+        if pkg_pat.endswith("..."):
+            prefix = pkg_pat[:-3]
+            return bool(re.search(rf"\\usepackage(?:\[[^\]]*\])?\{{[^}}]*{re.escape(prefix)}", clean_tex))
+        return bool(re.search(rf"\\usepackage(?:\[[^\]]*\])?\{{[^}}]*\b{re.escape(pkg_pat)}\b", clean_tex))
+    m_env = re.match(r"^\\begin\{([^}]+)\}", req.strip())
+    if m_env:
+        return f"\\begin{{{m_env.group(1)}}}" in clean_tex
+    m_end = re.match(r"^\\end\{([^}]+)\}$", req.strip())
+    if m_end:
+        return f"\\end{{{m_end.group(1)}}}" in clean_tex
+    m_cmd = re.match(r"^\\([A-Za-z@]+)", req.strip())
+    if m_cmd:
+        return bool(re.search(rf"\\{re.escape(m_cmd.group(1))}\b", clean_tex))
+    return req.strip() in clean_tex
 
 
 def check_brace_and_env_balance(rel_path: str, raw_text: str) -> List[Dict[str, Any]]:
     """Detect unclosed '{', extra '}', mismatched \\begin/\\end, and unclosed math delimiters."""
     findings: List[Dict[str, Any]] = []
-    clean = mask_verbatim_and_verb(strip_tex_comments_preserve_lines(raw_text))
+    clean = sanitize_tex_for_scan(raw_text)
 
     # 1. Brace stack
     brace_stack: List[Tuple[int, str]] = []
@@ -175,6 +186,38 @@ def check_brace_and_env_balance(rel_path: str, raw_text: str) -> List[Dict[str, 
     return findings
 
 
+def _mask_subfloat_regions(body: str) -> str:
+    """Blank out \\subfloat[...]{...} and subfigure/subtable environments so inner sub-labels don't false-trigger outer float caption order."""
+    chars = list(body)
+
+    def blank_span(start: int, end: int) -> None:
+        for idx in range(start, end):
+            if chars[idx] != "\n":
+                chars[idx] = " "
+
+    for m in re.finditer(r"\\begin\{(subfigure|subtable)\*?\}.*?\\end\{\1\*?\}", body, re.S):
+        blank_span(m.start(), m.end())
+
+    for m in re.finditer(r"\\subfloat\b", body):
+        idx = m.end()
+        n = len(body)
+        while idx < n and body[idx] in " \t\r\n":
+            idx += 1
+        while idx < n and body[idx] == "[":
+            eb = body.find("]", idx + 1)
+            if eb == -1:
+                break
+            idx = eb + 1
+            while idx < n and body[idx] in " \t\r\n":
+                idx += 1
+        if idx < n and body[idx] == "{":
+            _, nxt = extract_braced_arg(body, idx)
+            end_pos = nxt if nxt != -1 else n
+            blank_span(m.start(), end_pos)
+
+    return "".join(chars)
+
+
 def check_tables_math_and_antipatterns(
     rel_path: str,
     raw_text: str,
@@ -183,7 +226,7 @@ def check_tables_math_and_antipatterns(
 ) -> List[Dict[str, Any]]:
     """Check tables, captions, label order, deprecated macros, and unescaped hazards."""
     findings: List[Dict[str, Any]] = []
-    clean = mask_verbatim_and_verb(strip_tex_comments_preserve_lines(raw_text))
+    clean = sanitize_tex_for_scan(raw_text)
 
     # Deprecated / anti-pattern macros from package_conflicts.json
     for anti in conflict_rules.get("deprecated_or_antipattern_macros", []):
@@ -201,14 +244,15 @@ def check_tables_math_and_antipatterns(
                 }
             )
 
-    # Float caption / label order and table caption placement
+    # Float caption / label order and table caption placement (ignoring inner \subfloat/subfigure labels)
     for float_kind in ("figure", "figure*", "table", "table*"):
         pat = re.compile(rf"\\begin\{{{re.escape(float_kind)}\}}(.*?)\\end\{{{re.escape(float_kind)}\}}", re.S)
         for fm in pat.finditer(clean):
             body = fm.group(1)
+            outer_body = _mask_subfloat_regions(body)
             base_offset = fm.start(1)
-            cap_m = re.search(r"\\caption(?:\[[^\]]*\])?\{", body)
-            lbl_m = re.search(r"\\label\{([^}]+)\}", body)
+            cap_m = re.search(r"\\caption(?:\[[^\]]*\])?\{", outer_body)
+            lbl_m = re.search(r"\\label\{([^}]+)\}", outer_body)
             if lbl_m and cap_m and lbl_m.start() < cap_m.start():
                 findings.append(
                     {
@@ -266,16 +310,34 @@ def check_tables_math_and_antipatterns(
 
 
 def parse_bib_file(rel_path: str, raw_text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
-    """Parse .bib database entries and catch duplicate keys or syntax defects."""
+    """Parse .bib database entries with balanced brace/quote tokenizer and syntax defect detection."""
     entries: Dict[str, Dict[str, Any]] = {}
     findings: List[Dict[str, Any]] = []
 
     n = len(raw_text)
     i = 0
     while i < n:
-        at = raw_text.find("@", i)
-        if at == -1:
+        # Skip whitespace and % comment lines outside entries
+        while i < n and raw_text[i] in " \t\r\n":
+            i += 1
+        if i >= n:
             break
+        if raw_text[i] == "%":
+            nl = raw_text.find("\n", i)
+            i = (nl + 1) if nl != -1 else n
+            continue
+        if raw_text[i] != "@":
+            # Scan forward to next line-start or @
+            nxt_at = raw_text.find("@", i)
+            nxt_nl = raw_text.find("\n", i)
+            if nxt_at == -1:
+                break
+            if nxt_nl != -1 and nxt_nl < nxt_at:
+                i = nxt_nl + 1
+            else:
+                i = nxt_at
+            continue
+        at = i
         m = re.match(r"@([A-Za-z]+)\s*([({])", raw_text[at:])
         if not m:
             i = at + 1
@@ -284,52 +346,52 @@ def parse_bib_file(rel_path: str, raw_text: str) -> Tuple[Dict[str, Dict[str, An
         opener = m.group(2)
         closer = ")" if opener == "(" else "}"
         start_line = line_number_at(raw_text, at)
-        if etype in {"comment", "preamble", "string"}:
-            # Skip balanced block
-            depth = 0
-            j = at + m.end() - 1
-            while j < n:
-                if raw_text[j] == opener:
-                    depth += 1
-                elif raw_text[j] == closer:
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            i = j + 1
-            continue
 
-        # Balanced scan for entry body
-        depth = 0
-        j = at + m.end() - 1
-        while j < n:
+        # Balanced scan for entry body (JabRef-style quote handling at depth == 1)
+        depth = 1
+        in_quote = False
+        j = at + m.end()
+        while j < n and depth > 0:
             ch = raw_text[j]
-            if ch == "\\":
+            if ch == "\\" and j + 1 < n:
                 j += 2
                 continue
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0 and closer == "}":
-                    break
-            elif ch == ")" and closer == ")" and depth == 0:
-                break
+            if ch == '"' and depth == 1:
+                in_quote = not in_quote
+            elif not in_quote:
+                if opener == "{" and ch == "{":
+                    depth += 1
+                elif opener == "{" and ch == "}":
+                    depth -= 1
+                elif opener == "(" and ch == "{":
+                    depth += 1
+                elif opener == "(" and ch == "}":
+                    depth = max(1, depth - 1)
+                elif opener == "(" and ch == ")" and depth == 1:
+                    depth = 0
             j += 1
 
-        if j >= n and depth != 0:
+        if etype in {"comment", "preamble", "string"}:
+            i = j
+            continue
+
+        if depth != 0:
             findings.append(
                 {
                     "id": "BIB-UNCLOSED-ENTRY",
                     "severity": "error",
                     "file": rel_path,
                     "line": start_line,
-                    "message": f"BibTeX @{etype} entry starting at line {start_line} has unclosed braces.",
+                    "message": f"BibTeX @{etype} entry starting at line {start_line} has unclosed braces/delimiters.",
                 }
             )
+            m_next = re.search(r"\n\s*@[A-Za-z]+\s*[({]", raw_text[at + m.end() :])
+            if m_next:
+                i = at + m.end() + m_next.start() + 1
+                continue
             break
 
-        body = raw_text[at + m.end() : j]
+        body = raw_text[at + m.end() : j - 1]
         comma_idx = body.find(",")
         if comma_idx == -1:
             findings.append(
@@ -341,7 +403,7 @@ def parse_bib_file(rel_path: str, raw_text: str) -> Tuple[Dict[str, Dict[str, An
                     "message": f"BibTeX @{etype} entry at line {start_line} is missing a comma after citation key.",
                 }
             )
-            i = j + 1
+            i = j
             continue
 
         key = body[:comma_idx].strip()
@@ -355,43 +417,90 @@ def parse_bib_file(rel_path: str, raw_text: str) -> Tuple[Dict[str, Dict[str, An
                     "message": f"BibTeX @{etype} entry at line {start_line} has an empty citation key.",
                 }
             )
-            i = j + 1
+            i = j
             continue
 
+        # Balanced field tokenizer (never fooled by '=' inside URLs; catches missing commas between fields)
         fields_text = body[comma_idx + 1 :]
         fields: Dict[str, str] = {}
-        for fm in re.finditer(r"([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*", fields_text):
-            fname = fm.group(1).lower()
-            pos = fm.end()
-            while pos < len(fields_text) and fields_text[pos] in " \t\r\n":
-                pos += 1
-            if pos >= len(fields_text):
+        k = 0
+        fn_len = len(fields_text)
+        expect_comma = False
+        while k < fn_len:
+            while k < fn_len and fields_text[k] in " \t\r\n":
+                k += 1
+            if k >= fn_len:
                 break
-            if fields_text[pos] == "{":
-                val, _ = extract_braced_arg(fields_text, pos)
-            elif fields_text[pos] == '"':
-                endq = pos + 1
-                while endq < len(fields_text):
-                    if fields_text[endq] == "\\" and endq + 1 < len(fields_text):
-                        endq += 2
-                        continue
-                    if fields_text[endq] == '"':
+            if fields_text[k] == ",":
+                expect_comma = False
+                k += 1
+                continue
+            if expect_comma:
+                findings.append(
+                    {
+                        "id": "BIB-MISSING-COMMA",
+                        "severity": "error",
+                        "file": rel_path,
+                        "line": start_line + line_number_at(fields_text, k) - 1,
+                        "message": f"Missing comma before BibTeX field in entry '{key}'.",
+                    }
+                )
+                expect_comma = False
+            mf = re.match(r"([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*", fields_text[k:])
+            if not mf:
+                nxt_nl = fields_text.find("\n", k)
+                k = (nxt_nl + 1) if nxt_nl != -1 else fn_len
+                continue
+            field_start_pos = k
+            fname = mf.group(1).lower()
+            k += mf.end()
+            val_parts: List[str] = []
+            while k < fn_len:
+                while k < fn_len and fields_text[k] in " \t\r\n":
+                    k += 1
+                if k >= fn_len:
+                    break
+                ch = fields_text[k]
+                if ch == "{":
+                    vseg, nxt = extract_braced_arg(fields_text, k)
+                    val_parts.append(vseg)
+                    k = nxt if nxt != -1 else fn_len
+                elif ch == '"':
+                    endq = k + 1
+                    while endq < fn_len:
+                        if fields_text[endq] == "\\" and endq + 1 < fn_len:
+                            endq += 2
+                            continue
+                        if fields_text[endq] == '"':
+                            break
+                        endq += 1
+                    val_parts.append(fields_text[k + 1 : endq])
+                    k = endq + 1 if endq < fn_len else fn_len
+                else:
+                    mtok = re.match(r"([A-Za-z0-9_.\-:]+)", fields_text[k:])
+                    if mtok:
+                        val_parts.append(mtok.group(1))
+                        k += mtok.end()
+                    else:
                         break
-                    endq += 1
-                val = fields_text[pos + 1 : endq]
-            else:
-                endm = re.search(r"[,\n}]", fields_text[pos:])
-                val = fields_text[pos : pos + endm.start()] if endm else fields_text[pos:]
-            fields[fname] = " ".join(val.split())
+                while k < fn_len and fields_text[k] in " \t\r\n":
+                    k += 1
+                if k < fn_len and fields_text[k] == "#":
+                    k += 1
+                else:
+                    break
+            raw_val = "".join(val_parts)
+            fields[fname] = " ".join(raw_val.split())
+            expect_comma = True
 
-            # Detect unescaped '&' or '%' inside value
-            if re.search(r"(?<!\\)[&%]", val):
+            # Detect unescaped '&' or '%' inside non-URL fields
+            if fname not in URL_LIKE_BIB_FIELDS and re.search(r"(?<!\\)[&%]", raw_val):
                 findings.append(
                     {
                         "id": "BIB-UNESCAPED-CHAR",
                         "severity": "warning",
                         "file": rel_path,
-                        "line": start_line + line_number_at(fields_text, fm.start()) - 1,
+                        "line": start_line + line_number_at(fields_text, field_start_pos) - 1,
                         "message": f"Unescaped '&' or '%' in BibTeX field '{fname}' of key '{key}' may break compilation.",
                     }
                 )
@@ -414,7 +523,7 @@ def parse_bib_file(rel_path: str, raw_text: str) -> Tuple[Dict[str, Dict[str, An
                 "line": start_line,
                 "fields": fields,
             }
-        i = j + 1
+        i = j
 
     return entries, findings
 
@@ -449,9 +558,15 @@ def resolve_image_target(raw_target: str, current_tex: Path, root_dir: Path, gra
 
 
 def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Extract grounded text snippets, headings, tables, and numbers from non-TeX inputs with locators."""
+    """Extract grounded text snippets, headings, tables, and numbers from non-TeX inputs with per-file budgets."""
     facts: List[Dict[str, Any]] = []
     available_norm_numbers: Set[str] = set()
+
+    non_tex_files = [
+        f for f in files
+        if f.get("readable") and f.get("category") in {"draft_or_doc", "tabular_data", "structured_data", "word_doc", "pdf_doc"}
+    ]
+    per_file_cap = max(30, 240 // max(1, len(non_tex_files)))
 
     for f in files:
         if not f["readable"]:
@@ -470,6 +585,7 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                     available_norm_numbers.add(norm)
             continue
 
+        file_facts: List[Dict[str, Any]] = []
         if cat in {"draft_or_doc", "structured_data"}:
             txt, _ = read_text_safe(fpath)
             lines = txt.splitlines()
@@ -482,7 +598,7 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                 if not s:
                     continue
                 if s.startswith("#") or extract_numeric_tokens(s) or "|" in s or re.search(r"\[[0-9,\s-]+\]|doi:|10\.\d{4,}", s, re.I):
-                    facts.append({"file": rel, "locator": f"{rel}:L{idx}", "kind": "line", "text": s[:240]})
+                    file_facts.append({"file": rel, "locator": f"{rel}:L{idx}", "kind": "line", "text": s[:240]})
 
         elif cat == "tabular_data":
             txt, _ = read_text_safe(fpath)
@@ -494,7 +610,7 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                     available_norm_numbers.add(norm)
             for idx, row in enumerate(rows[:60], start=1):
                 if any(c.strip() for c in row):
-                    facts.append({"file": rel, "locator": f"{rel}:R{idx}", "kind": "table_row", "text": " | ".join(c.strip() for c in row)[:240]})
+                    file_facts.append({"file": rel, "locator": f"{rel}:R{idx}", "kind": "table_row", "text": " | ".join(c.strip() for c in row)[:240]})
 
         elif cat == "word_doc":
             try:
@@ -503,20 +619,40 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                         xml_bytes = zf.read("word/document.xml")
                         root = ET.fromstring(xml_bytes)
                         ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                        body = root.find("w:body", ns)
                         p_idx = 0
-                        for p in root.findall(".//w:p", ns):
-                            p_idx += 1
-                            text = "".join(t.text or "" for t in p.findall(".//w:t", ns)).strip()
-                            if not text:
-                                continue
-                            for tok in extract_numeric_tokens(text):
-                                norm = normalize_num_str(tok)
-                                if norm:
-                                    available_norm_numbers.add(norm)
-                            if p_idx <= 120:
-                                facts.append({"file": rel, "locator": f"{rel}:P{p_idx}", "kind": "docx_paragraph", "text": text[:240]})
+                        t_idx = 0
+                        iter_children = list(body) if body is not None else list(root.findall(".//w:p", ns))
+                        for child in iter_children:
+                            tag = child.tag.split("}")[-1]
+                            if tag == "p":
+                                p_idx += 1
+                                text = "".join(t.text or "" for t in child.findall(".//w:t", ns)).strip()
+                                if not text:
+                                    continue
+                                for tok in extract_numeric_tokens(text):
+                                    norm = normalize_num_str(tok)
+                                    if norm:
+                                        available_norm_numbers.add(norm)
+                                if p_idx <= 120:
+                                    file_facts.append({"file": rel, "locator": f"{rel}:P{p_idx}", "kind": "docx_paragraph", "text": text[:240]})
+                            elif tag == "tbl":
+                                t_idx += 1
+                                for r_i, tr in enumerate(child.findall(".//w:tr", ns), start=1):
+                                    cells = [
+                                        "".join(t.text or "" for t in tc.findall(".//w:t", ns)).strip()
+                                        for tc in tr.findall("./w:tc", ns)
+                                    ]
+                                    row_txt = " | ".join(cells).strip()
+                                    if not row_txt:
+                                        continue
+                                    for tok in extract_numeric_tokens(row_txt):
+                                        norm = normalize_num_str(tok)
+                                        if norm:
+                                            available_norm_numbers.add(norm)
+                                    file_facts.append({"file": rel, "locator": f"{rel}:T{t_idx}_R{r_i}", "kind": "docx_table_row", "text": row_txt[:240]})
             except Exception as exc:
-                facts.append({"file": rel, "locator": rel, "kind": "parse_error", "text": f"Failed to parse DOCX: {exc}"})
+                file_facts.append({"file": rel, "locator": rel, "kind": "parse_error", "text": f"Failed to parse DOCX: {exc}"})
 
         elif cat == "pdf_doc":
             extracted_pages: List[Tuple[int, str]] = []
@@ -529,6 +665,7 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                 doc = fitz.open(str(fpath))
                 for pno, page in enumerate(doc, start=1):
                     extracted_pages.append((pno, page.get_text("text")))
+                doc.close()
             except Exception:
                 if which_tool("pdftotext"):
                     res = run_cmd(["pdftotext", str(fpath), "-"], timeout=20)
@@ -537,7 +674,7 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                             if chunk.strip():
                                 extracted_pages.append((pno, chunk))
             if not extracted_pages:
-                facts.append({"file": rel, "locator": rel, "kind": "pdf_unextracted", "text": "No text extracted from PDF (needs OCR or PyMuPDF/pdftotext)."})
+                file_facts.append({"file": rel, "locator": rel, "kind": "pdf_unextracted", "text": "No text extracted from PDF (needs OCR or PyMuPDF/pdftotext)."})
             else:
                 for pno, ptxt in extracted_pages:
                     for tok in extract_numeric_tokens(ptxt):
@@ -547,9 +684,11 @@ def extract_non_tex_facts(input_dir: Path, files: List[Dict[str, Any]]) -> Tuple
                     for lno, line in enumerate(ptxt.splitlines()[:80], start=1):
                         s = line.strip()
                         if s and (lno <= 8 or extract_numeric_tokens(s)):
-                            facts.append({"file": rel, "locator": f"{rel}:p{pno}_L{lno}", "kind": "pdf_line", "text": s[:240]})
+                            file_facts.append({"file": rel, "locator": f"{rel}:p{pno}_L{lno}", "kind": "pdf_line", "text": s[:240]})
 
-    return facts[:200], sorted(available_norm_numbers)
+        facts.extend(file_facts[:per_file_cap])
+
+    return facts[:260], sorted(available_norm_numbers)
 
 
 def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
@@ -594,7 +733,7 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
             else:
                 bib_entries[k] = entry
 
-    # 2. First pass over .tex files: collect preamble metadata to determine engine
+    # 2. First pass over .tex files: collect preamble metadata and \graphicspath across ALL files
     tex_texts: Dict[str, str] = {}
     for tf in tex_files:
         txt, _ = read_text_safe(Path(tf["abs_path"]))
@@ -609,6 +748,18 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
                 pname = p_item.strip()
                 if pname:
                     packages_used.append({"package": pname, "options": pk["opt"], "file": tf["rel_path"], "line": pk["line"]})
+        for gp in extract_tex_commands(txt, ("graphicspath",)):
+            gp_inner = gp["arg"]
+            idx_g = 0
+            while idx_g < len(gp_inner):
+                if gp_inner[idx_g] == "{":
+                    sub, nxt_g = extract_braced_arg(gp_inner, idx_g)
+                    sub_clean = sub.strip()
+                    if sub_clean and sub_clean not in graphics_paths:
+                        graphics_paths.append(sub_clean)
+                    idx_g = nxt_g if nxt_g != -1 else len(gp_inner)
+                else:
+                    idx_g += 1
 
     pkg_names_lower = {p["package"].lower(): p for p in packages_used}
     cls_names = [d["class"] for d in doc_classes]
@@ -628,12 +779,6 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
 
         findings.extend(check_brace_and_env_balance(rel, txt))
         findings.extend(check_tables_math_and_antipatterns(rel, txt, conflict_rules, recommended_engine))
-
-        # Graphicspath
-        for gp_m in re.finditer(r"\\graphicspath\{\s*(.*?)\s*\}", strip_tex_comments_preserve_lines(txt), re.S):
-            for sub in re.findall(r"\{([^}]+)\}", gp_m.group(1)):
-                if sub not in graphics_paths:
-                    graphics_paths.append(sub)
 
         # Include graph
         children: List[str] = []
@@ -725,10 +870,14 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
         if node not in visited:
             dfs(node)
 
-    # 5. Package conflict and order checks
+    # 5. Package conflict and order checks (respect \ifPDFTeX / \ifxetex engine guards for inputenc+fontspec)
+    combined_clean_tex = "\n".join(sanitize_tex_for_scan(t) for t in tex_texts.values())
+    has_engine_guard = bool(re.search(r"\\if(?:PDFTeX|pdfTeX|xetex|XeTeX|luatex|LuaTeX|tutex)\b", combined_clean_tex))
     for pair in conflict_rules.get("incompatible_pairs", []):
         pa, pb = pair["pkg_a"].lower(), pair["pkg_b"].lower()
         if pa in pkg_names_lower and pb in pkg_names_lower:
+            if {pa, pb} == {"inputenc", "fontspec"} and has_engine_guard:
+                continue
             findings.append(
                 {
                     "id": "LINT-PKG-CONFLICT",
@@ -817,6 +966,9 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
     cited_keys: Set[str] = set()
     for ct in all_cites:
         ck = ct["key"]
+        if ct["cmd"] == "nocite" and ck == "*":
+            cited_keys.update(bib_entries.keys())
+            continue
         cited_keys.add(ck)
         if all_known_bib_keys or bib_files or bib_resources:
             if ck not in all_known_bib_keys:
@@ -831,26 +983,24 @@ def analyze_case(case_plan: Dict[str, Any], skill_dir: Path) -> Dict[str, Any]:
                 )
     orphan_bib_keys = sorted(k for k in bib_entries if k not in cited_keys)
 
-    # Determine bib tool
+    # Determine bib tool (respect biblatex backend=bibtex option)
     if "biblatex" in pkg_names_lower:
-        recommended_bib = "biber"
+        bl_opt = str(pkg_names_lower["biblatex"].get("options") or "").lower()
+        recommended_bib = "bibtex" if "backend=bibtex" in bl_opt else "biber"
     elif bib_resources or bib_styles or bib_files:
         recommended_bib = "bibtex"
     else:
         recommended_bib = "none"
 
-    # 8. Template compliance preview
+    # 8. Template compliance preview (evaluated cleanly on sanitized comment-stripped TeX)
     profiles = template_profiles.get("profiles", {})
     template_checks: List[Dict[str, Any]] = []
-    combined_tex = "\n".join(tex_texts.values())
     for tpl_name in set(cls_names) | set(case_plan.get("signals", {}).get("target_templates", [])):
         prof = profiles.get(tpl_name)
-        if prof and combined_tex:
+        if prof and combined_clean_tex:
             reqs = []
             for req in prof.get("required_elements", []):
-                # Extract command/env stem to check presence flexibly
-                stem = req.split("{")[0].split("[")[0]
-                present = stem in combined_tex
+                present = check_template_requirement(req, combined_clean_tex)
                 reqs.append({"requirement": req, "present_in_tex": present})
             template_checks.append({"template": tpl_name, "checks": reqs, "pitfalls": prof.get("pitfalls", [])})
 

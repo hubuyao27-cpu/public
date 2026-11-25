@@ -41,6 +41,11 @@
         "footnote"
       ]
     },
+    "requested_output_formats": {
+      "type": "array",
+      "description": "Optional override/additions for deliverable formats (e.g., ['docx', 'tex']).",
+      "items": { "type": "string" }
+    },
     "actions_performed": {
       "type": "array",
       "items": {
@@ -70,7 +75,10 @@
         "required": ["ref_id", "field", "value", "source_locator", "rationale"],
         "properties": {
           "ref_id": { "type": "string" },
-          "field": { "type": "string" },
+          "field": {
+            "type": "string",
+            "description": "Canonical field name: title, title_translated, authors (list[str]), year (int), venue, volume, issue, pages, doi (bare 10.xxxx/...), arxiv_id, pmid, url, publisher, city, abstract, patent_number, standard_number, access_date, doc_type. Aliases journal/booktitle->venue, number->issue, author->authors, page->pages are also normalized."
+          },
           "value": { "type": ["string", "array", "integer", "null"] },
           "source_locator": { "type": "string" },
           "rationale": { "type": "string" },
@@ -90,6 +98,7 @@
             "type": "string",
             "enum": [
               "keep",
+              "delete",
               "insert_citation",
               "relocate_citation",
               "split_cluster_to_clauses",

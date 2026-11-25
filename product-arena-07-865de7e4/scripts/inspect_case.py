@@ -29,12 +29,30 @@ from common import (
     posix_rel,
     read_text_safe,
     run_cmd,
+    sanitize_tex_for_scan,
     save_json,
     which_tool,
 )
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".pytest_cache"}
 CONTROL_FILES = {"case.json", "task.md"}
+EXPECTED_OUTPUT_FILES = {
+    "case.json",
+    "task.md",
+    "result.json",
+    "SKILL.md",
+    "build.sh",
+    "reproducibility_manifest.json",
+    "compilation_and_provenance_report.md",
+    "initial_audit_digest.md",
+    "deliverable_payload.json",
+    "compile_report.json",
+    "compile_summary.md",
+    "verification_report.json",
+    "case_plan.json",
+    "latex_audit.json",
+    "latex_digest.md",
+}
 
 CATEGORY_BY_EXT = {
     ".tex": "tex_source",
@@ -117,13 +135,14 @@ def probe_tex_environment() -> Dict[str, Any]:
                         seen.add(fam_clean)
                         cjk_fonts.append(fam_clean)
 
-    # Check common CJK TeX classes/packages
+    # Check common CJK TeX classes/packages and Fandol OTF font availability
     kpse_checks: Dict[str, Optional[str]] = {}
     if tools.get("kpsewhich"):
-        for req in ("ctexart.cls", "xeCJK.sty", "IEEEtran.cls", "acmart.cls", "elsarticle.cls", "booktabs.sty", "biblatex.sty"):
+        for req in ("ctexart.cls", "xeCJK.sty", "FandolSong-Regular.otf", "IEEEtran.cls", "acmart.cls", "elsarticle.cls", "booktabs.sty", "biblatex.sty"):
             res = run_cmd(["kpsewhich", req], timeout=10)
             out = (res.get("stdout") or "").strip()
             kpse_checks[req] = out if (res["returncode"] == 0 and out) else None
+    fandol_available = bool(kpse_checks.get("FandolSong-Regular.otf")) or any("fandol" in f.lower() for f in cjk_fonts)
 
     return {
         "platform": sys.platform,
@@ -131,6 +150,7 @@ def probe_tex_environment() -> Dict[str, Any]:
         "python_libs": python_libs,
         "engine_versions": engine_versions,
         "cjk_fonts": sorted(cjk_fonts),
+        "fandol_available": fandol_available,
         "kpse_checks": kpse_checks,
     }
 
@@ -168,22 +188,25 @@ def infer_signals(
         else:
             modes.append("compile_and_repair" if has_tex else "draft_to_latex")
 
-    cjk_in_prompt = has_cjk(combined)
     cjk_in_files = any(f.get("contains_cjk") for f in files)
-    if cjk_in_files or cjk_in_prompt:
-        if any(k in combined for k in ("bilingual", "双语", "中英")):
-            language = "bilingual"
-        elif any(k in combined for k in ("english", "en-us", "英文")) and not cjk_in_files:
-            language = "en"
-        else:
-            language = "zh"
+    explicit_zh_target = any(k in combined for k in ("中文论文", "中文版", "用中文撰写", "中文排版", "chinese paper", "ctexart", "ctexbook", "xecjk"))
+    explicit_en_target = any(k in combined for k in ("english", "en-us", "英文论文", "英文版", "ieeetran", "acmart", "elsarticle", "llncs", "neurips", "icml"))
+    explicit_bilingual = any(k in combined for k in ("bilingual", "双语", "中英对照", "中英文"))
+    if explicit_bilingual:
+        language = "bilingual"
+    elif cjk_in_files or explicit_zh_target:
+        language = "en" if (explicit_en_target and not cjk_in_files and not explicit_zh_target) else "zh"
+    elif has_cjk(combined) and not has_tex and not explicit_en_target:
+        language = "zh"
     else:
         language = "en"
 
     detected_templates: List[str] = []
-    for tpl in ("IEEEtran", "acmart", "elsarticle", "llncs", "sn-jnl", "neurips", "icml", "ctexart", "ctexbook", "revtex4-2", "beamer", "article"):
-        if tpl.lower() in combined:
+    for tpl in ("IEEEtran", "acmart", "elsarticle", "llncs", "sn-jnl", "neurips", "icml", "ctexart", "ctexbook", "revtex4-2", "beamer"):
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(tpl)}(?![A-Za-z0-9])", combined, re.I):
             detected_templates.append(tpl)
+    if re.search(r"\\documentclass(?:\[[^\]]*\])?\{article\}|\barticle\s+(?:class|template)\b", combined, re.I):
+        detected_templates.append("article")
 
     for f in files:
         if f["category"] == "tex_class_or_style":
@@ -252,8 +275,9 @@ def inventory_inputs(input_dir: Path) -> Tuple[List[Dict[str, Any]], List[str], 
                     entry["contains_cjk"] = has_cjk(text)
                     entry["line_count"] = len(text.splitlines())
                     if category == "tex_source":
-                        has_docclass = bool(re.search(r"^\s*\\documentclass\b", text, re.M))
-                        has_begindoc = bool(re.search(r"\\begin\{document\}", text))
+                        clean_tex = sanitize_tex_for_scan(text)
+                        has_docclass = bool(re.search(r"^\s*\\documentclass\b", clean_tex, re.M))
+                        has_begindoc = bool(re.search(r"\\begin\{document\}", clean_tex))
                         entry["has_documentclass"] = has_docclass
                         entry["has_begin_document"] = has_begindoc
                         if has_docclass and has_begindoc:
@@ -288,23 +312,37 @@ def detect_missing_referenced_files(task_text: str, case_json: Dict[str, Any], i
     existing = {f["rel_path"] for f in files} | {Path(f["rel_path"]).name for f in files}
     missing: List[str] = []
 
-    # Check explicit file lists inside case.json if present
+    # Check explicit file lists inside case.json if present (never stringify dicts lacking path/file)
     for key in ("files", "inputs", "artifacts", "materials", "attachments"):
         val = case_json.get(key)
         if isinstance(val, list):
             for item in val:
-                candidate = str(item.get("path") or item.get("file") or item) if isinstance(item, dict) else str(item)
-                candidate_clean = candidate.strip().lstrip("./")
+                if isinstance(item, dict):
+                    raw_cand = item.get("path") or item.get("file") or item.get("rel_path")
+                    if not isinstance(raw_cand, str) or not raw_cand.strip():
+                        continue
+                    candidate_clean = raw_cand.strip().lstrip("./")
+                elif isinstance(item, str):
+                    candidate_clean = item.strip().lstrip("./")
+                else:
+                    continue
+                if Path(candidate_clean).name in EXPECTED_OUTPUT_FILES:
+                    continue
                 if candidate_clean and not (input_dir / candidate_clean).exists() and candidate_clean not in existing:
                     if candidate_clean not in missing:
                         missing.append(candidate_clean)
 
-    # Check filename tokens in task_text
+    # Check filename tokens in task_text (skip output deliverables & filenames preceded by output cues)
+    out_cue_re = re.compile(r"(?:输出|生成|交付|创建|保存为|写入|output|generate|deliver|create|produce|write\s+to)\s*[:：]?\s*$", re.I)
     for m in re.finditer(r"`([A-Za-z0-9_./-]+\.(?:tex|bib|cls|sty|bst|md|csv|tsv|pdf|docx|png|jpg|eps|json))`", task_text):
         ref = m.group(1).lstrip("./")
-        if ref in {"case.json", "task.md", "result.json", "SKILL.md"}:
+        base = Path(ref).name
+        if base in EXPECTED_OUTPUT_FILES or ref.startswith(("app/output/", "/app/output/", "app/work/", "/app/work/", "output/")):
             continue
-        if not (input_dir / ref).exists() and Path(ref).name not in existing:
+        before_ctx = task_text[max(0, m.start() - 32) : m.start()]
+        if out_cue_re.search(before_ctx):
+            continue
+        if not (input_dir / ref).exists() and base not in existing:
             if ref not in missing:
                 missing.append(ref)
     return missing

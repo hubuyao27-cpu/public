@@ -14,14 +14,15 @@ import subprocess
 import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 DOI_RE = re.compile(r"(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)")
 DOI_STRICT_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$")
-ARXIV_NEW_RE = re.compile(r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)(\d{4}\.\d{4,5})(?:v(\d+))?", re.I)
-ARXIV_OLD_RE = re.compile(r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)([a-z-]+(?:\.[a-z-]+)?/\d{7})(?:v(\d+))?", re.I)
+ARXIV_NEW_RE = re.compile(r"(?:arxiv\s*[:.]\s*|arxiv\.org/(?:abs|pdf)/)(\d{4}\.\d{4,5})(?:v(\d+))?", re.I)
+ARXIV_OLD_RE = re.compile(r"(?:arxiv\s*[:.]\s*|arxiv\.org/(?:abs|pdf)/)([a-z-]+(?:\.[a-z-]+)?/\d{7})(?:v(\d+))?", re.I)
 ARXIV_BARE_RE = re.compile(r"^(\d{4}\.\d{4,5})(?:v(\d+))?$")
 
 COMPOUND_ZH_SURNAMES = {
@@ -79,10 +80,17 @@ def read_text_safe(path: Path) -> Tuple[str, str, Optional[str]]:
         return "", "empty", "empty_file"
 
     sample = raw[:4096]
+    # Handle UTF-16 BOM before binary NUL check (EndNote/Excel UTF-16 exports)
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            text = raw.decode("utf-16")
+            return text, "utf-16", "decoded_with_utf-16"
+        except UnicodeDecodeError:
+            pass
     if b"\x00" in sample:
         return "", "binary", "binary_or_null_bytes_detected"
 
-    for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk", "utf-16", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk", "latin-1"):
         try:
             text = raw.decode(enc)
             warn = None if enc in ("utf-8-sig", "utf-8") else f"decoded_with_{enc}"
@@ -108,13 +116,20 @@ def detect_script_lang(text: str) -> str:
 
 
 def strip_latex_accents_and_braces(text: str) -> str:
+    """Safely strip BibTeX accents/formatting braces without corrupting LaTeX commands like \\beta or \\times."""
     if not text:
         return ""
     s = str(text).strip()
     s = s.replace("---", "-").replace("--", "-").replace("``", '"').replace("''", '"')
-    s = re.sub(r"\\[`'^\"~=.uvHtcdb]\s*\{?([A-Za-z])\}?", r"\1", s)
+    # Unwrap common BibTeX text-formatting macros cleanly
+    s = re.sub(r"\\(?:textit|textbf|emph|textrm|textsf|texttt|textsc|mathrm|mathbf)\{([^{}]*)\}", r"\1", s)
+    # JabRef-style split: symbol accents (\'e, \"o, \~n) vs control-word accents (\v{c}, \c{c}, \v c)
+    s = re.sub(r"\\[`'^\"~=.](?:\{([A-Za-z])\}|([A-Za-z]))", lambda m: m.group(1) or m.group(2), s)
+    s = re.sub(r"\\[uvHtcdb](?:\{([A-Za-z])\}|\s+([A-Za-z]))\b", lambda m: m.group(1) or m.group(2), s)
+    s = re.sub(r"\\&", "&", s)
+    s = re.sub(r"\\%", "%", s)
     for _ in range(3):
-        s2 = re.sub(r"\{([^{}]*)\}", r"\1", s)
+        s2 = re.sub(r"(?<!\\)\{([^{}]*)\}", r"\1", s)
         if s2 == s:
             break
         s = s2
@@ -220,7 +235,7 @@ def _is_corporate_author(raw: str) -> bool:
     corp_cues = (
         "organization", "committee", "consortium", "institute", "university",
         "ministry", "association", "society", "group", "team", "standard",
-        "委员会", "研究院", "标准", "中心", "部", "局", "学会", "协会", "课题组",
+        "委员会", "研究院", "标准", "中心", "学会", "协会", "课题组", "教育部", "科技部", "工业和信息化部", "农业农村部",
     )
     return any(c in low for c in corp_cues) and ("," not in s)
 
@@ -275,7 +290,21 @@ def parse_author_name(raw: str) -> Dict[str, Any]:
                 return 1 <= len(cleaned) <= 2 and cleaned.isupper()
 
             first_no_dot = tokens[0].replace(".", "")
-            if len(first_no_dot) >= 2 and "." not in tokens[0] and all(_is_initial_tok(t) for t in tokens[1:]):
+            last_no_dot = tokens[-1].replace(".", "")
+            # Guard against "Wei LI" / "John XU" (Mixed-case given name + ALL-CAPS 2-letter surname)
+            looks_given_upper_surname = (
+                len(tokens) == 2
+                and any(c.islower() for c in first_no_dot)
+                and len(last_no_dot) == 2
+                and last_no_dot.isupper()
+                and any(ch in "AEIOUY" for ch in last_no_dot)
+            )
+            if (
+                len(first_no_dot) >= 2
+                and "." not in tokens[0]
+                and not looks_given_upper_surname
+                and all(_is_initial_tok(t) for t in tokens[1:])
+            ):
                 family = tokens[0]
                 given = " ".join(tokens[1:])
             else:
@@ -288,11 +317,21 @@ def parse_author_name(raw: str) -> Dict[str, Any]:
     given_clean = re.sub(r"[.]", " ", given)
     given_parts = re.split(r"[\s-]+", given_clean.strip())
     initials_list: List[str] = []
+    # Distinguish ALL-CAPS full given names (e.g. "ZHANG, WEI", "DOE, BOB") from compact initials ("FM", "JH")
     for gp in given_parts:
         gp = gp.strip()
         if not gp:
             continue
-        if gp.isupper() and len(gp) <= 3 and len(given_parts) == 1 and "." not in given and " " not in given.strip():
+        has_vowel = any(ch in "AEIOU" for ch in gp[1:])
+        is_compact_initials = (
+            gp.isupper()
+            and len(gp) == 2
+            and len(given_parts) == 1
+            and "." not in given
+            and " " not in given.strip()
+            and not (family.isupper() and len(family) >= 2 and has_vowel)
+        )
+        if is_compact_initials:
             initials_list.extend(list(gp))
         else:
             initials_list.append(gp[0].upper())
@@ -314,8 +353,8 @@ def parse_author_name(raw: str) -> Dict[str, Any]:
 def split_authors_string(raw: Any) -> List[str]:
     def _clean(items: List[str]) -> List[str]:
         return [
-            p.strip() for p in items
-            if p.strip() and p.strip().lower().rstrip(".") not in ("et al", "等", "and", "others")
+            p.strip().strip(",;，；") for p in items
+            if p.strip().strip(",;，；") and p.strip().strip(",;，；").lower().rstrip(".") not in ("et al", "等", "and", "&", "others")
         ]
 
     if raw is None:
@@ -338,12 +377,36 @@ def split_authors_string(raw: Any) -> List[str]:
     s = str(raw).strip()
     if not s:
         return []
-    if re.search(r"\s+and\s+", s, flags=re.I) and "、" not in s:
-        return _clean(re.split(r"\s+and\s+", s, flags=re.I))
+    # Protect braced corporate names like "{Food and Agriculture Organization}"
+    if s.startswith("{") and s.endswith("}") and s.count("{") == 1:
+        return [s]
     if ";" in s or "；" in s or "、" in s:
         return _clean(re.split(r"[;；、]+", s))
-    if "," in s and re.search(r"[\u4e00-\u9fff]", s):
-        parts = _clean(s.split(","))
+    # Split outside top-level braces on " and " or ", & " / " & "
+    if re.search(r"(?:\s+and\s+|,\s*&\s*|\s+&\s+)", s, flags=re.I):
+        # Handle Oxford comma / APA "Doe, J., Smith, B., & Lee, K." cleanly
+        if re.search(r",\s*&\s*", s) or re.search(r",\s+and\s+", s, flags=re.I):
+            # Pair "Surname, Initials" chunks when present
+            if re.search(r"[A-Za-z]+,\s*[A-Z]\.", s):
+                s_norm = re.sub(r",\s*(?:&|and)\s+", ", ", s, flags=re.I)
+                chunks = re.findall(r"[^,]+,\s*[^,]+", s_norm)
+                if chunks:
+                    return _clean(chunks)
+            s_norm = re.sub(r",\s*(?:&|and)\s+", " ; ", s, flags=re.I)
+            if "," in s_norm and all(" " in p.strip() for p in s_norm.replace(" ; ", ",").split(",") if p.strip()):
+                return _clean(re.split(r"\s*;\s*|,\s*", s_norm))
+        parts = re.split(r"\s+(?:and|&)\s+", s, flags=re.I)
+        if len(parts) > 1:
+            expanded: List[str] = []
+            for p in parts:
+                p = p.strip().rstrip(",")
+                if "," in p and all(" " in x.strip() for x in p.split(",") if x.strip()) and not re.search(r",\s*[A-Z]\.?(?:\s*[A-Z]\.?)*$", p):
+                    expanded.extend(p.split(","))
+                else:
+                    expanded.append(p)
+            return _clean(expanded)
+    if ("," in s or "，" in s) and re.search(r"[\u4e00-\u9fff]", s):
+        parts = _clean(re.split(r"[,，]+", s))
         if all(len(p) <= 6 for p in parts):
             return parts
     if "," in s:
@@ -384,7 +447,10 @@ def bilingual_surname_compatible(authors1: List[str], authors2: List[str]) -> bo
         return p1["surname_key"] == p2["surname_key"] and bool(p1["surname_key"])
     zh_p, en_p = (p1, p2) if p1["is_cjk"] else (p2, p1)
     py = ZH_SURNAME_PINYIN.get(zh_p["family"], "")
-    return bool(py and py == en_p["surname_key"])
+    if not py:
+        return False
+    en_toks = [re.sub(r"[^a-z]+", "", t.lower()) for t in en_p["raw"].replace(",", " ").split() if t.strip()]
+    return py == en_p["surname_key"] or (bool(en_toks) and (py == en_toks[0] or py == en_toks[-1]))
 
 
 def author_overlap(authors1: List[str], authors2: List[str]) -> float:
@@ -403,7 +469,8 @@ def parse_year(raw: Any) -> Tuple[Optional[int], Optional[str]]:
     if not m:
         return None, f"unparseable_year:{s}"
     yr = int(m.group(1))
-    if yr < 1800 or yr > 2028:
+    max_yr = max(2028, datetime.now().year + 1)
+    if yr < 1800 or yr > max_yr:
         return yr, f"suspect_out_of_range_year:{yr}"
     return yr, None
 
@@ -486,6 +553,39 @@ def extract_pdf_text_safe(path: Path, max_pages: Optional[int] = None) -> Dict[s
         result["full_text"] = "\n\n".join(f"[Page {p['page_num']}]\n{p['text']}" for p in pages_out)
         result["extractor"] = "pymupdf"
         if total > 0 and len("".join(p["text"].strip() for p in pages_out)) < 30:
+            # Optional bounded OCR fallback via tesseract when installed
+            tess = shutil.which("tesseract")
+            if tess:
+                try:
+                    import tempfile
+                    doc_ocr = fitz.open(str(path))
+                    ocr_pages = []
+                    for idx in range(min(total, max_pages or 6)):
+                        pix = doc_ocr[idx].get_pixmap(dpi=150)
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+                            tmp_png = Path(tf.name)
+                        try:
+                            pix.save(str(tmp_png))
+                            proc = subprocess.run(
+                                [tess, str(tmp_png), "stdout", "--psm", "6"],
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                encoding="utf-8",
+                                errors="replace",
+                                timeout=20,
+                            )
+                            ocr_pages.append({"page_num": idx + 1, "text": proc.stdout or ""})
+                        finally:
+                            tmp_png.unlink(missing_ok=True)
+                    doc_ocr.close()
+                    if len("".join(p["text"].strip() for p in ocr_pages)) >= 30:
+                        result["pages"] = ocr_pages
+                        result["full_text"] = "\n\n".join(f"[Page {p['page_num']}]\n{p['text']}" for p in ocr_pages)
+                        result["extractor"] = "pymupdf+tesseract_ocr"
+                        return result
+                except Exception:
+                    pass
             result["is_scanned_empty"] = True
         return result
     except ImportError:
@@ -537,7 +637,7 @@ def extract_docx_blocks(path: Path) -> Dict[str, Any]:
     W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     W = f"{{{W_NS}}}"
 
-    def _run_text(r_elem: ET.Element) -> str:
+    def _run_parts(r_elem: ET.Element) -> Tuple[str, bool]:
         t_parts: List[str] = []
         for child in r_elem:
             if child.tag == f"{W}t":
@@ -552,19 +652,28 @@ def extract_docx_blocks(path: Path) -> Dict[str, Any]:
                 if fid:
                     t_parts.append(f"[fn:{fid}]")
         txt = "".join(t_parts)
-        if not txt:
-            return ""
+        is_sup = False
         rpr = r_elem.find(f"{W}rPr")
         if rpr is not None:
             va = rpr.find(f"{W}vertAlign")
             if va is not None and va.attrib.get(f"{W}val") == "superscript":
-                stripped = txt.strip()
-                if stripped and not (stripped.startswith("^") or stripped.startswith("[")):
-                    if re.fullmatch(r"[\[\]0-9,\-–—\s;]+", stripped):
-                        inner = stripped.strip("[] ")
-                        return f"^[{inner}]"
-                return f"^[{stripped}]" if stripped else txt
-        return txt
+                is_sup = True
+        return txt, is_sup
+
+    def _format_merged_sup(prev_text: str, sup_txt: str) -> str:
+        stripped = sup_txt.strip()
+        if not stripped:
+            return sup_txt
+        # Strip outer brackets if already bracketed superscript ("[1]", "[1-3]") so we emit ^[1], NEVER ^[[1]]
+        inner = stripped[1:-1].strip() if (stripped.startswith("[") and stripped.endswith("]")) else stripped
+        # Guard scientific units/exponents (e.g., m^2, cm^3, R^2, 10^-3, 10^6) when NOT explicitly bracketed
+        is_bracketed = stripped.startswith("[") and stripped.endswith("]")
+        if not is_bracketed:
+            if re.search(r"(?:10|[A-Za-z°%×·]|[-+−])\s*$", prev_text) and re.fullmatch(r"[-+−]?\d+", inner):
+                return f"^{inner}"
+        if re.fullmatch(r"[0-9,\-–—\s;]+", inner):
+            return f"^[{inner}]"
+        return sup_txt
 
     def _para_text(p_elem: ET.Element) -> Tuple[str, str]:
         pstyle = ""
@@ -573,14 +682,29 @@ def extract_docx_blocks(path: Path) -> Dict[str, Any]:
             ps = ppr.find(f"{W}pStyle")
             if ps is not None:
                 pstyle = ps.attrib.get(f"{W}val", "")
-        parts: List[str] = []
+        raw_runs: List[Tuple[str, bool]] = []
         for child in p_elem:
             if child.tag == f"{W}r":
-                parts.append(_run_text(child))
+                raw_runs.append(_run_parts(child))
             elif child.tag == f"{W}hyperlink":
                 for sub in child.findall(f".//{W}r"):
-                    parts.append(_run_text(sub))
-        return "".join(parts).strip(), pstyle
+                    raw_runs.append(_run_parts(sub))
+        # Merge adjacent superscript runs (Word rsid/spellcheck splits "[1]" into "[", "1", "]")
+        merged: List[Tuple[str, bool]] = []
+        for txt, is_sup in raw_runs:
+            if not txt:
+                continue
+            if merged and merged[-1][1] == is_sup:
+                merged[-1] = (merged[-1][0] + txt, is_sup)
+            else:
+                merged.append((txt, is_sup))
+        out_parts: List[str] = []
+        for txt, is_sup in merged:
+            if is_sup:
+                out_parts.append(_format_merged_sup("".join(out_parts), txt))
+            else:
+                out_parts.append(txt)
+        return "".join(out_parts).strip(), pstyle
 
     try:
         with zipfile.ZipFile(path, "r") as zf:

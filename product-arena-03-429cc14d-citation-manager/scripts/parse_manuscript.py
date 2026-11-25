@@ -41,19 +41,46 @@ FIG_CAPTION_RE = re.compile(r"^(?:\*\*)?(?:fig(?:ure)?\.?|图)\s*[A-Za-z0-9.\-]+
 TAB_CAPTION_RE = re.compile(r"^(?:\*\*)?(?:table|tab\.?|表)\s*[A-Za-z0-9.\-]+", re.I)
 
 # Citation token extraction patterns
-RE_SUP_HTML = re.compile(r"<sup>\s*\[?([0-9,\s\-–—]+)\]?\s*</sup>", re.I)
+RE_SUP_HTML = re.compile(r"<sup>\s*(\[?)([0-9,\s\-–—]+)(\]?)\s*</sup>", re.I)
 RE_SUP_MD = re.compile(r"\^\[([0-9,\s\-–—;]+)\]")
 RE_SUP_UNI = re.compile(r"([⁰¹²³⁴⁵⁶⁷⁸⁹]+(?:[⁻,][⁰¹²³⁴⁵⁶⁷⁸⁹]+)*)")
-RE_LATEX_CITE = re.compile(r"\\(?:cite|citep|citet|parencite|textcite|autocite|supercite)(?:\[[^\]]*\])?\{([^}]+)\}")
-RE_BRACKET_NUM = re.compile(r"(?<!\^)(?<!\[)\[(\d+(?:\s*(?:[-–—,~]|,\s*)\s*\d+)*)\](?!\()")
+RE_LATEX_CITE = re.compile(r"\\(?:cite|citep|citet|parencite|textcite|autocite|supercite)(?:\[[^\]]*\])?(?:\[[^\]]*\])?\{([^}]+)\}")
+RE_IEEE_RANGE = re.compile(r"(?<![A-Za-z0-9_\]\^\[])\[(\d+)\]\s*[-–—]\s*\[(\d+)\](?!\()")
+RE_BRACKET_NUM = re.compile(r"(?<![A-Za-z0-9_\]\^\[])\[(\d+(?:\s*(?:[-–—,~]|,\s*)\s*\d+)*)\](?!\()")
 RE_PLACEHOLDER = re.compile(r"(\[(?:REF|CITE|CITATION(?:\s+NEEDED)?|\?|待引用|待补引|引用|未核验引用[^\]]*|TODO[^\]]*)\])", re.I)
-RE_AUTHOR_YEAR_PAREN = re.compile(
-    r"[（(]\s*([A-Z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff.\-'\s&＆,，]*(?:et\s+al\.|等)?\s*[,，]\s*(?:19|20)\d{2}[a-z]?"
-    r"(?:\s*[;；]\s*[A-Z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff.\-'\s&＆,，]*(?:et\s+al\.|等)?\s*[,，]\s*(?:19|20)\d{2}[a-z]?)*)\s*[)）]"
+
+_AY_PREFIX_OPT = r"(?:(?:e\.g\.|i\.e\.|cf\.|see\s+also|see|见|参见|如)\s*[,，]?\s*)?"
+_AY_PARTICLE = r"(?:(?:van\s+der|van\s+den|de\s+la|van|von|de|del|da|di|la|le|du)\s+)?"
+_AY_SINGLE = (
+    rf"{_AY_PREFIX_OPT}"
+    rf"(?:{_AY_PARTICLE}[A-Z][A-Za-z.\-']*(?:\s+(?:{_AY_PARTICLE}[A-Z][A-Za-z.\-']*|&|and|et\s+al\.))*"
+    rf"|[\u4e00-\u9fff]{{2,6}}(?:等|(?:和|与|、)[\u4e00-\u9fff]{{2,6}})*)"
+    rf"\s*[,，]\s*(?:(?:19|20)\d{{2}}[a-z]?(?:\s*[,，]\s*(?:19|20)\d{{2}}[a-z]?)*)"
+    rf"(?:\s*[,，:]\s*(?:pp?\.\s*\d+(?:[-–—]\d+)?|第\s*\d+(?:[-–—]\d+)?\s*页))?"
 )
+RE_AUTHOR_YEAR_PAREN = re.compile(rf"[（(]\s*({_AY_SINGLE}(?:\s*[;；]\s*{_AY_SINGLE})*)\s*[)）]")
 RE_AUTHOR_YEAR_NARR = re.compile(
-    r"\b([A-Z][A-Za-z'\-]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z'\-]+|\s+et\s+al\.)?)\s*\(((?:19|20)\d{2}[a-z]?)\)"
-    r"|([\u4e00-\u9fff]{2,4}(?:等|和[\u4e00-\u9fff]{2,4})?)\s*[（(]((?:19|20)\d{2}[a-z]?)[)）]"
+    rf"\b({_AY_PARTICLE}[A-Z][A-Za-z'\-]+(?:\s+(?:and|&)\s+{_AY_PARTICLE}[A-Z][A-Za-z'\-]+|\s+et\s+al\.)?)\s*\(((?:19|20)\d{{2}}[a-z]?)\)"
+    r"|([\u4e00-\u9fff]{2,4}(?:等|(?:和|与)[\u4e00-\u9fff]{2,4})?)\s*[（(]((?:19|20)\d{2}[a-z]?)[)）]"
+)
+
+NON_AUTHOR_NARR_STOP = {
+    "january", "february", "march", "april", "may", "june", "july", "august", "september",
+    "october", "november", "december", "table", "figure", "fig", "section", "chapter",
+    "equation", "model", "version", "dataset", "benchmark", "imagenet", "bert", "gpt",
+    "llama", "resnet", "transformer", "standard", "policy", "guideline", "report", "release",
+    "update", "since", "until", "from", "in", "by", "as", "the", "this", "that", "these",
+    "those", "phase", "stage", "period", "year", "edition", "series", "project", "program",
+    "截至目前", "目前", "至今", "模型版本", "版本", "模型", "数据集", "数据", "方法", "标准",
+    "指南", "政策", "实验", "结果", "如图", "如表", "见图", "见表", "附录", "国家标准",
+    "行业标准", "白皮书", "蓝皮书", "年报", "报告", "草案", "方案", "框架", "平台", "系统",
+    "工具", "软件", "规划", "规范", "条例", "阶段", "时期", "会议", "大会", "修订", "发布",
+}
+_ZH_NON_PERSON_SUFFIX_RE = re.compile(
+    r"(?:版本|标准|模型|方法|数据|目前|实验|指南|政策|系统|平台|报告|框架|规范|条例|计划|阶段|时期|年度|会议|论文|文献|草案|方案|工具|软件|结果|指标)$"
+)
+_SCI_UNIT_PREFIX_RE = re.compile(
+    r"(?:10|[0-9]|[×xX·\-−+±]|(?:^|[^A-Za-z])(?:m|cm|mm|km|nm|um|μm|kg|mg|g|s|ms|ns|h|K|L|mL|mol|Pa|Hz|eV|W|V|A|R|r|χ|N|n|x|y|z|e))$",
 )
 
 ATTRIBUTION_CUE_RE = re.compile(
@@ -83,6 +110,35 @@ def expand_numeric_spec(spec: str) -> List[int]:
         elif p.isdigit():
             nums.append(int(p))
     return nums
+
+
+def _filter_valid_cite_nums(nums: List[int]) -> List[int]:
+    """Reject 0, 4-digit years (>=1900), and absurdly large indices (>500) that cannot be citation numbers."""
+    if not nums:
+        return []
+    if any(n <= 0 or n >= 1900 or n > 500 for n in nums):
+        return []
+    return nums
+
+
+def _expand_ay_items(inner: str) -> List[str]:
+    """Expand parenthetical author-year lists including prefixes, multi-years, and page locators."""
+    items: List[str] = []
+    for raw_seg in re.split(r"[;；]", inner):
+        seg = raw_seg.strip()
+        if not seg:
+            continue
+        seg = re.sub(r"^(?:e\.g\.|i\.e\.|cf\.|see\s+also|see|见|参见|如)\s*[,，]?\s*", "", seg, flags=re.I).strip()
+        seg = re.sub(r"\s*[,，:]\s*(?:pp?\.\s*\d+(?:[-–—]\d+)?|第\s*\d+(?:[-–—]\d+)?\s*页)\s*$", "", seg, flags=re.I).strip()
+        m_first_yr = re.search(r"[,，]\s*((?:19|20)\d{2}[a-z]?(?:\s*[,，]\s*(?:19|20)\d{2}[a-z]?)*)$", seg)
+        if m_first_yr:
+            author_part = seg[: m_first_yr.start()].strip()
+            years = re.findall(r"(?:19|20)\d{2}[a-z]?", m_first_yr.group(1))
+            for yr in years:
+                items.append(f"{author_part}, {yr}")
+        else:
+            items.append(seg)
+    return items
 
 
 def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
@@ -118,7 +174,12 @@ def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
     for m in RE_SUP_HTML.finditer(sent):
         if _overlaps(m.start(), m.end()):
             continue
-        nums = expand_numeric_spec(m.group(1))
+        has_brackets = bool(m.group(1) and m.group(3))
+        if not has_brackets:
+            before = sent[max(0, m.start() - 12) : m.start()]
+            if _SCI_UNIT_PREFIX_RE.search(before):
+                continue
+        nums = _filter_valid_cite_nums(expand_numeric_spec(m.group(2)))
         if nums:
             hits.append({
                 "kind": "numeric_superscript_html",
@@ -133,7 +194,7 @@ def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
     for m in RE_SUP_MD.finditer(sent):
         if _overlaps(m.start(), m.end()):
             continue
-        nums = expand_numeric_spec(m.group(1))
+        nums = _filter_valid_cite_nums(expand_numeric_spec(m.group(1)))
         if nums:
             hits.append({
                 "kind": "numeric_superscript_md",
@@ -145,11 +206,30 @@ def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
             })
             occupied_spans.append((m.start(), m.end()))
 
+    for m in RE_IEEE_RANGE.finditer(sent):
+        if _overlaps(m.start(), m.end()):
+            continue
+        a_n, b_n = int(m.group(1)), int(m.group(2))
+        nums = _filter_valid_cite_nums(list(range(a_n, b_n + 1)) if a_n <= b_n and (b_n - a_n) <= 100 else [a_n, b_n])
+        if nums:
+            hits.append({
+                "kind": "numeric_bracket",
+                "raw": m.group(0),
+                "span": [m.start(), m.end()],
+                "nums": nums,
+                "keys": [],
+                "author_years": [],
+            })
+            occupied_spans.append((m.start(), m.end()))
+
     for m in RE_BRACKET_NUM.finditer(sent):
         if _overlaps(m.start(), m.end()):
             continue
-        # Avoid false-positive [1] if immediately followed by link or definition
-        nums = expand_numeric_spec(m.group(1))
+        # Reject ISO dates like [2024-01-15] or numeric intervals with 0
+        raw_spec = m.group(1)
+        if re.search(r"\b(?:19|20)\d{2}\s*[-–—]\s*\d{2}\s*[-–—]\s*\d{2}\b", raw_spec):
+            continue
+        nums = _filter_valid_cite_nums(expand_numeric_spec(raw_spec))
         if nums:
             hits.append({
                 "kind": "numeric_bracket",
@@ -164,8 +244,14 @@ def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
     for m in RE_SUP_UNI.finditer(sent):
         if _overlaps(m.start(), m.end()):
             continue
-        conv = m.group(1).translate(UNICODE_SUP_MAP)
-        nums = expand_numeric_spec(conv)
+        raw_uni = m.group(1)
+        if raw_uni.startswith("⁻"):
+            continue
+        before = sent[max(0, m.start() - 12) : m.start()]
+        if _SCI_UNIT_PREFIX_RE.search(before):
+            continue
+        conv = raw_uni.translate(UNICODE_SUP_MAP)
+        nums = _filter_valid_cite_nums(expand_numeric_spec(conv))
         if nums:
             hits.append({
                 "kind": "numeric_superscript_unicode",
@@ -180,42 +266,75 @@ def extract_citations_from_sentence(sent: str) -> List[Dict[str, Any]]:
     for m in RE_AUTHOR_YEAR_PAREN.finditer(sent):
         if _overlaps(m.start(), m.end()):
             continue
-        inner = m.group(1)
-        items = [x.strip() for x in re.split(r"[;；]", inner) if x.strip()]
-        hits.append({
-            "kind": "author_year_paren",
-            "raw": m.group(0),
-            "span": [m.start(), m.end()],
-            "nums": [],
-            "keys": [],
-            "author_years": items,
-        })
-        occupied_spans.append((m.start(), m.end()))
-
-    for m in RE_AUTHOR_YEAR_NARR.finditer(sent):
-        if _overlaps(m.start(), m.end()):
-            continue
-        author = m.group(1) or m.group(3)
-        year = m.group(2) or m.group(4)
-        if author and year:
+        items = _expand_ay_items(m.group(1))
+        if items:
             hits.append({
-                "kind": "author_year_narrative",
+                "kind": "author_year_paren",
                 "raw": m.group(0),
                 "span": [m.start(), m.end()],
                 "nums": [],
                 "keys": [],
-                "author_years": [f"{author.strip()}, {year}"],
+                "author_years": items,
             })
             occupied_spans.append((m.start(), m.end()))
+
+    for m in RE_AUTHOR_YEAR_NARR.finditer(sent):
+        if _overlaps(m.start(), m.end()):
+            continue
+        author = (m.group(1) or m.group(3) or "").strip()
+        year = (m.group(2) or m.group(4) or "").strip()
+        if not (author and year):
+            continue
+        auth_low = author.lower()
+        has_explicit_cue = bool(re.search(r"(?:\bet\s+al\.|\band\b|&|等|和|与)", author, re.I))
+        if not has_explicit_cue:
+            if auth_low in NON_AUTHOR_NARR_STOP or author in NON_AUTHOR_NARR_STOP:
+                continue
+            if re.search(r"[\u4e00-\u9fff]", author) and (len(author) > 3 or _ZH_NON_PERSON_SUFFIX_RE.search(author)):
+                continue
+        hits.append({
+            "kind": "author_year_narrative",
+            "raw": m.group(0),
+            "span": [m.start(), m.end()],
+            "nums": [],
+            "keys": [],
+            "author_years": [f"{author}, {year}"],
+            "is_bare_narrative": not has_explicit_cue,
+        })
+        occupied_spans.append((m.start(), m.end()))
 
     hits.sort(key=lambda x: x["span"][0])
     return hits
 
 
-def split_sentences(text: str) -> List[str]:
-    """Split English/Chinese/mixed academic prose into sentences without breaking decimals or et al."""
+def split_sentences(text: str, block_type: str = "body") -> List[str]:
+    """Split English/Chinese/mixed academic prose into sentences without breaking tables, lists, or LaTeX comments."""
     if not text or not text.strip():
         return []
+    if block_type == "table_cell":
+        return [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+
+    raw_lines = text.splitlines()
+    if len(raw_lines) > 1:
+        is_list_block = all(
+            not ln.strip() or re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)", ln.strip())
+            for ln in raw_lines
+        )
+        has_latex_comment = any(re.search(r"(?<!\\)%", ln) for ln in raw_lines)
+        if is_list_block:
+            return [ln.strip() for ln in raw_lines if ln.strip()]
+        if has_latex_comment:
+            out_lines: List[str] = []
+            for ln in raw_lines:
+                st = ln.strip()
+                if not st:
+                    continue
+                if st.startswith("%"):
+                    out_lines.append(st)
+                else:
+                    out_lines.extend(split_sentences(st, block_type="body"))
+            return out_lines
+
     s = re.sub(r"\s+", " ", text.strip())
     # Protect common abbreviations and decimals
     prot = s
@@ -276,8 +395,17 @@ def parse_markdown_or_text_manuscript(text: str, src_rel: str) -> Dict[str, Any]
             "source_file": src_rel,
         })
 
+    in_footnote_block = False
     for idx, line in enumerate(lines, start=1):
         stripped = line.strip()
+        # Indented continuation line of a multi-line Markdown footnote
+        if in_footnote_block and stripped and (line.startswith("  ") or line.startswith("\t")) and blocks and blocks[-1]["block_type"] == "footnote":
+            blocks[-1]["text"] = blocks[-1]["text"] + " " + stripped
+            blocks[-1]["line_end"] = idx
+            if footnotes_lines:
+                footnotes_lines[-1] = blocks[-1]["text"]
+            continue
+        in_footnote_block = False
         # Footnote definitions in Markdown: [^1]: ...
         if re.match(r"^\[\^[^\]]+\]:\s+", stripped):
             flush_buf(idx - 1)
@@ -291,6 +419,7 @@ def parse_markdown_or_text_manuscript(text: str, src_rel: str) -> Dict[str, Any]
                 "line_end": idx,
                 "source_file": src_rel,
             })
+            in_footnote_block = True
             continue
 
         # Reference section heading
@@ -353,7 +482,20 @@ def parse_markdown_or_text_manuscript(text: str, src_rel: str) -> Dict[str, Any]
 
 
 def parse_latex_manuscript(text: str, src_rel: str) -> Dict[str, Any]:
-    lines = text.splitlines()
+    raw_lines = text.splitlines()
+    start_idx = 0
+    end_idx = len(raw_lines)
+    for li, ln in enumerate(raw_lines):
+        if "\\begin{document}" in ln:
+            start_idx = li + 1
+            break
+    for li in range(len(raw_lines) - 1, start_idx - 1, -1):
+        if "\\end{document}" in raw_lines[li]:
+            end_idx = li
+            break
+    lines = raw_lines[start_idx:end_idx]
+    line_offset = start_idx
+
     blocks: List[Dict[str, Any]] = []
     inline_refs_lines: List[str] = []
 
@@ -361,7 +503,7 @@ def parse_latex_manuscript(text: str, src_rel: str) -> Dict[str, Any]:
     in_refs = False
     in_appendix = False
     buf: List[str] = []
-    buf_start = 1
+    buf_start = line_offset + 1
 
     def flush_buf(end_line: int) -> None:
         if not buf:
@@ -371,10 +513,10 @@ def parse_latex_manuscript(text: str, src_rel: str) -> Dict[str, Any]:
         if not para:
             return
         btype = "body"
-        if "\\caption{" in para or "\\begin{figure}" in para:
-            btype = "figure_caption"
-        elif "\\begin{table}" in para:
+        if "\\begin{table}" in para or "\\begin{table*}" in para:
             btype = "table_caption"
+        elif "\\caption{" in para or "\\begin{figure}" in para or "\\begin{figure*}" in para:
+            btype = "figure_caption"
         elif in_appendix:
             btype = "appendix"
         blocks.append({
@@ -387,7 +529,8 @@ def parse_latex_manuscript(text: str, src_rel: str) -> Dict[str, Any]:
             "source_file": src_rel,
         })
 
-    for idx, line in enumerate(lines, start=1):
+    for rel_i, line in enumerate(lines, start=1):
+        idx = line_offset + rel_i
         stripped = line.strip()
         if "\\begin{thebibliography}" in stripped:
             flush_buf(idx - 1)
@@ -425,7 +568,7 @@ def parse_latex_manuscript(text: str, src_rel: str) -> Dict[str, Any]:
             if not buf:
                 buf_start = idx
             buf.append(line)
-    flush_buf(len(lines))
+    flush_buf(line_offset + len(lines))
     return {"blocks": blocks, "inline_refs_lines": inline_refs_lines, "footnotes": [], "format": "latex"}
 
 
@@ -604,7 +747,7 @@ def main() -> None:
             blk["sentence_ids"] = []
             continue
 
-        raw_sents = split_sentences(blk["text"])
+        raw_sents = split_sentences(blk["text"], block_type=blk["block_type"])
         blk_sids: List[str] = []
         blk_sents_objs: List[Dict[str, Any]] = []
         for s_txt in raw_sents:

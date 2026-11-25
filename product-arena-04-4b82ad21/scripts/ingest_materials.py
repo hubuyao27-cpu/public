@@ -4,6 +4,7 @@
 Produces:
 - /app/work/source_ledger.json (machine-verifiable citations, conflicts, own evidence, pre-gaps, grounded numbers)
 - /app/work/evidence_digest.md  (compact token-efficient digest for drafting & revision)
+- /app/work/section_payload_skeleton.json (pre-grounded scaffold reducing boilerplate turns)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from common import (
     extract_numeric_tokens,
     extract_pdf_text,
     load_json_safe,
+    load_rubric_rules,
     normalize_ws,
     parse_bibtex_text,
     parse_markdown_or_text_refs,
@@ -30,14 +32,12 @@ from common import (
     save_json,
 )
 
-CLICHE_PATTERNS = [
-    r"近年来[^。\n]{0,25}(?:受到|引起)[^。\n]{0,15}广泛关注",
-    r"随着[^。\n]{0,30}(?:快速发展|迅猛发展|不断进步|日新月异)",
-    r"具有重要(?:理论和实际|科学|现实|研究)?意义",
-    r"in recent years,?.{0,40}attracted\s+(?:widespread|increasing|great)\s+attention",
-    r"with the rapid\s+(?:development|advancement|growth)\s+of",
-    r"has become a hot\s+(?:topic|research\s+area)",
-]
+
+def _tier_rank(tier_name: str, precedence: List[str]) -> int:
+    try:
+        return precedence.index(tier_name)
+    except ValueError:
+        return len(precedence)
 
 
 def _read_document_lines(item: Dict[str, Any]) -> Tuple[List[Tuple[str, str]], List[str]]:
@@ -112,9 +112,53 @@ def _extract_refs_from_csv(text: str, rel: str) -> List[Dict[str, Any]]:
                     "doi_or_id": doi,
                     "abstract": getv("abstract", "summary", "findings", "limitation", "limitations", "notes"),
                     "source_locator": f"{rel}:L{ridx}",
+                    "source_tier": "bibtex_or_csl_metadata",
                 }
             )
     return refs
+
+
+def _extract_single_json_ref(item: Dict[str, Any], locator: str, idx: int) -> Optional[Dict[str, Any]]:
+    title = str(item.get("title") or "")
+    authors = ""
+    if isinstance(item.get("authors"), list):
+        authors = "; ".join(str(a) for a in item["authors"])
+    elif isinstance(item.get("author"), list):
+        authors = "; ".join(
+            f"{a.get('family', '')}, {a.get('given', '')}".strip(", ")
+            if isinstance(a, dict)
+            else str(a)
+            for a in item["author"]
+        )
+    else:
+        authors = str(item.get("authors") or item.get("author") or "")
+    year = str(item.get("year") or "")
+    if not year and isinstance(item.get("issued"), dict):
+        dp = item["issued"].get("date-parts")
+        if isinstance(dp, list) and dp and isinstance(dp[0], list) and dp[0]:
+            year = str(dp[0][0])
+    venue = str(item.get("venue") or item.get("journal") or item.get("container-title") or item.get("booktitle") or "")
+    doi = str(item.get("doi") or item.get("DOI") or item.get("url") or item.get("arxiv") or "")
+    ck = str(item.get("cite_key") or item.get("key") or item.get("id") or f"{extract_first_author_surname(authors) or 'Ref'}{year}_{idx+1}")
+    abs_parts = [
+        str(item.get(k))
+        for k in ("abstract", "summary", "conclusion", "findings", "limitation", "limitations", "applicability", "notes")
+        if item.get(k)
+    ]
+    if title or authors or doi or abs_parts:
+        return {
+            "cite_key": ck,
+            "entry_type": str(item.get("entry_type") or item.get("type") or "article"),
+            "authors": authors,
+            "year": year,
+            "title": title,
+            "venue": venue,
+            "doi_or_id": doi,
+            "abstract": " | ".join(abs_parts),
+            "source_locator": locator,
+            "source_tier": "bibtex_or_csl_metadata",
+        }
+    return None
 
 
 def _extract_refs_from_json(data: Any, prefix: str) -> List[Dict[str, Any]]:
@@ -123,53 +167,28 @@ def _extract_refs_from_json(data: Any, prefix: str) -> List[Dict[str, Any]]:
         for idx, item in enumerate(data):
             if not isinstance(item, dict):
                 continue
-            title = str(item.get("title") or "")
-            authors = ""
-            if isinstance(item.get("authors"), list):
-                authors = "; ".join(str(a) for a in item["authors"])
-            elif isinstance(item.get("author"), list):
-                authors = "; ".join(
-                    f"{a.get('family', '')}, {a.get('given', '')}".strip(", ")
-                    if isinstance(a, dict)
-                    else str(a)
-                    for a in item["author"]
-                )
-            else:
-                authors = str(item.get("authors") or item.get("author") or "")
-            year = str(item.get("year") or "")
-            if not year and isinstance(item.get("issued"), dict):
-                dp = item["issued"].get("date-parts")
-                if isinstance(dp, list) and dp and isinstance(dp[0], list) and dp[0]:
-                    year = str(dp[0][0])
-            venue = str(item.get("venue") or item.get("journal") or item.get("container-title") or item.get("booktitle") or "")
-            doi = str(item.get("doi") or item.get("DOI") or item.get("url") or item.get("arxiv") or "")
-            ck = str(item.get("cite_key") or item.get("key") or item.get("id") or f"{extract_first_author_surname(authors) or 'Ref'}{year}_{idx+1}")
-            abs_parts = [str(item.get(k)) for k in ("abstract", "summary", "conclusion", "findings", "limitation", "limitations", "applicability", "notes") if item.get(k)]
-            if title or authors or doi or abs_parts:
-                refs.append(
-                    {
-                        "cite_key": ck,
-                        "authors": authors,
-                        "year": year,
-                        "title": title,
-                        "venue": venue,
-                        "doi_or_id": doi,
-                        "abstract": " | ".join(abs_parts),
-                        "source_locator": f"{prefix}[{idx}]",
-                    }
-                )
+            rec = _extract_single_json_ref(item, f"{prefix}[{idx}]", idx)
+            if rec:
+                refs.append(rec)
     elif isinstance(data, dict):
-        for k in ("references", "papers", "literature", "bibliography", "items", "entries"):
+        found_container = False
+        for k in ("references", "papers", "literature", "bibliography", "items", "entries", "citations", "works"):
             if k in data and isinstance(data[k], list):
+                found_container = True
                 refs.extend(_extract_refs_from_json(data[k], f"{prefix}#{k}"))
+        # Single-object reference JSON (e.g., papers/smith2023.json)
+        if not found_container and any(k in data for k in ("title", "doi", "DOI", "cite_key")) and "output_contract" not in data:
+            rec = _extract_single_json_ref(data, prefix, 0)
+            if rec:
+                refs.append(rec)
     return refs
 
 
-def _extract_prose_card_metadata(lines: List[Tuple[str, str]], rel: str) -> Optional[Dict[str, Any]]:
+def _extract_prose_card_metadata(lines: List[Tuple[str, str]], rel: str, source_tier: str = "structured_notes") -> Optional[Dict[str, Any]]:
     """Extract structured reference metadata if a markdown/txt/PDF file describes a single paper."""
     if not lines:
         return None
-    head_text = "\n".join(ln for _, ln in lines[:40])
+    head_text = "\n".join(ln for _, ln in lines[:45])
     title_m = re.search(r"(?:^|\n)\s*(?:#+\s*|Title\s*[:：]\s*|题目\s*[:：]\s*)(.+)", head_text, re.I)
     author_m = re.search(r"(?:^|\n)\s*(?:Authors?|作者)\s*[:：]\s*(.+)", head_text, re.I)
     year_m = re.search(r"(?:^|\n)\s*(?:Year|年份)\s*[:：]\s*((?:19|20)\d{2})", head_text, re.I)
@@ -183,12 +202,11 @@ def _extract_prose_card_metadata(lines: List[Tuple[str, str]], rel: str) -> Opti
     authors = author_m.group(1).strip() if author_m else ""
     year = year_m.group(1) if year_m else ""
     if not year:
-        ym2 = re.search(r"\b((?:19|20)\d{2})\b", head_text[:500])
+        ym2 = re.search(r"\b((?:19|20)\d{2})\b", head_text[:600])
         year = ym2.group(1) if ym2 else ""
     venue = venue_m.group(1).strip() if venue_m else ""
     doi = doi_m.group(1).rstrip(".") if doi_m else ""
     ck = ck_m.group(1).strip() if ck_m else f"{extract_first_author_surname(authors) or Path(rel).stem}{year}"
-    snippet_lines = [f"[{loc}] {ln}" for loc, ln in lines[:12]]
     return {
         "cite_key": ck,
         "authors": authors,
@@ -196,15 +214,147 @@ def _extract_prose_card_metadata(lines: List[Tuple[str, str]], rel: str) -> Opti
         "title": title,
         "venue": venue,
         "doi_or_id": doi,
-        "abstract": " ".join(ln for _, ln in lines[:18])[:900],
+        "abstract": " ".join(ln for _, ln in lines[:24])[:1100],
         "source_locator": lines[0][0],
-        "snippets": snippet_lines,
+        "source_tier": source_tier,
     }
+
+
+def _extract_pdf_paper_card(lines: List[Tuple[str, str]], rel: str) -> Optional[Dict[str, Any]]:
+    """Extract primary paper metadata from page 1 of a real academic PDF without swallowing its References section."""
+    if not lines:
+        return None
+    # First try explicit labeled card
+    explicit = _extract_prose_card_metadata(lines, rel, source_tier="original_paper_or_pdf")
+    p1_lines = [(loc, ln) for loc, ln in lines if ":p1_" in loc][:45]
+    if not p1_lines:
+        p1_lines = lines[:45]
+    p1_text = "\n".join(ln for _, ln in p1_lines)
+
+    doi_m = re.search(r"(10\.\d{4,9}/[^\s,;)\]]+|arXiv:\s*\d{4}\.\d{4,5}(?:v\d+)?)", p1_text, re.I)
+    doi = re.sub(r"\s+", "", doi_m.group(1)).rstrip(".") if doi_m else ""
+    year = ""
+    ym = re.search(r"\b((?:19|20)\d{2})\b", p1_text)
+    if ym:
+        year = ym.group(1)
+    elif doi.lower().startswith("arxiv:"):
+        yy = doi.split(":", 1)[1][:2]
+        if yy.isdigit():
+            year = f"20{yy}"
+
+    # Heuristic title & authors from page 1 top lines (skip banners/URLs/page numbers/arXiv stamps)
+    banner_re = re.compile(
+        r"^(?:arXiv:|https?://|doi:|ISSN|Vol\.|Volume|Published\s+in|Preprint|Proceedings\s+of|Accepted\s+at|©|\d+$)",
+        re.I,
+    )
+    title_cand = explicit.get("title", "") if explicit else ""
+    authors_cand = explicit.get("authors", "") if explicit else ""
+    venue_cand = explicit.get("venue", "") if explicit else ""
+
+    if not venue_cand:
+        vm = re.search(
+            r"(?:Published\s+(?:as\s+a\s+conference\s+paper\s+at|in)|Proceedings\s+of|Accepted\s+(?:at|to))\s+([^\n]{4,100})",
+            p1_text,
+            re.I,
+        )
+        if vm:
+            venue_cand = vm.group(1).strip(" .,")
+
+    title_idx = -1
+    if not title_cand:
+        for idx, (_, ln) in enumerate(p1_lines[:18]):
+            s = ln.strip()
+            if len(s) < 12 or len(s) > 220 or banner_re.match(s):
+                continue
+            if re.match(r"^(?:abstract|摘要)\b", s, re.I):
+                break
+            title_cand = s
+            title_idx = idx
+            break
+
+    if not authors_cand and title_idx >= 0:
+        for _, ln in p1_lines[title_idx + 1 : title_idx + 6]:
+            s = ln.strip()
+            if re.match(r"^(?:abstract|摘要|keywords|1\.?\s+introduction)\b", s, re.I):
+                break
+            if "@" in s or any(w in s.lower() for w in ("university", "institute", "department", "laboratory", "college", "大学", "学院", "研究所")):
+                continue
+            if 4 <= len(s) <= 180 and ("," in s or " and " in s.lower() or "、" in s or re.search(r"[A-Z][a-z]+\s+[A-Z][a-z]+", s)):
+                authors_cand = re.sub(r"[∗*†‡§\d]+", "", s).strip(" ,;")
+                break
+
+    # Extract abstract paragraph if present
+    abs_lines: List[str] = []
+    in_abs = False
+    for _, ln in lines[:120]:
+        s = ln.strip()
+        if re.match(r"^(?:abstract|摘要)\s*[:：.-]?\s*(.*)$", s, re.I):
+            in_abs = True
+            rest = re.sub(r"^(?:abstract|摘要)\s*[:：.-]?\s*", "", s, flags=re.I).strip()
+            if rest:
+                abs_lines.append(rest)
+            continue
+        if in_abs:
+            if re.match(r"^(?:1\.?\s*introduction|keywords|index\s+terms|引言|关键词)\b", s, re.I) or len(" ".join(abs_lines)) > 1100:
+                break
+            abs_lines.append(s)
+
+    abstract = " ".join(abs_lines)[:1100] if abs_lines else " ".join(ln for _, ln in p1_lines[:22])[:1100]
+    if not (title_cand or authors_cand or doi):
+        return None
+    surname = extract_first_author_surname(authors_cand)
+    stem_clean = re.sub(r"[^A-Za-z0-9_]", "", Path(rel).stem)[:24] or "Paper"
+    ck = (explicit.get("cite_key") if explicit and explicit.get("cite_key") else None) or f"{surname or stem_clean}{year}"
+    return {
+        "cite_key": ck,
+        "authors": authors_cand,
+        "year": year,
+        "title": title_cand,
+        "venue": venue_cand,
+        "doi_or_id": doi,
+        "abstract": abstract,
+        "source_locator": p1_lines[0][0],
+        "source_tier": "original_paper_or_pdf",
+    }
+
+
+def _extract_heading_aware_snippet(lines: List[Tuple[str, str]], max_chars: int = 2400) -> str:
+    """Capture intro/method/experiment/result/table/figure lines from an own-paper file cleanly."""
+    if not lines:
+        return ""
+    selected: List[str] = []
+    seen_idx = set()
+    # Always include first 25 lines
+    for idx, (loc, ln) in enumerate(lines[:25]):
+        selected.append(f"[{loc}] {ln}")
+        seen_idx.add(idx)
+    # Also prioritize lines mentioning results/tables/figures/metrics/methods/limitations beyond line 25
+    key_re = re.compile(
+        r"(?:^#+\s+|\\section|\\subsection|table\s*\d|fig(?:ure)?\.?\s*\d|表\s*\d|图\s*\d|%|％|accuracy|f1|mae|rmse|ablation|limitation|method|experiment|result|方法|实验|结果|消融|局限)",
+        re.I,
+    )
+    total = sum(len(s) + 1 for s in selected)
+    for idx, (loc, ln) in enumerate(lines[25:], start=25):
+        if total >= max_chars:
+            break
+        if key_re.search(ln):
+            entry = f"[{loc}] {ln}"
+            selected.append(entry)
+            seen_idx.add(idx)
+            total += len(entry) + 1
+    # Fill remaining budget sequentially if short
+    for idx, (loc, ln) in enumerate(lines[25:], start=25):
+        if total >= max_chars:
+            break
+        if idx not in seen_idx:
+            entry = f"[{loc}] {ln}"
+            selected.append(entry)
+            total += len(entry) + 1
+    return "\n".join(selected)[:max_chars]
 
 
 def _extract_draft_citations(text: str) -> List[str]:
     markers: List[str] = []
-    # [1], [1, 2], [1-3], [R01], [Smith2023]
     for m in re.finditer(r"\[([A-Za-z0-9_,\s;-]+)\]", text):
         inner = m.group(1).strip()
         if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT")):
@@ -214,14 +364,15 @@ def _extract_draft_citations(text: str) -> List[str]:
             continue
         for part in re.split(r"[,;]", inner):
             p = part.strip()
-            if p and (re.match(r"^R?\d{1,3}$", p) or re.match(r"^[A-Za-z][A-Za-z0-9_:-]{2,30}$", p)):
+            if p and (
+                re.match(r"^R?\d{1,3}$", p)
+                or (re.match(r"^[A-Za-z][A-Za-z0-9_:-]{2,30}$", p) and re.search(r"(?:19|20)\d{2}", p))
+            ):
                 markers.append(p)
-    # \cite{k1, k2}
     for m in re.finditer(r"\\cite[a-z]*\{([^}]+)\}", text):
         for k in m.group(1).split(","):
             if k.strip():
                 markers.append(k.strip())
-    # (Author, 2023)
     for m in re.finditer(r"\(([A-Z][A-Za-z-]+(?:\s+et\s+al\.)?),?\s*((?:19|20)\d{2}[a-z]?)\)", text):
         markers.append(f"{m.group(1).split()[0]}{m.group(2)}")
     return markers
@@ -239,7 +390,10 @@ def main() -> None:
     if err or not isinstance(plan, dict):
         raise SystemExit(f"Failed to load case_plan: {err}")
 
-    input_dir = Path(plan["input_dir"])
+    rubric = load_rubric_rules()
+    tier_precedence: List[str] = list(rubric.get("evidence_tier_precedence") or [])
+    cliche_patterns: List[str] = list(rubric.get("cliche_openings_zh") or []) + list(rubric.get("cliche_openings_en") or [])
+
     case_path = Path(plan["case_json_path"]) if plan.get("case_json_path") else None
     case_data: Dict[str, Any] = {}
     if case_path and case_path.exists():
@@ -255,10 +409,14 @@ def main() -> None:
     grounded_numbers: List[Dict[str, Any]] = []
     figure_table_mentions: List[Dict[str, str]] = []
 
-    # 1. Process inline materials in case.json (and fallback inline blocks in task.md)
+    # 1. Process inline materials in case.json
     if case_data:
         inline_refs = _extract_refs_from_json(case_data, "case.json")
         raw_ref_records.extend(inline_refs)
+        for r in inline_refs:
+            if r.get("abstract"):
+                for tok in extract_numeric_tokens(str(r["abstract"]), filter_structural=False):
+                    grounded_numbers.append({"locator": r.get("source_locator", "case.json"), **tok})
         for k in ("draft", "manuscript", "intro_draft", "existing_draft", "related_work"):
             if isinstance(case_data.get(k), str) and case_data[k].strip():
                 draft_texts.append((f"case.json#{k}", case_data[k]))
@@ -271,32 +429,41 @@ def main() -> None:
             if not val:
                 continue
             txt = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
-            own_paper_snippets.append({"locator": f"case.json#{k}", "text": txt[:1500]})
+            own_paper_snippets.append({"locator": f"case.json#{k}", "text": txt[:2400]})
             for tok in extract_numeric_tokens(txt, filter_structural=False):
                 grounded_numbers.append({"locator": f"case.json#{k}", **tok})
             for fm in re.finditer(r"(?:Fig(?:ure)?|Table|Tab\.|图|表)\s*\.?\s*[A-Za-z0-9.-]+", txt, re.I):
                 figure_table_mentions.append({"marker": fm.group(0), "locator": f"case.json#{k}"})
 
-    # Fallback: parse inline BibTeX / RIS / numbered references or own metrics inside task.md
+    # Also parse inline BibTeX / RIS / numbered references & metrics inside task.md (always check, dedup merges overlaps)
     task_md_path = Path(plan["task_md_path"]) if plan.get("task_md_path") else None
     if task_md_path and task_md_path.exists():
-        t_txt, t_err = read_text_safe(task_md_path)
+        t_txt, _ = read_text_safe(task_md_path)
         if t_txt:
             for tok in extract_numeric_tokens(t_txt, filter_structural=False):
                 grounded_numbers.append({"locator": "task.md", **tok})
-            if not raw_ref_records:
-                if "@" in t_txt and re.search(r"@\w+\s*\{", t_txt):
-                    raw_ref_records.extend(parse_bibtex_text(t_txt, "task.md"))
-                elif "TY  -" in t_txt and "ER  -" in t_txt:
-                    raw_ref_records.extend(parse_ris_text(t_txt, "task.md"))
-                else:
-                    from common import parse_markdown_or_text_refs
-                    task_ref_recs = parse_markdown_or_text_refs(t_txt, "task.md")
-                    if task_ref_recs:
-                        raw_ref_records.extend(task_ref_recs)
+            if "@" in t_txt and re.search(r"@\w+\s*[{(]", t_txt):
+                for rec in parse_bibtex_text(t_txt, "task.md"):
+                    rec["source_tier"] = "bibtex_or_csl_metadata"
+                    raw_ref_records.append(rec)
+            elif "TY  -" in t_txt:
+                for rec in parse_ris_text(t_txt, "task.md"):
+                    rec["source_tier"] = "bibtex_or_csl_metadata"
+                    raw_ref_records.append(rec)
+            else:
+                for rec in parse_markdown_or_text_refs(t_txt, "task.md"):
+                    rec["source_tier"] = "structured_notes"
+                    raw_ref_records.append(rec)
 
-    # 2. Process all files in inventory (bibliography files FIRST so notes enrich/align rather than create stub refs)
-    bucket_order = {"bibliography": 0, "literature_source": 1, "own_paper_evidence": 2, "own_paper_draft": 3, "other_text": 4, "binary_or_figure": 5}
+    # 2. Process all files in inventory
+    bucket_order = {
+        "literature_source": 0,
+        "bibliography": 1,
+        "own_paper_evidence": 2,
+        "own_paper_draft": 3,
+        "other_text": 4,
+        "binary_or_figure": 5,
+    }
     ordered_inv = sorted(plan.get("inventory") or [], key=lambda it: bucket_order.get(it.get("bucket", "other_text"), 9))
     for item in ordered_inv:
         bucket = item.get("bucket")
@@ -310,16 +477,19 @@ def main() -> None:
             figure_table_mentions.append({"marker": Path(rel).name, "locator": rel})
             continue
 
-        # Raw text / structured files
         if ext == ".bib":
             txt, rerr = read_text_safe(p)
             if rerr:
                 warnings.append(f"{rel}:{rerr}")
             elif txt:
-                raw_ref_records.extend(parse_bibtex_text(txt, rel))
-                for ln_no, ln in enumerate(txt.splitlines(), start=1):
-                    for tok in extract_numeric_tokens(ln, filter_structural=False):
-                        grounded_numbers.append({"locator": f"{rel}:L{ln_no}", **tok})
+                parsed_bib = parse_bibtex_text(txt, rel)
+                for rec in parsed_bib:
+                    rec["source_tier"] = "bibtex_or_csl_metadata"
+                    raw_ref_records.append(rec)
+                    # Only index numbers from abstract/note (never DOI/year/pages!)
+                    if rec.get("abstract"):
+                        for tok in extract_numeric_tokens(str(rec["abstract"]), filter_structural=False):
+                            grounded_numbers.append({"locator": rec["source_locator"], **tok})
             continue
 
         if ext == ".ris":
@@ -327,7 +497,12 @@ def main() -> None:
             if rerr:
                 warnings.append(f"{rel}:{rerr}")
             elif txt:
-                raw_ref_records.extend(parse_ris_text(txt, rel))
+                for rec in parse_ris_text(txt, rel):
+                    rec["source_tier"] = "bibtex_or_csl_metadata"
+                    raw_ref_records.append(rec)
+                    if rec.get("abstract"):
+                        for tok in extract_numeric_tokens(str(rec["abstract"]), filter_structural=False):
+                            grounded_numbers.append({"locator": rec["source_locator"], **tok})
             continue
 
         if ext == ".json":
@@ -338,11 +513,18 @@ def main() -> None:
                 jrefs = _extract_refs_from_json(jdata, rel)
                 if jrefs:
                     raw_ref_records.extend(jrefs)
+                    for r in jrefs:
+                        if r.get("abstract"):
+                            for tok in extract_numeric_tokens(str(r["abstract"]), filter_structural=False):
+                                grounded_numbers.append({"locator": r["source_locator"], **tok})
                 jtxt = json.dumps(jdata, ensure_ascii=False)
-                for tok in extract_numeric_tokens(jtxt, filter_structural=False):
-                    grounded_numbers.append({"locator": rel, **tok})
-                if bucket == "own_paper_evidence":
-                    own_paper_snippets.append({"locator": rel, "text": jtxt[:1500]})
+                if not jrefs or bucket == "own_paper_evidence":
+                    for tok in extract_numeric_tokens(jtxt, filter_structural=False):
+                        grounded_numbers.append({"locator": rel, **tok})
+                if bucket == "own_paper_evidence" or (
+                    isinstance(jdata, dict) and any(k in jdata for k in ("results", "metrics", "experiments", "ablation"))
+                ):
+                    own_paper_snippets.append({"locator": rel, "text": jtxt[:2400]})
             continue
 
         if ext in (".csv", ".tsv"):
@@ -354,7 +536,7 @@ def main() -> None:
                 if crefs:
                     raw_ref_records.extend(crefs)
                 else:
-                    own_paper_snippets.append({"locator": f"{rel}:L1", "text": txt[:1500]})
+                    own_paper_snippets.append({"locator": f"{rel}:L1", "text": txt[:2400]})
                 for ln_no, ln in enumerate(txt.splitlines(), start=1):
                     for tok in extract_numeric_tokens(ln, filter_structural=False):
                         grounded_numbers.append({"locator": f"{rel}:L{ln_no}", **tok})
@@ -376,27 +558,36 @@ def main() -> None:
         if bucket == "own_paper_draft":
             draft_texts.append((rel, full_txt))
         elif bucket == "own_paper_evidence":
-            own_paper_snippets.append({"locator": lines[0][0], "text": "\n".join(f"[{loc}] {ln}" for loc, ln in lines[:45])})
+            own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2400)})
         else:
-            # Literature or bibliography text file: try extracting explicit ref list + single-paper metadata
-            mrefs = parse_markdown_or_text_refs(full_txt, rel)
-            if mrefs:
-                raw_ref_records.extend(mrefs)
-            # Only treat the whole file as a single paper card when it isn't a multi-ref notes list
-            if len(mrefs) <= 1 and not re.search(r"^(?:#\s*文献笔记|-\s*\[R\d+\])", full_txt, re.M):
-                card = _extract_prose_card_metadata(lines, rel)
+            if ext == ".pdf" and bucket != "bibliography":
+                # Real academic PDF: index the primary paper from page 1 instead of scraping its back bibliography
+                card = _extract_pdf_paper_card(lines, rel)
                 if card:
                     raw_ref_records.append(card)
+            else:
+                mrefs = parse_markdown_or_text_refs(full_txt, rel)
+                for mr in mrefs:
+                    mr["source_tier"] = "structured_notes"
+                if mrefs:
+                    raw_ref_records.extend(mrefs)
+                if len(mrefs) <= 1 and not re.search(r"^(?:#\s*文献笔记|-\s*\[R\d+\])", full_txt, re.M):
+                    src_tier = "original_paper_or_pdf" if ext in (".pdf", ".tex", ".docx") else "structured_notes"
+                    card = _extract_prose_card_metadata(lines, rel, source_tier=src_tier)
+                    if card:
+                        raw_ref_records.append(card)
             literature_snippets.append(
                 {
                     "file": rel,
                     "first_locator": lines[0][0],
                     "line_count": len(lines),
-                    "preview_lines": [f"[{loc}] {ln}" for loc, ln in lines[:30]],
+                    "preview_lines": [f"[{loc}] {ln}" for loc, ln in lines[:25]],
                 }
             )
 
-    # 3. Deduplicate references & detect cross-source metadata conflicts
+    # 3. Deduplicate references in strict evidence_tier_precedence order & detect cross-source conflicts
+    raw_ref_records.sort(key=lambda rec: _tier_rank(str(rec.get("source_tier") or "structured_notes"), tier_precedence))
+
     conflicts: List[Dict[str, Any]] = []
     catalog: List[Dict[str, Any]] = []
     by_key: Dict[str, Dict[str, Any]] = {}
@@ -408,6 +599,7 @@ def main() -> None:
         ck = (rec.get("cite_key") or "").strip()
         ntitle = _norm_title(rec.get("title") or "")
         ndoi = (rec.get("doi_or_id") or "").strip().lower()
+        rec_tier = str(rec.get("source_tier") or "structured_notes")
         match = None
         if ck and ck in by_key:
             match = by_key[ck]
@@ -420,6 +612,7 @@ def main() -> None:
             item_entry = {
                 "ref_id": f"R{len(catalog)+1:02d}",
                 "cite_key": ck or f"R{len(catalog)+1:02d}",
+                "entry_type": str(rec.get("entry_type") or "article"),
                 "authors": rec.get("authors", ""),
                 "first_author_surname": extract_first_author_surname(rec.get("authors", "")),
                 "year": str(rec.get("year") or ""),
@@ -428,6 +621,7 @@ def main() -> None:
                 "doi_or_id": rec.get("doi_or_id", ""),
                 "abstract_or_notes": rec.get("abstract", ""),
                 "source_locators": [rec.get("source_locator", "")],
+                "source_tier": rec_tier,
             }
             catalog.append(item_entry)
             if item_entry["cite_key"]:
@@ -440,26 +634,41 @@ def main() -> None:
             loc = rec.get("source_locator", "")
             if loc and loc not in match["source_locators"]:
                 match["source_locators"].append(loc)
-            # Check conflicts on year / venue / doi
-            for field in ("year", "doi_or_id"):
+            # Check conflicts on year / doi_or_id / venue / first-author surname
+            for field in ("year", "doi_or_id", "venue", "authors"):
                 v_old = str(match.get(field) or "").strip()
                 v_new = str(rec.get(field) or "").strip()
-                if v_old and v_new and v_old.lower() != v_new.lower():
+                if not (v_old and v_new):
+                    continue
+                is_conflict = False
+                if field in ("year", "doi_or_id"):
+                    is_conflict = v_old.lower() != v_new.lower()
+                elif field == "venue":
+                    n1 = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", v_old.lower())
+                    n2 = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", v_new.lower())
+                    if len(n1) >= 4 and len(n2) >= 4 and n1 != n2 and n1 not in n2 and n2 not in n1:
+                        is_conflict = True
+                elif field == "authors":
+                    s1 = extract_first_author_surname(v_old).lower()
+                    s2 = extract_first_author_surname(v_new).lower()
+                    if len(s1) >= 2 and len(s2) >= 2 and s1 != s2:
+                        is_conflict = True
+                if is_conflict:
                     conf_idx += 1
                     conflicts.append(
                         {
                             "conflict_id": f"CONF-{conf_idx:02d}",
                             "item": f"{match['ref_id']} ({match['cite_key']}) {field}",
                             "sources_compared": [
-                                {"source_locator": match["source_locators"][0], "source_tier": "primary_record", "value": v_old},
-                                {"source_locator": loc, "source_tier": "secondary_record", "value": v_new},
+                                {"source_locator": match["source_locators"][0], "source_tier": match.get("source_tier", "primary_record"), "value": v_old},
+                                {"source_locator": loc, "source_tier": rec_tier, "value": v_new},
                             ],
                             "adopted_value_or_status": "requires_author_confirmation",
-                            "rationale": f"Conflicting {field} across bibliography/notes sources ({v_old} vs {v_new}).",
+                            "rationale": f"Conflicting {field} across sources ({v_old} [{match.get('source_tier')}] vs {v_new} [{rec_tier}]).",
                             "needs_author_confirmation": True,
                         }
                     )
-            # Enrich missing fields
+            # Enrich missing fields from secondary record
             for field in ("authors", "year", "title", "venue", "doi_or_id", "abstract_or_notes"):
                 src_k = "abstract" if field == "abstract_or_notes" else field
                 if not match.get(field) and rec.get(src_k):
@@ -498,11 +707,11 @@ def main() -> None:
             known_keys.add(f"{r['first_author_surname']}{r['year']}".lower())
 
     for dloc, dtxt in draft_texts:
-        for pat in CLICHE_PATTERNS:
+        for pat in cliche_patterns:
             for cm in re.finditer(pat, dtxt, re.I):
                 draft_audit["cliches_detected"].append({"locator": dloc, "phrase": cm.group(0)})
         for dm in re.finditer(r"\[(\d+)\s*[-–]\s*(\d+)\]", dtxt):
-            if int(dm.group(2)) - int(dm.group(1)) >= 2:
+            if int(dm.group(2)) - int(dm.group(1)) + 1 >= 4:
                 draft_audit["citation_dumps"].append({"locator": dloc, "marker": dm.group(0)})
         for mk in _extract_draft_citations(dtxt):
             if mk.startswith("[") and "-" in mk:
@@ -523,6 +732,9 @@ def main() -> None:
     if not own_paper_snippets and not figure_table_mentions:
         g_idx += 1
         pre_gaps.append({"gap_id": f"GAP-{g_idx:02d}", "issue": "missing_own_paper_evidence", "detail": "No own-paper methods, figures, tables, or experimental metrics found in /input/."})
+    for mref in plan.get("missing_referenced_files") or []:
+        g_idx += 1
+        pre_gaps.append({"gap_id": f"GAP-{g_idx:02d}", "issue": "missing_referenced_file", "detail": f"File '{mref}' referenced in case.json does not exist in /input/."})
     for r in catalog:
         if r["missing_metadata_fields"]:
             g_idx += 1
@@ -540,15 +752,17 @@ def main() -> None:
         "own_paper_evidence": own_paper_snippets,
         "figure_table_mentions": figure_table_mentions,
         "literature_snippets": literature_snippets,
+        "draft_texts": [{"locator": loc, "text": txt[:4000]} for loc, txt in draft_texts],
         "draft_audit": draft_audit,
         "conflicts": conflicts,
         "pre_gaps": pre_gaps,
         "grounded_numbers_index": grounded_numbers,
+        "missing_referenced_files": plan.get("missing_referenced_files") or [],
         "access_warnings": warnings,
     }
     save_json(Path(args.out_ledger), ledger)
 
-    # 6. Write compact evidence_digest.md
+    # 6. Write compact evidence_digest.md including literature snippets, figures/tables, drafts, and missing files
     dlines: List[str] = [
         f"# Evidence Digest (`{plan['case_id']}`)",
         "",
@@ -563,35 +777,60 @@ def main() -> None:
         for r in catalog:
             miss_s = f" | MISSING: {r['missing_metadata_fields']}" if r["missing_metadata_fields"] else ""
             dlines.append(
-                f"- **{r['ref_id']} (`{r['cite_key']}`)** [{r['recency_role']}]: {r['authors'] or '?'} ({r['year'] or '?'}). "
-                f"*{r['title'] or '?'}*. {r['venue'] or '?'}. DOI/ID: `{r['doi_or_id'] or 'N/A'}` | Locators: `{r['source_locators']}`{miss_s}"
+                f"- **{r['ref_id']} (`{r['cite_key']}`)** [{r['recency_role']} | `{r.get('source_tier', 'source')}`]: "
+                f"{r['authors'] or '?'} ({r['year'] or '?'}). *{r['title'] or '?'}*. {r['venue'] or '?'}. "
+                f"DOI/ID: `{r['doi_or_id'] or 'N/A'}` | Locators: `{r['source_locators']}`{miss_s}"
             )
             if r.get("abstract_or_notes"):
-                dlines.append(f"  - *Notes*: {r['abstract_or_notes'][:320]}")
+                dlines.append(f"  - *Notes/Abstract*: {r['abstract_or_notes'][:420]}")
     else:
         dlines.append("- *NONE FOUND — do NOT fabricate references.*")
 
+    if literature_snippets:
+        dlines.extend(["", f"## 2b. Literature & Notes Source Excerpts ({len(literature_snippets)} files)"])
+        for lsn in literature_snippets[:10]:
+            dlines.append(f"### `{lsn['file']}` ({lsn['line_count']} lines)")
+            dlines.extend(lsn.get("preview_lines", [])[:15])
+            dlines.append("")
+
     dlines.extend(["", f"## 3. Own-Paper Evidence ({len(own_paper_snippets)} snippets, {len(figure_table_mentions)} fig/table markers)"])
-    for sn in own_paper_snippets[:12]:
+    for sn in own_paper_snippets[:15]:
         dlines.append(f"### `{sn['locator']}`")
-        dlines.append(sn["text"][:900])
+        dlines.append(sn["text"][:2200])
         dlines.append("")
-    if not own_paper_snippets:
+    if figure_table_mentions:
+        seen_ft = set()
+        ft_strs: List[str] = []
+        for ft in figure_table_mentions:
+            k = (ft.get("marker", ""), ft.get("locator", ""))
+            if k not in seen_ft:
+                seen_ft.add(k)
+                ft_strs.append(f"`{k[0]}` ({k[1]})")
+        dlines.append(f"- **Detected Figures/Tables**: {', '.join(ft_strs[:25])}")
+    if not own_paper_snippets and not figure_table_mentions:
         dlines.append("- *No own-paper experimental/method files discovered.*")
 
     if draft_texts:
-        dlines.extend(["", "## 4. Existing Draft Audit"])
+        dlines.extend(["", "## 4. Existing Draft Excerpt & Audit"])
         dlines.append(f"- Clichés detected: `{draft_audit['cliches_detected']}`")
         dlines.append(f"- Citation dumps detected: `{draft_audit['citation_dumps']}`")
         dlines.append(f"- Unresolved citations: `{draft_audit['unresolved_citations']}`")
+        for dloc, dtxt in draft_texts[:3]:
+            dlines.append(f"### Draft `{dloc}`")
+            dlines.append(dtxt[:2000])
+            dlines.append("")
 
     dlines.extend(["", f"## 5. Conflicts ({len(conflicts)}) & Pre-Audit Gaps ({len(pre_gaps)})"])
     for c in conflicts:
         dlines.append(f"- **{c['conflict_id']}**: {c['item']} -> {c['rationale']}")
     for g in pre_gaps:
         dlines.append(f"- **{g['gap_id']}** (`{g['issue']}`): {g['detail']}")
-    if warnings:
-        dlines.extend(["", "## 6. File Access Warnings"])
+
+    missing_files = plan.get("missing_referenced_files") or []
+    if missing_files or warnings:
+        dlines.extend(["", "## 6. Missing Referenced Files & Access Warnings"])
+        for mf in missing_files:
+            dlines.append(f"- `missing_referenced_file:{mf}`")
         for w in warnings:
             dlines.append(f"- `{w}`")
 
@@ -606,6 +845,7 @@ def main() -> None:
         {
             "ref_id": r["ref_id"],
             "cite_key": r.get("cite_key") or r["ref_id"],
+            "entry_type": r.get("entry_type") or "article",
             "authors": r.get("authors") or "",
             "year": r.get("year") or "",
             "title": r.get("title") or "",
@@ -629,8 +869,8 @@ def main() -> None:
             loc, sev = "references", "important"
         elif iss == "unspecified_citation_style":
             loc, sev = "global_format", "recommended"
-        elif iss == "missing_own_paper_evidence":
-            loc, sev = "global_own_paper", "important"
+        elif iss in ("missing_own_paper_evidence", "missing_referenced_file"):
+            loc, sev = "global_own_paper" if iss == "missing_own_paper_evidence" else "global_inputs", "important"
         elif iss in ("empty_literature_library", "unresolved_draft_citation"):
             loc = "manuscript_draft" if iss == "unresolved_draft_citation" else "global_literature"
             sev = "critical"
@@ -672,7 +912,7 @@ def main() -> None:
         "conflicts": conflicts,
         "author_confirmation_items": skeleton_confirm,
         "change_records": [],
-        "uncertainty": list(warnings),
+        "uncertainty": list(warnings) + [f"missing_referenced_file:{mf}" for mf in missing_files],
         "contract_overrides": {},
     }
     save_json(out_skel, skeleton)

@@ -11,11 +11,12 @@ Produces:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -23,30 +24,122 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from common import (
     ensure_dir,
+    extract_tex_commands,
     has_cjk,
     load_json_safe,
     read_text_safe,
     resolve_skill_dir,
     run_cmd,
+    sanitize_tex_for_scan,
     save_json,
     sha256_file,
     strip_tex_comments_preserve_lines,
     which_tool,
 )
 
+# TeX Live / MiKTeX env vars preventing 79-column .log wrapping (LaTeX-Workshop / Tectonic best practice)
+TEX_LOG_ENV = {
+    "max_print_line": "10000",
+    "error_line": "254",
+    "half_error_line": "238",
+}
+
 RERUN_PATTERNS = (
     "Rerun to get cross-references right",
     "Rerun to get outlines right",
+    "Rerun to get citations correct",
+    "Rerun to get bibliographical references right",
+    "Label(s) may have changed",
+    "There were undefined references",
     "Rerun LaTeX",
+    "Please rerun LaTeX",
     "Please (re)run Biber",
+    "Please (re)run BibTeX",
     "Table widths have changed. Rerun LaTeX",
 )
 
+BIB_RERUN_PATTERNS = (
+    "Please (re)run Biber",
+    "Please (re)run BibTeX",
+)
 
-def detect_engine_and_bib(tex_path: Path, engine_arg: str, bib_arg: str) -> Tuple[str, str]:
-    """Choose TeX engine and bibliography backend from source preamble if 'auto'."""
-    text, _ = read_text_safe(tex_path)
-    clean = strip_tex_comments_preserve_lines(text)
+
+def _build_tex_search_env(project_root: Path, build_dir: Path) -> Dict[str, str]:
+    """Export TEXINPUTS/BIBINPUTS/BSTINPUTS covering project_root subdirectories + log formatting env."""
+    env = dict(TEX_LOG_ENV)
+    tex_dirs: List[str] = []
+    bib_dirs: List[str] = []
+    bst_dirs: List[str] = []
+
+    def _add(lst: List[str], d: Path) -> None:
+        s = str(d.resolve())
+        if s not in lst:
+            lst.append(s)
+
+    if project_root.is_dir():
+        _add(tex_dirs, project_root)
+        _add(bib_dirs, project_root)
+        _add(bst_dirs, project_root)
+        for p in sorted(project_root.rglob("*")):
+            if not p.is_file():
+                continue
+            if any(part.startswith("_fallback") or part in {".git", "__pycache__"} for part in p.parts):
+                continue
+            ext = p.suffix.lower()
+            if ext in {".cls", ".sty", ".def", ".clo", ".tex", ".ltx", ".bbx", ".cbx", ".lbx", ".cfg", ".fd"}:
+                _add(tex_dirs, p.parent)
+            if ext == ".bib":
+                _add(bib_dirs, p.parent)
+            if ext == ".bst":
+                _add(bst_dirs, p.parent)
+
+    sep = os.pathsep
+    if len(tex_dirs) > 1 or project_root.resolve() != build_dir.resolve():
+        env["TEXINPUTS"] = sep.join(["."] + tex_dirs) + sep
+        env["BIBINPUTS"] = sep.join(["."] + bib_dirs) + sep
+        env["BSTINPUTS"] = sep.join(["."] + bst_dirs) + sep
+    return env
+
+
+def _collect_reachable_tex(tex_path: Path, project_root: Path, max_depth: int = 4) -> str:
+    """Walk \\input/\\include/\\subfile graph up to max_depth (cycle-safe) and return combined sanitized text."""
+    visited: Set[Path] = set()
+    chunks: List[str] = []
+
+    def _walk(cur: Path, depth: int) -> None:
+        res_cur = cur.resolve()
+        if res_cur in visited or depth > max_depth or not res_cur.is_file():
+            return
+        visited.add(res_cur)
+        txt, err = read_text_safe(res_cur)
+        if err:
+            return
+        clean = sanitize_tex_for_scan(txt)
+        chunks.append(clean)
+        for inc in extract_tex_commands(clean, ("input", "include", "subfile"), strip_comments=False):
+            tgt = inc["arg"]
+            if not tgt:
+                continue
+            cands = [tgt] if Path(tgt).suffix else [tgt, tgt + ".tex"]
+            for base in (res_cur.parent, project_root):
+                found = None
+                for cn in cands:
+                    p = (base / cn).resolve()
+                    if p.is_file():
+                        found = p
+                        break
+                if found:
+                    _walk(found, depth + 1)
+                    break
+
+    _walk(tex_path, 0)
+    return "\n".join(chunks)
+
+
+def detect_engine_and_bib(tex_path: Path, engine_arg: str, bib_arg: str, project_root: Optional[Path] = None) -> Tuple[str, str]:
+    """Choose TeX engine and bibliography backend across entry + \\input/\\include graph if 'auto'."""
+    root = project_root or tex_path.parent
+    clean = _collect_reachable_tex(tex_path, root)
 
     if engine_arg != "auto":
         engine = engine_arg
@@ -61,8 +154,10 @@ def detect_engine_and_bib(tex_path: Path, engine_arg: str, bib_arg: str) -> Tupl
     if bib_arg != "auto":
         bib_tool = bib_arg
     else:
-        if re.search(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*biblatex", clean) or r"\addbibresource" in clean:
-            bib_tool = "biber"
+        m_bl = re.search(r"\\usepackage(?:\[([^\]]*)\])?\{[^}]*biblatex", clean)
+        if m_bl or r"\addbibresource" in clean:
+            bl_opts = (m_bl.group(1) if m_bl and m_bl.group(1) else "").lower()
+            bib_tool = "bibtex" if "backend=bibtex" in bl_opts else "biber"
         elif r"\bibliography{" in clean or r"\bibliographystyle{" in clean:
             bib_tool = "bibtex"
         else:
@@ -72,22 +167,35 @@ def detect_engine_and_bib(tex_path: Path, engine_arg: str, bib_arg: str) -> Tupl
 
 
 def hash_aux_state(build_dir: Path, stem: str) -> Dict[str, str]:
-    """Hash auxiliary files to detect multi-pass convergence accurately."""
+    """Recursively hash root + child \\include .aux files and control files (Tectonic convergence pattern)."""
     state: Dict[str, str] = {}
     for ext in (".aux", ".toc", ".lof", ".lot", ".out", ".bbl", ".bcf", ".nav", ".snm"):
         p = build_dir / f"{stem}{ext}"
         if p.is_file():
             state[ext] = sha256_file(p)
+    for aux_p in sorted(build_dir.rglob("*.aux")):
+        if any(part.startswith("_fallback") for part in aux_p.parts):
+            continue
+        rel = aux_p.relative_to(build_dir).as_posix()
+        state[f"aux:{rel}"] = sha256_file(aux_p)
     return state
 
 
 def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) -> Dict[str, Any]:
-    """Parse TeX .log with file-stack tracking, file:line errors, warnings, and cascade clustering."""
+    """Parse TeX .log with balanced paren file-stack tracking, file:line errors, warnings, and cascade clustering."""
     rules = taxonomy.get("rules", [])
     compiled_rules = [(r, re.compile(r["pattern"])) for r in rules]
 
     lines = log_text.splitlines()
-    file_stack: List[str] = [default_file]
+    # Balanced paren stack: push tracked file path or None for untracked parens so single-line opens & .fd/.cfg never corrupt stack
+    paren_stack: List[Optional[str]] = [default_file]
+
+    def _current_file() -> str:
+        for item in reversed(paren_stack):
+            if item:
+                return item
+        return default_file
+
     raw_issues: List[Dict[str, Any]] = []
     missing_chars: List[str] = []
     overfull_hboxes: List[Dict[str, Any]] = []
@@ -97,17 +205,28 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
     loaded_packages: List[str] = []
 
     i = 0
+    in_biblatex_missing_block = False
     while i < len(lines):
         line = lines[i]
 
-        # Track file opens/closes heuristically from TeX parens (only paths containing .tex/.sty/.cls/.bbl/.aux)
-        for token in re.findall(r"\(([^\s()\"']+\.(?:tex|ltx|sty|cls|def|bbl|aux))", line):
-            file_stack.append(token)
-        close_count = line.count(")")
-        open_count = line.count("(")
-        if close_count > open_count and len(file_stack) > 1:
-            for _ in range(min(close_count - open_count, len(file_stack) - 1)):
-                file_stack.pop()
+        # Update balanced paren file stack cleanly across line
+        pos_p = 0
+        llen = len(line)
+        while pos_p < llen:
+            ch = line[pos_p]
+            if ch == "(":
+                m_f = re.match(r"\"?([^\s()\"']+\.(?:tex|ltx|sty|cls|def|bbl|aux))\"?", line[pos_p + 1 :])
+                if m_f:
+                    paren_stack.append(m_f.group(1))
+                    pos_p += 1 + m_f.end()
+                    continue
+                paren_stack.append(None)
+            elif ch == ")":
+                if len(paren_stack) > 1:
+                    paren_stack.pop()
+            pos_p += 1
+
+        cur_file = _current_file()
 
         if line.startswith("Package: ") or line.startswith("Document Class: "):
             loaded_packages.append(line.strip())
@@ -120,8 +239,9 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
             overfull_hboxes.append(
                 {
                     "pt": float(om.group(1)),
-                    "file": file_stack[-1],
+                    "file": cur_file,
                     "line": line.strip(),
+                    "raw_line": line.strip(),
                 }
             )
 
@@ -130,30 +250,58 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
             overfull_vboxes.append(
                 {
                     "pt": float(vm.group(1)),
-                    "file": file_stack[-1],
+                    "file": cur_file,
                     "line": line.strip(),
+                    "raw_line": line.strip(),
                 }
             )
 
-        ur = re.search(r"Reference `([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
+        ur = re.search(r"Reference [`']([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
         if ur:
             undefined_references.append(
                 {
                     "key": ur.group(1),
                     "page": ur.group(2),
                     "line": int(ur.group(3)) if ur.group(3) else None,
-                    "file": file_stack[-1],
+                    "file": cur_file,
                 }
             )
 
-        uc = re.search(r"Citation `([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
+        # Match BOTH LaTeX/natbib (`key') and biblatex ('key') undefined citation warnings
+        uc = re.search(r"Citation [`']([^']+)' on page (\S+) undefined(?: on input line (\d+))?", line)
         if uc:
             undefined_citations.append(
                 {
                     "key": uc.group(1),
                     "page": uc.group(2),
                     "line": int(uc.group(3)) if uc.group(3) else None,
-                    "file": file_stack[-1],
+                    "file": cur_file,
+                }
+            )
+
+        # Multi-line biblatex missing entry block:
+        # Package biblatex Warning: The following entry could not be found
+        # (biblatex)                in the database:
+        # (biblatex)                missing_key
+        if "The following entry could not be found" in line:
+            in_biblatex_missing_block = True
+        elif in_biblatex_missing_block:
+            m_bl_cont = re.match(r"^\(biblatex\)\s+(.+)$", line)
+            if m_bl_cont:
+                tok_bl = m_bl_cont.group(1).strip()
+                if tok_bl and not tok_bl.startswith(("in the database", "Please verify", "and rerun")):
+                    undefined_citations.append({"key": tok_bl.lstrip("- "), "page": "?", "line": None, "file": cur_file})
+            else:
+                in_biblatex_missing_block = False
+
+        if "Empty bibliography on input line" in line or "Package biblatex Warning: Empty bibliography" in line:
+            lm_eb = re.search(r"on input line (\d+)", line)
+            undefined_citations.append(
+                {
+                    "key": "<empty_bibliography>",
+                    "page": "?",
+                    "line": int(lm_eb.group(1)) if lm_eb else None,
+                    "file": cur_file,
                 }
             )
 
@@ -163,7 +311,7 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
         warn_m = re.match(r"^(LaTeX(?:\s+Font)?|Package\s+\S+|Class\s+\S+|pdfTeX)\s+[Ww]arning:\s*(.+)$", line)
 
         snippet = ""
-        err_file = file_stack[-1]
+        err_file = cur_file
         err_line: Optional[int] = None
         msg = ""
         kind = None
@@ -189,7 +337,9 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
             kind = "warning"
             block = [line]
             j = i + 1
-            while j < len(lines) and j < i + 4 and lines[j].startswith("               "):
+            while j < len(lines) and j < i + 5 and (lines[j].startswith("               ") or lines[j].startswith("(")):
+                if lines[j].startswith("(") and not re.match(r"^\([A-Za-z0-9_-]+\)\s+", lines[j]):
+                    break
                 block.append(lines[j].strip())
                 j += 1
             snippet = " ".join(block)
@@ -225,7 +375,15 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
         iss
         for iss in raw_issues
         if iss["kind"] == "error"
-        and iss["rule_id"] in {"ERR-UNCLOSED-BRACE", "ERR-ENV-MISMATCH", "ERR-MISSING-STY-CLS", "ERR-FONT-NOT-FOUND", "ERR-AMBIGUOUS-TEX-OPT"}
+        and iss["rule_id"] in {
+            "ERR-UNCLOSED-BRACE",
+            "ERR-ENV-MISMATCH",
+            "ERR-MISSING-STY-CLS",
+            "ERR-FONT-NOT-FOUND",
+            "ERR-FONT-ENGINE-MISMATCH",
+            "ERR-AMBIGUOUS-TEX-OPT",
+            "ERR-MINTED-SHELL-ESCAPE",
+        }
     ]
     if root_causes:
         first_root = root_causes[0]
@@ -254,22 +412,33 @@ def parse_tex_log(log_text: str, taxonomy: Dict[str, Any], default_file: str) ->
     }
 
 
-def parse_fls_inputs(fls_path: Path) -> List[str]:
-    """Extract unique INPUT files from TeX -recorder .fls file."""
+def parse_fls_inputs(fls_path: Path, build_dir: Optional[Path] = None) -> List[str]:
+    """Extract unique INPUT files from TeX -recorder .fls file, prioritizing project-local files first."""
     if not fls_path.is_file():
         return []
     txt, err = read_text_safe(fls_path)
     if err:
         return []
-    inputs: List[str] = []
-    seen = set()
+    local_inputs: List[str] = []
+    system_inputs: List[str] = []
+    seen: Set[str] = set()
+    bdir_str = str(build_dir.resolve()).replace("\\", "/").lower() if build_dir else ""
     for line in txt.splitlines():
         if line.startswith("INPUT "):
             p = line[6:].strip()
             if p not in seen:
                 seen.add(p)
-                inputs.append(p)
-    return inputs[:200]
+                p_norm = p.replace("\\", "/")
+                is_local = (
+                    not p_norm.startswith("/")
+                    and not re.match(r"^[A-Za-z]:/", p_norm)
+                    or (bdir_str and p_norm.lower().startswith(bdir_str))
+                )
+                if is_local:
+                    local_inputs.append(p)
+                else:
+                    system_inputs.append(p)
+    return (local_inputs + system_inputs)[:500]
 
 
 def render_pdf_previews(pdf_path: Path, preview_dir: Path) -> Tuple[List[str], Dict[str, Any]]:
@@ -280,6 +449,7 @@ def render_pdf_previews(pdf_path: Path, preview_dir: Path) -> Tuple[List[str], D
         "pdf_exists": pdf_path.is_file(),
         "page_count": 0,
         "empty_pages": [],
+        "image_only_pages": [],
         "unresolved_markers": [],
         "overflow_findings": [],
         "renderer_used": None,
@@ -322,7 +492,11 @@ def render_pdf_previews(pdf_path: Path, preview_dir: Path) -> Tuple[List[str], D
 
             text = page.get_text("text")
             if not text.strip():
-                pdf_audit["empty_pages"].append(pno)
+                has_visual = bool(page.get_images(full=True)) or bool(page.get_drawings())
+                if has_visual:
+                    pdf_audit["image_only_pages"].append(pno)
+                else:
+                    pdf_audit["empty_pages"].append(pno)
             for marker in re.findall(r"(?:\?\?|\[?\?\]|Undefined control sequence)", text):
                 if marker in {"??", "[?]"}:
                     pdf_audit["unresolved_markers"].append({"page": pno, "marker": marker})
@@ -372,6 +546,18 @@ def _pick_installed_cjk_font() -> Optional[str]:
     return installed[0] if installed else None
 
 
+def _fandol_is_available() -> bool:
+    if which_tool("kpsewhich"):
+        res = run_cmd(["kpsewhich", "FandolSong-Regular.otf"], timeout=10)
+        if res["returncode"] == 0 and (res.get("stdout") or "").strip():
+            return True
+    if which_tool("fc-list"):
+        res = run_cmd(["fc-list", ":lang=zh", "family"], timeout=10)
+        if res["returncode"] == 0 and "fandol" in res.get("stdout", "").lower():
+            return True
+    return False
+
+
 def _run_multipass_engine(
     build_tex: Path,
     engine: str,
@@ -379,13 +565,19 @@ def _run_multipass_engine(
     taxonomy: Dict[str, Any],
     max_passes: int,
     timeout_sec: int,
+    bib_arg: str = "auto",
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute deterministic engine -> bib -> engine* convergence loop inside build_tex.parent."""
     build_dir = build_tex.parent
     stem = build_tex.stem
     commands_executed: List[Dict[str, Any]] = []
-    eng_flags = ["-interaction=nonstopmode", "-file-line-error", "-recorder"]
+    eng_flags = ["-no-shell-escape", "-interaction=nonstopmode", "-file-line-error", "-recorder"]
+    run_env = dict(TEX_LOG_ENV)
+    if extra_env:
+        run_env.update(extra_env)
 
+    # Clean root and child .aux files cleanly (excluding _fallback* scratch dirs)
     for stale_ext in (".aux", ".bcf", ".bbl", ".blg", ".toc", ".out", ".pdf"):
         sp = build_dir / f"{stem}{stale_ext}"
         if sp.is_file():
@@ -393,6 +585,13 @@ def _run_multipass_engine(
                 sp.unlink()
             except OSError:
                 pass
+    for child_aux in build_dir.rglob("*.aux"):
+        if any(part.startswith("_fallback") for part in child_aux.parts):
+            continue
+        try:
+            child_aux.unlink()
+        except OSError:
+            pass
 
     eng_version = ""
     if which_tool(engine):
@@ -400,7 +599,7 @@ def _run_multipass_engine(
         eng_version = ((ver_res.get("stdout") or ver_res.get("stderr") or "").splitlines() or [""])[0].strip()
 
     cmd1 = [engine, *eng_flags, build_tex.name]
-    r1 = run_cmd(cmd1, cwd=build_dir, timeout=timeout_sec)
+    r1 = run_cmd(cmd1, cwd=build_dir, timeout=timeout_sec, env=run_env)
     commands_executed.append({"step": "pass_1", "cmd": " ".join(cmd1), "returncode": r1["returncode"], "timed_out": r1["timed_out"], "not_found": r1["not_found"]})
 
     if r1["not_found"]:
@@ -409,6 +608,7 @@ def _run_multipass_engine(
             "engine": engine,
             "engine_version": eng_version,
             "run_bib_tool": None,
+            "bib_error": False,
             "commands_executed": commands_executed,
             "converged": False,
             "diagnosis": {
@@ -429,42 +629,90 @@ def _run_multipass_engine(
             "pdf_path": build_dir / f"{stem}.pdf",
         }
 
+    log_path = build_dir / f"{stem}.log"
+    pdf_out = build_dir / f"{stem}.pdf"
+    log1_txt, _ = read_text_safe(log_path)
+    diag1 = parse_tex_log(log1_txt, taxonomy, build_tex.name)
+    fatal_rule_ids = {"ERR-MISSING-STY-CLS", "ERR-FONT-ENGINE-MISMATCH", "ERR-MINTED-SHELL-ESCAPE", "ERR-AMBIGUOUS-TEX-OPT"}
+    pass1_fatal_no_pdf = (
+        r1["returncode"] != 0
+        and not pdf_out.is_file()
+        and (any(e.get("rule_id") in fatal_rule_ids for e in diag1["errors"]) or "Emergency stop" in log1_txt)
+    )
+    if pass1_fatal_no_pdf or max_passes <= 1:
+        fls_inputs = parse_fls_inputs(build_dir / f"{stem}.fls", build_dir=build_dir)
+        return {
+            "not_found": False,
+            "engine": engine,
+            "engine_version": eng_version,
+            "run_bib_tool": None,
+            "bib_error": False,
+            "commands_executed": commands_executed,
+            "converged": False,
+            "diagnosis": diag1,
+            "bib_diagnostics": [],
+            "fls_inputs": fls_inputs,
+            "pdf_path": pdf_out,
+        }
+
     bib_diagnostics: List[str] = []
+    bib_error = False
     bcf_file = build_dir / f"{stem}.bcf"
     aux_file = build_dir / f"{stem}.aux"
     aux_txt, _ = read_text_safe(aux_file)
     run_bib_tool = None
-    if bib_tool == "biber" or bcf_file.is_file():
-        run_bib_tool = "biber"
-    elif bib_tool == "bibtex" or r"\bibdata{" in aux_txt:
-        run_bib_tool = "bibtex"
+    # Strictly honor --bib none
+    if bib_arg != "none" and bib_tool != "none":
+        if bib_tool == "biber" or (bib_arg == "auto" and bcf_file.is_file()):
+            run_bib_tool = "biber"
+        elif bib_tool == "bibtex" or (bib_arg == "auto" and r"\bibdata{" in aux_txt):
+            run_bib_tool = "bibtex"
 
-    if run_bib_tool:
+    def _invoke_bib(step_label: str) -> None:
+        nonlocal bib_error
+        if not run_bib_tool:
+            return
         if which_tool(run_bib_tool):
             bcmd = [run_bib_tool, stem]
-            rb = run_cmd(bcmd, cwd=build_dir, timeout=timeout_sec)
-            commands_executed.append({"step": "bib_pass", "cmd": " ".join(bcmd), "returncode": rb["returncode"], "timed_out": rb["timed_out"], "not_found": rb["not_found"]})
+            rb = run_cmd(bcmd, cwd=build_dir, timeout=timeout_sec, env=run_env)
+            commands_executed.append({"step": step_label, "cmd": " ".join(bcmd), "returncode": rb["returncode"], "timed_out": rb["timed_out"], "not_found": rb["not_found"]})
+            if rb["returncode"] != 0 or rb["timed_out"]:
+                bib_error = True
             blg_txt, _ = read_text_safe(build_dir / f"{stem}.blg")
             for bl in (blg_txt + "\n" + rb["stdout"] + "\n" + rb["stderr"]).splitlines():
-                if any(k in bl for k in ("ERROR", "WARN", "Warning--", "I found no", "Repeated entry", "Illegal")):
-                    bib_diagnostics.append(bl.strip())
+                s_bl = bl.strip()
+                if any(k in s_bl for k in ("ERROR", "WARN", "Warning--", "I found no", "Repeated entry", "Illegal")):
+                    if s_bl not in bib_diagnostics:
+                        bib_diagnostics.append(s_bl)
+                if any(k in s_bl for k in ("ERROR -", "I found no", "Illegal", "syntax error")):
+                    bib_error = True
         else:
+            bib_error = True
             bib_diagnostics.append(f"Bibliography tool '{run_bib_tool}' not installed on PATH.")
+
+    bib_runs = 0
+    if run_bib_tool:
+        _invoke_bib("bib_pass")
+        bib_runs = 1
 
     prev_aux_hash = hash_aux_state(build_dir, stem)
     converged = False
-    max_extra = max(2, max_passes - 1)
-    if run_bib_tool and max_extra < 3:
-        max_extra = 3
+    # Strictly honor max_passes (pass_1 already executed; remaining passes = max_passes - 1)
+    max_total_passes = max(1, max_passes)
 
-    log_path = build_dir / f"{stem}.log"
-    for p_idx in range(2, 2 + max_extra):
+    for p_idx in range(2, max_total_passes + 1):
         cmd_n = [engine, *eng_flags, build_tex.name]
-        rn = run_cmd(cmd_n, cwd=build_dir, timeout=timeout_sec)
+        rn = run_cmd(cmd_n, cwd=build_dir, timeout=timeout_sec, env=run_env)
         commands_executed.append({"step": f"pass_{p_idx}", "cmd": " ".join(cmd_n), "returncode": rn["returncode"], "timed_out": rn["timed_out"], "not_found": rn["not_found"]})
         new_aux_hash = hash_aux_state(build_dir, stem)
         log_txt, _ = read_text_safe(log_path)
         rerun_needed = any(p in log_txt for p in RERUN_PATTERNS)
+        # Tectonic-style: if Biber/BibTeX rerun requested inside loop, re-run bib tool (capped at 2)
+        if run_bib_tool and bib_runs < 2 and any(p in log_txt for p in BIB_RERUN_PATTERNS) and p_idx < max_total_passes:
+            _invoke_bib(f"bib_pass_{bib_runs + 1}")
+            bib_runs += 1
+            prev_aux_hash = hash_aux_state(build_dir, stem)
+            continue
         if rn["returncode"] == 0 and new_aux_hash == prev_aux_hash and not rerun_needed and (not run_bib_tool or p_idx >= 3):
             converged = True
             break
@@ -474,19 +722,71 @@ def _run_multipass_engine(
 
     log_txt, _ = read_text_safe(log_path)
     diagnosis = parse_tex_log(log_txt, taxonomy, build_tex.name)
-    fls_inputs = parse_fls_inputs(build_dir / f"{stem}.fls")
+    fls_inputs = parse_fls_inputs(build_dir / f"{stem}.fls", build_dir=build_dir)
     return {
         "not_found": False,
         "engine": engine,
         "engine_version": eng_version,
         "run_bib_tool": run_bib_tool,
+        "bib_error": bib_error,
         "commands_executed": commands_executed,
         "converged": converged,
         "diagnosis": diagnosis,
         "bib_diagnostics": bib_diagnostics,
         "fls_inputs": fls_inputs,
-        "pdf_path": build_dir / f"{stem}.pdf",
+        "pdf_path": pdf_out,
     }
+
+
+def _sync_project_to_work(src_root: Path, work_dir: Path) -> None:
+    """Mirror src_root into work_dir cleanly (removing stale files from prior iterations and avoiding self-copy)."""
+    src_res = src_root.resolve()
+    wrk_res = work_dir.resolve()
+    if src_res == wrk_res:
+        return
+    # Clean stale entries in work_dir (except if src_root is inside work_dir)
+    src_inside_work = False
+    try:
+        src_res.relative_to(wrk_res)
+        src_inside_work = True
+    except ValueError:
+        pass
+    work_inside_src = False
+    try:
+        wrk_res.relative_to(src_res)
+        work_inside_src = True
+    except ValueError:
+        pass
+
+    if not src_inside_work:
+        for child in list(wrk_res.iterdir()):
+            if child.name.startswith("_fallback"):
+                shutil.rmtree(child, ignore_errors=True)
+            elif child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+
+    for root, dirs, filenames in os.walk(src_res):
+        cur_p = Path(root)
+        dirs[:] = [
+            d for d in sorted(dirs)
+            if d not in {".git", "__pycache__"}
+            and not d.startswith("_fallback")
+            and not (work_inside_src and (cur_p / d).resolve() == wrk_res)
+        ]
+        rel_root = cur_p.relative_to(src_res)
+        for fname in sorted(filenames):
+            sfile = cur_p / fname
+            dfile = wrk_res / rel_root / fname
+            ensure_dir(dfile.parent)
+            try:
+                shutil.copy2(sfile, dfile)
+            except (OSError, shutil.Error):
+                pass
 
 
 def compile_project(
@@ -499,33 +799,38 @@ def compile_project(
     max_passes: int = 5,
     timeout_sec: int = 60,
     auto_fallback: bool = True,
+    project_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Copy project to writable work_dir if external, run multi-pass build, diagnose & preview."""
+    """Copy full project tree to writable work_dir if external, run multi-pass build, diagnose & preview."""
     tex_path = tex_path.resolve()
     work_dir = ensure_dir(work_dir.resolve())
     taxonomy = load_json_safe(skill_dir / "resources" / "error_taxonomy.json", default={}) or {}
 
-    # Stage inside work_dir unless already under work_dir
+    # Determine project root & stage full project tree preserving subdirectory hierarchy
+    src_root = project_root.resolve() if project_root else tex_path.parent
+    try:
+        rel_from_root = tex_path.relative_to(src_root)
+    except ValueError:
+        src_root = tex_path.parent
+        rel_from_root = Path(tex_path.name)
+
     try:
         rel_inside = tex_path.relative_to(work_dir)
         build_tex = tex_path
+        staged_root = work_dir
     except ValueError:
-        src_root = tex_path.parent
-        for item in src_root.iterdir():
-            dest = work_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest)
-        build_tex = work_dir / tex_path.name
-        rel_inside = Path(tex_path.name)
+        _sync_project_to_work(src_root, work_dir)
+        build_tex = (work_dir / rel_from_root).resolve()
+        rel_inside = rel_from_root
+        staged_root = work_dir
 
     build_dir = build_tex.parent
-    engine, bib_tool = detect_engine_and_bib(build_tex, engine_arg, bib_arg)
+    search_env = _build_tex_search_env(staged_root, build_dir)
+    engine, bib_tool = detect_engine_and_bib(build_tex, engine_arg, bib_arg, project_root=staged_root)
     fallback_notes: List[str] = []
     fallback_preview_used = False
 
-    run_res = _run_multipass_engine(build_tex, engine, bib_tool, taxonomy, max_passes, timeout_sec)
+    run_res = _run_multipass_engine(build_tex, engine, bib_tool, taxonomy, max_passes, timeout_sec, bib_arg=bib_arg, extra_env=search_env)
     if run_res["not_found"]:
         return {
             "schema_version": "1.0",
@@ -533,6 +838,7 @@ def compile_project(
             "engine": engine,
             "engine_version": run_res["engine_version"],
             "bib_tool": bib_tool,
+            "bib_error": False,
             "tex_file": str(rel_inside.as_posix()),
             "pdf_path": None,
             "previews": [],
@@ -543,11 +849,11 @@ def compile_project(
             "fallback_preview_used": False,
             "log_diagnosis": run_res["diagnosis"],
             "bib_diagnostics": [],
-            "pdf_audit": {"pdf_exists": False, "page_count": 0, "empty_pages": [], "unresolved_markers": [], "overflow_findings": []},
-            "reproducibility_manifest": {"engine": engine, "engine_version": run_res["engine_version"], "bib_tool": bib_tool, "commands": [c["cmd"] for c in run_res["commands_executed"]], "fls_inputs": []},
+            "pdf_audit": {"pdf_exists": False, "page_count": 0, "empty_pages": [], "image_only_pages": [], "unresolved_markers": [], "overflow_findings": []},
+            "reproducibility_manifest": {"engine": engine, "engine_version": run_res["engine_version"], "bib_tool": bib_tool, "pass_count": 0, "commands": [c["cmd"] for c in run_res["commands_executed"]], "fls_inputs": []},
         }
 
-    # Auto-fallback 1: pdflatex hit UTF-8/CJK/glyph error -> retry cleanly with xelatex
+    # Auto-fallback 1: pdflatex hit UTF-8/CJK/fontspec error -> retry non-destructively in isolated _fallback_xelatex dir
     diag = run_res["diagnosis"]
     rule_ids = {e.get("rule_id") for e in diag["errors"]}
     if (
@@ -555,47 +861,88 @@ def compile_project(
         and engine == "pdflatex"
         and engine_arg == "auto"
         and which_tool("xelatex")
-        and ("ERR-UTF8-INPUTENC" in rule_ids or bool(diag["missing_characters"]))
+        and ("ERR-UTF8-INPUTENC" in rule_ids or "ERR-FONT-ENGINE-MISMATCH" in rule_ids or bool(diag["missing_characters"]))
     ):
-        xe_res = _run_multipass_engine(build_tex, "xelatex", bib_tool, taxonomy, max_passes, timeout_sec)
-        if not xe_res["not_found"] and (
-            len(xe_res["diagnosis"]["errors"]) < len(diag["errors"])
-            or (xe_res["pdf_path"].is_file() and not run_res["pdf_path"].is_file())
-            or (not xe_res["diagnosis"]["missing_characters"] and bool(diag["missing_characters"]))
-        ):
+        xe_dir = work_dir / "_fallback_xelatex"
+        if xe_dir.exists():
+            shutil.rmtree(xe_dir, ignore_errors=True)
+        shutil.copytree(staged_root, xe_dir, ignore=shutil.ignore_patterns("_fallback*", "*.aux", "*.log", "*.pdf", "*.fls"))
+        xe_tex = (xe_dir / rel_inside).resolve()
+        xe_env = _build_tex_search_env(xe_dir, xe_tex.parent)
+        xe_res = _run_multipass_engine(xe_tex, "xelatex", bib_tool, taxonomy, max_passes, timeout_sec, bib_arg=bib_arg, extra_env=xe_env)
+        improved = not xe_res["not_found"] and (
+            (xe_res["pdf_path"].is_file() and not run_res["pdf_path"].is_file())
+            or (xe_res["pdf_path"].is_file() and len(xe_res["diagnosis"]["errors"]) < len(diag["errors"]))
+            or (xe_res["pdf_path"].is_file() and not xe_res["diagnosis"]["missing_characters"] and bool(diag["missing_characters"]))
+        )
+        if improved:
+            # Promote xelatex PDF/aux/log back to build_dir safely
+            for ext_copy in (".pdf", ".log", ".fls", ".aux", ".bbl", ".blg"):
+                src_art = xe_tex.parent / f"{xe_tex.stem}{ext_copy}"
+                if src_art.is_file():
+                    shutil.copy2(src_art, build_dir / src_art.name)
+            xe_res["pdf_path"] = build_dir / f"{build_tex.stem}.pdf"
             run_res = xe_res
             engine = "xelatex"
             diag = run_res["diagnosis"]
             rule_ids = {e.get("rule_id") for e in diag["errors"]}
-            fallback_notes.append("Auto-fallback: switched engine from pdflatex to xelatex due to UTF-8/CJK glyph errors.")
+            fallback_notes.append("Auto-fallback: switched engine from pdflatex to xelatex in isolated scratch dir due to UTF-8/CJK/fontspec errors.")
 
     pdf_path = run_res["pdf_path"]
     commands_executed = run_res["commands_executed"]
     converged = run_res["converged"]
     bib_diagnostics = run_res["bib_diagnostics"]
+    bib_error = bool(run_res.get("bib_error"))
     fls_inputs = run_res["fls_inputs"]
     eng_version = run_res["engine_version"]
     run_bib_tool = run_res["run_bib_tool"]
 
-    # Auto-fallback 2: missing CJK font or non-mandatory .sty prevented PDF generation -> build non-destructive preview copy
+    # Auto-fallback 2: missing CJK font or non-mandatory .sty prevented clean PDF -> build non-destructive preview copy
     if auto_fallback and (not pdf_path.is_file() or "ERR-FONT-NOT-FOUND" in rule_ids or bool(diag["missing_characters"])):
         fb_dir = work_dir / "_fallback_preview"
         if fb_dir.exists():
             shutil.rmtree(fb_dir, ignore_errors=True)
-        shutil.copytree(build_dir, fb_dir, ignore=shutil.ignore_patterns("_fallback_preview", "*.aux", "*.log", "*.pdf", "*.fls"))
-        fb_tex = fb_dir / build_tex.name
+        shutil.copytree(staged_root, fb_dir, ignore=shutil.ignore_patterns("_fallback*", "*.aux", "*.log", "*.pdf", "*.fls"))
+        fb_tex = (fb_dir / rel_inside).resolve()
         fb_src, _ = read_text_safe(fb_tex)
         patched = False
         if "ERR-FONT-NOT-FOUND" in rule_ids or bool(diag["missing_characters"]):
             cjk_font = _pick_installed_cjk_font()
+            fandol_ok = _fandol_is_available()
+            new_src = fb_src
             if cjk_font:
-                new_src = re.sub(r"\\setCJKmainfont(?:\[[^\]]*\])?\{[^}]+\}", f"\\\\setCJKmainfont{{{cjk_font}}}", fb_src)
-                if new_src == fb_src and re.search(r"\\documentclass(?:\[[^\]]*\])?\{ctex", fb_src):
-                    new_src = re.sub(r"\\documentclass(?:\[([^\]]*)\])?\{(ctex\w+)\}", lambda m: f"\\documentclass[UTF8,fontset=fandol]{{{m.group(2)}}}", fb_src, count=1)
+                # Patch explicit CJK font commands
+                new_src = re.sub(r"\\setCJK(?:main|sans|mono)font(?:\[[^\]]*\])?\{[^}]+\}", lambda m: f"{m.group(0).split('{')[0]}{{{cjk_font}}}", new_src)
+                # Patch \documentclass[...]{ctex*} preserving existing options
+                if re.search(r"\\documentclass(?:\[[^\]]*\])?\{ctex", new_src):
+                    if fandol_ok and "fandol" in cjk_font.lower():
+                        font_opt = "fontset=fandol"
+                        inject_cmd = ""
+                    else:
+                        font_opt = "fontset=none"
+                        inject_cmd = f"\n\\setCJKmainfont{{{cjk_font}}}\n"
+
+                    def _patch_ctex_dc(m: re.Match) -> str:
+                        opts_raw = m.group(1) or ""
+                        opts = [o.strip() for o in opts_raw.split(",") if o.strip() and not o.strip().startswith("fontset=")]
+                        if "UTF8" not in opts:
+                            opts.insert(0, "UTF8")
+                        opts.append(font_opt)
+                        return f"\\documentclass[{','.join(opts)}]{{{m.group(2)}}}{inject_cmd}"
+
+                    new_src = re.sub(r"\\documentclass(?:\[([^\]]*)\])?\{(ctex\w+)\}", _patch_ctex_dc, new_src, count=1)
+                elif re.search(r"\\usepackage(?:\[[^\]]*\])?\{ctex\}", new_src):
+                    font_opt = "fontset=fandol" if (fandol_ok and "fandol" in cjk_font.lower()) else "fontset=none"
+                    inject_cmd = "" if font_opt == "fontset=fandol" else f"\n\\setCJKmainfont{{{cjk_font}}}\n"
+                    new_src = re.sub(r"\\usepackage(?:\[([^\]]*)\])?\{ctex\}", f"\\\\usepackage[UTF8,{font_opt}]{{ctex}}{inject_cmd}", new_src, count=1)
+                elif has_cjk(new_src) and "\\usepackage{xeCJK}" not in new_src and "\\setCJKmainfont" not in new_src:
+                    # Bare CJK inside standard article/IEEEtran -> inject xeCJK + verified system font
+                    new_src = new_src.replace("\\begin{document}", f"\\usepackage{{xeCJK}}\n\\setCJKmainfont{{{cjk_font}}}\n\\begin{{document}}", 1)
+
                 if new_src != fb_src:
                     fb_tex.write_text(new_src, encoding="utf-8")
                     patched = True
-                    fallback_notes.append(f"Diagnostic CJK font fallback tested with verified installed font '{cjk_font}' (update source .tex to adopt permanently).")
+                    fallback_notes.append(f"Diagnostic CJK font fallback tested with verified installed font '{cjk_font}' (fandol_available={fandol_ok}; update source .tex to adopt permanently).")
         if not patched and not pdf_path.is_file() and "ERR-MISSING-STY-CLS" in rule_ids:
             missing_stys = []
             for e in diag["errors"]:
@@ -611,21 +958,25 @@ def compile_project(
                     patched = True
                     fallback_notes.append(f"Diagnostic missing-.sty fallback preview attempted after commenting optional missing package(s): {missing_stys}.")
         if patched:
-            fb_res = _run_multipass_engine(fb_tex, "xelatex" if which_tool("xelatex") and (has_cjk(fb_tex.read_text(encoding="utf-8", errors="ignore")) or engine == "xelatex") else engine, bib_tool, taxonomy, 3, timeout_sec)
-            if fb_res["pdf_path"].is_file() and not pdf_path.is_file():
+            fb_env = _build_tex_search_env(fb_dir, fb_tex.parent)
+            fb_eng = "xelatex" if which_tool("xelatex") and (has_cjk(fb_tex.read_text(encoding="utf-8", errors="ignore")) or engine == "xelatex") else engine
+            fb_res = _run_multipass_engine(fb_tex, fb_eng, bib_tool, taxonomy, min(3, max_passes), timeout_sec, bib_arg=bib_arg, extra_env=fb_env)
+            fixes_glyphs = bool(diag["missing_characters"]) and not fb_res["diagnosis"]["missing_characters"]
+            if fb_res["pdf_path"].is_file() and (not pdf_path.is_file() or fixes_glyphs):
                 pdf_path = fb_res["pdf_path"]
                 fallback_preview_used = True
-                fallback_notes.append(f"Fallback preview PDF generated at {pdf_path.name}; fix primary .tex source before marking status='completed'.")
+                fallback_notes.append(f"Fallback preview PDF generated at {pdf_path.name} (fixes_missing_glyphs={fixes_glyphs}); fix primary .tex source before marking status='completed'.")
 
     previews, pdf_audit = render_pdf_previews(pdf_path, preview_dir)
 
     last_rc = commands_executed[-1]["returncode"]
-    if not converged and last_rc == 0 and not diag["errors"] and not diag["rerun_requested"]:
+    if not converged and last_rc == 0 and not diag["errors"] and not diag["rerun_requested"] and not bib_error:
         converged = True
 
     if (
         last_rc == 0
         and not diag["errors"]
+        and not bib_error
         and pdf_path.is_file()
         and not fallback_preview_used
         and not diag["missing_characters"]
@@ -639,18 +990,21 @@ def compile_project(
     else:
         status = "compile_failed"
 
+    pass_count = sum(1 for c in commands_executed if c["step"].startswith("pass_"))
     return {
         "schema_version": "1.0",
         "status": status,
         "engine": engine,
         "engine_version": eng_version,
         "bib_tool": run_bib_tool or "none",
+        "bib_error": bib_error,
         "tex_file": str(rel_inside.as_posix()),
         "build_dir": str(build_dir),
+        "project_root": str(staged_root),
         "pdf_path": str(pdf_path) if pdf_path.is_file() else None,
         "previews": previews,
         "converged": converged,
-        "pass_count": sum(1 for c in commands_executed if c["step"].startswith("pass_")),
+        "pass_count": pass_count,
         "commands_executed": commands_executed,
         "fallback_notes": fallback_notes,
         "fallback_preview_used": fallback_preview_used,
@@ -661,6 +1015,7 @@ def compile_project(
             "engine": engine,
             "engine_version": eng_version,
             "bib_tool": run_bib_tool or "none",
+            "pass_count": pass_count,
             "commands": [c["cmd"] for c in commands_executed],
             "converged": converged,
             "loaded_packages": diag["loaded_packages"],
@@ -716,7 +1071,7 @@ def render_compile_summary(report: Dict[str, Any]) -> str:
             lines.append(f"- {bd}")
         lines.append("")
 
-    if diag["missing_characters"] or pa.get("unresolved_markers") or pa.get("empty_pages"):
+    if diag["missing_characters"] or pa.get("unresolved_markers") or pa.get("empty_pages") or pa.get("overflow_findings"):
         lines.append("## PDF & Glyph Quality Alerts")
         for mc in diag["missing_characters"][:15]:
             lines.append(f"- Missing glyph: `{mc}`")
@@ -724,6 +1079,8 @@ def render_compile_summary(report: Dict[str, Any]) -> str:
             lines.append(f"- Unresolved marker on page {um['page']}: `{um['marker']}`")
         if pa.get("empty_pages"):
             lines.append(f"- Empty pages detected: {pa['empty_pages']}")
+        for ov in pa.get("overflow_findings", [])[:15]:
+            lines.append(f"- Right-margin visual overflow on page {ov['page']} (x1={ov['x1']}/{ov['page_width']}): `{ov['snippet']}`")
         lines.append("")
 
     lines.append("## Reproducible Command Sequence")
@@ -735,6 +1092,7 @@ def render_compile_summary(report: Dict[str, Any]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-pass LaTeX compile, error clustering, PDF audit, and preview generator.")
     parser.add_argument("--tex", required=True, help="Path to main .tex entry file.")
+    parser.add_argument("--project-root", default=None, help="Optional project root directory containing sibling assets/figures/styles.")
     parser.add_argument("--work-dir", default="/app/work/build", help="Writable build directory.")
     parser.add_argument("--preview-dir", default="/app/work/previews", help="Directory for rendered PNG page previews.")
     parser.add_argument("--skill-dir", default=None, help="Optional Skill root directory.")
@@ -758,6 +1116,7 @@ def main() -> None:
         max_passes=args.max_passes,
         timeout_sec=args.timeout,
         auto_fallback=not args.no_auto_fallback,
+        project_root=Path(args.project_root) if args.project_root else None,
     )
     save_json(Path(args.out_report), report)
     sum_path = Path(args.out_summary)

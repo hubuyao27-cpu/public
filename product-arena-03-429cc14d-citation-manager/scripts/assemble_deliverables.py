@@ -27,6 +27,27 @@ from typing import Any, Dict, List, Optional, Tuple
 from common import load_json_safe, save_json
 
 
+def _add_rich_runs(paragraph: Any, text: str, tok_split_re: re.Pattern) -> None:
+    parts = tok_split_re.split(text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<sup>") and part.endswith("</sup>"):
+            r = paragraph.add_run(part[5:-6])
+            r.font.superscript = True
+        elif part.startswith("^[") and part.endswith("]"):
+            r = paragraph.add_run(part[1:])
+            r.font.superscript = True
+        elif part.startswith("**") and part.endswith("**"):
+            r = paragraph.add_run(part[2:-2])
+            r.bold = True
+        elif part.startswith("*") and part.endswith("*") and len(part) >= 3:
+            r = paragraph.add_run(part[1:-1])
+            r.italic = True
+        else:
+            paragraph.add_run(part)
+
+
 def _export_docx(
     revised_md: str,
     out_docx: Path,
@@ -39,10 +60,12 @@ def _export_docx(
 
     try:
         doc = docx.Document()
-        doc.add_heading(title or "Revised Manuscript", level=1)
-
-        tok_split_re = re.compile(r"(<sup>.*?</sup>|\^\[[^\]]+\]|\*\*[^*]+\*\*)")
         md_lines = revised_md.splitlines()
+        first_nonempty = next((ln.strip() for ln in md_lines if ln.strip()), "")
+        if not first_nonempty.startswith("# "):
+            doc.add_heading(title or "Revised Manuscript", level=1)
+
+        tok_split_re = re.compile(r"(<sup>.*?</sup>|\^\[[^\]]+\]|\*\*[^*]+\*\*|\*[^*\n]+\*)")
         idx_ln = 0
         while idx_ln < len(md_lines):
             s = md_lines[idx_ln].strip()
@@ -61,7 +84,9 @@ def _export_docx(
                     tbl = doc.add_table(rows=len(rows_raw), cols=ncol)
                     for ri, row in enumerate(rows_raw):
                         for ci, cell_val in enumerate(row[:ncol]):
-                            tbl.rows[ri].cells[ci].text = cell_val
+                            cell = tbl.rows[ri].cells[ci]
+                            cell.text = ""
+                            _add_rich_runs(cell.paragraphs[0], cell_val, tok_split_re)
                 continue
             if s.startswith("### "):
                 doc.add_heading(s[4:], level=3)
@@ -71,21 +96,7 @@ def _export_docx(
                 doc.add_heading(s[2:], level=1)
             else:
                 p = doc.add_paragraph()
-                parts = tok_split_re.split(s)
-                for part in parts:
-                    if not part:
-                        continue
-                    if part.startswith("<sup>") and part.endswith("</sup>"):
-                        r = p.add_run(part[5:-6])
-                        r.font.superscript = True
-                    elif part.startswith("^[") and part.endswith("]"):
-                        r = p.add_run(part[1:])
-                        r.font.superscript = True
-                    elif part.startswith("**") and part.endswith("**"):
-                        r = p.add_run(part[2:-2])
-                        r.bold = True
-                    else:
-                        p.add_run(part)
+                _add_rich_runs(p, s, tok_split_re)
             idx_ln += 1
         doc.save(str(out_docx))
         return True, None
@@ -124,6 +135,8 @@ def _render_office_or_tex_previews(
                         stdin=subprocess.DEVNULL,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         timeout=30,
                     )
                 cand = out_dir / f"{artifact_path.stem}.pdf"
@@ -141,26 +154,39 @@ def _render_office_or_tex_previews(
         tex_bin = shutil.which("xelatex") or shutil.which("pdflatex")
         if tex_bin:
             try:
-                proc = subprocess.run(
-                    [tex_bin, "-interaction=nonstopmode", "-output-directory", str(out_dir), str(artifact_path)],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
+                cmd = [
+                    tex_bin,
+                    "-no-shell-escape",
+                    "-interaction=nonstopmode",
+                    "-output-directory",
+                    str(out_dir),
+                    str(artifact_path),
+                ]
+                proc = None
+                for _ in range(2):
+                    proc = subprocess.run(
+                        cmd,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=30,
+                    )
                 cand = out_dir / f"{artifact_path.stem}.pdf"
                 if cand.exists() and cand.stat().st_size > 0:
                     pdf_path = cand
                     previews.append(cand.name)
                 else:
-                    notes.append(f"latex_compile_failed:rc={proc.returncode}")
+                    rc = proc.returncode if proc is not None else -1
+                    notes.append(f"latex_compile_failed:rc={rc}")
             except Exception as exc:
                 notes.append(f"latex_compile_error:{exc}")
         else:
             notes.append("preview_unavailable_no_latex_compiler")
 
     if pdf_path and pdf_path.exists():
-        # Render PNG page previews via PyMuPDF or pdftoppm
+        # Render first 3 + last 2 pages (up to 6 unique pages) so both body and References are previewed
         rendered_pngs = False
         try:
             try:
@@ -168,7 +194,9 @@ def _render_office_or_tex_previews(
             except ImportError:
                 import fitz  # type: ignore
             doc = fitz.open(str(pdf_path))
-            for idx in range(min(3, len(doc))):
+            total_p = len(doc)
+            page_indices = list(dict.fromkeys(list(range(min(3, total_p))) + list(range(max(0, total_p - 2), total_p))))[:6]
+            for idx in page_indices:
                 pix = doc[idx].get_pixmap(dpi=150)
                 png_name = f"{prefix}_preview_p{idx + 1}.png"
                 pix.save(str(out_dir / png_name))
@@ -185,6 +213,8 @@ def _render_office_or_tex_previews(
                         [pdftoppm, "-png", "-r", "150", "-f", "1", "-l", "3", str(pdf_path), str(out_dir / f"{prefix}_preview")],
                         stdin=subprocess.DEVNULL,
                         capture_output=True,
+                        encoding="utf-8",
+                        errors="replace",
                         timeout=25,
                     )
                     for png in sorted(out_dir.glob(f"{prefix}_preview*.png")):
@@ -299,25 +329,30 @@ def _build_audit_report(
 
 def _coerce_to_contract_type(value: Any, expected_type: str) -> Any:
     et = (expected_type or "any").lower()
-    if et == "string":
+    if et in ("string", "str"):
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
     if et in ("array", "list"):
         if isinstance(value, list):
             return value
-        return [value] if value is not None else []
+        return [value] if value not in (None, "") else []
     if et in ("object", "dict"):
         if isinstance(value, dict):
             return value
-        return {"value": value}
-    if et == "boolean":
+        return {"value": value} if value not in (None, "") else {}
+    if et in ("boolean", "bool"):
         return bool(value)
-    if et == "integer":
+    if et in ("integer", "int"):
         try:
             return int(value)
         except Exception:
             return 0
+    if et in ("number", "float"):
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
     return value
 
 
@@ -331,6 +366,7 @@ def main() -> None:
     parser.add_argument("--synced", default="/app/work/synced/sync_result.json")
     parser.add_argument("--verification", default="/app/work/verification_report.json")
     parser.add_argument("--checkpoint", choices=["partial", "final"], default="final")
+    parser.add_argument("--skip-previews", action="store_true", help="Reuse already-rendered DOCX/LaTeX previews without re-running soffice/xelatex.")
     parser.add_argument("--out-dir", default="/app/output")
     args = parser.parse_args()
 
@@ -394,7 +430,15 @@ def main() -> None:
                 "question": f"Records share DOI/ID ({rc['metrics'].get('shared_id', '')}) but differ completely in title/authors ('{rc['title_a']}' vs '{rc['title_b']}'). Please confirm true DOI.",
                 "checked_sources": "library_canonical.json",
             })
+    edited_sids = {
+        ed.get("sentence_id")
+        for ed in (plan.get("manuscript_edits") or [])
+        if isinstance(ed, dict) and ed.get("sentence_id") and str(ed.get("action", "")).lower() != "keep"
+    }
     for dc in pre_audit.get("dangling_citations", []):
+        # Skip auto-injecting dangling citations that were already explicitly resolved by a manuscript edit
+        if args.checkpoint == "final" and dc.get("sentence_id") in edited_sids:
+            continue
         hid = f"HUM_DANGLE_{dc['sentence_id']}_{dc['missing_token']}"
         if hid not in existing_h_ids:
             human_items.append({
@@ -434,24 +478,42 @@ def main() -> None:
     refs_formatted_list = [fr["formatted_entry"] for fr in synced.get("formatted_references", [])]
 
     # Optional DOCX & previews
-    req_fmts = case_plan.get("signals", {}).get("requested_output_formats", [])
+    req_fmts = list(
+        dict.fromkeys(
+            (case_plan.get("signals", {}).get("requested_output_formats") or [])
+            + (plan.get("requested_output_formats") or [])
+        )
+    )
     if args.checkpoint == "final" and "docx" in req_fmts:
         docx_path = out_dir / "revised_manuscript.docx"
-        ok, docx_err = _export_docx(revised_md_text, docx_path, f"Manuscript ({case_plan.get('case_id', '')})")
-        if ok:
+        if args.skip_previews and docx_path.exists() and docx_path.stat().st_size > 0:
             deliverable_files.append("revised_manuscript.docx")
-            previews, pnotes = _render_office_or_tex_previews(docx_path, out_dir, "docx")
-            deliverable_files.extend(previews)
-            for pn in pnotes:
-                uncertainty.append({"item": "office_preview", "reason": pn, "scope": "revised_manuscript.docx"})
-        elif docx_err:
-            uncertainty.append({"item": "docx_export", "reason": docx_err, "scope": "revised_manuscript.docx"})
+            if (out_dir / "revised_manuscript.pdf").exists():
+                deliverable_files.append("revised_manuscript.pdf")
+            for png in sorted(out_dir.glob("docx_preview*.png")):
+                deliverable_files.append(png.name)
+        else:
+            ok, docx_err = _export_docx(revised_md_text, docx_path, f"Manuscript ({case_plan.get('case_id', '')})")
+            if ok:
+                deliverable_files.append("revised_manuscript.docx")
+                previews, pnotes = _render_office_or_tex_previews(docx_path, out_dir, "docx")
+                deliverable_files.extend(previews)
+                for pn in pnotes:
+                    uncertainty.append({"item": "office_preview", "reason": pn, "scope": "revised_manuscript.docx"})
+            elif docx_err:
+                uncertainty.append({"item": "docx_export", "reason": docx_err, "scope": "revised_manuscript.docx"})
 
     if args.checkpoint == "final" and (out_dir / "revised_manuscript.tex").exists():
-        previews, pnotes = _render_office_or_tex_previews(out_dir / "revised_manuscript.tex", out_dir, "tex")
-        deliverable_files.extend(previews)
-        for pn in pnotes:
-            uncertainty.append({"item": "latex_preview", "reason": pn, "scope": "revised_manuscript.tex"})
+        if args.skip_previews:
+            if (out_dir / "revised_manuscript.pdf").exists():
+                deliverable_files.append("revised_manuscript.pdf")
+            for png in sorted(out_dir.glob("tex_preview*.png")):
+                deliverable_files.append(png.name)
+        else:
+            previews, pnotes = _render_office_or_tex_previews(out_dir / "revised_manuscript.tex", out_dir, "tex")
+            deliverable_files.extend(previews)
+            for pn in pnotes:
+                uncertainty.append({"item": "latex_preview", "reason": pn, "scope": "revised_manuscript.tex"})
 
     # Audit report & provenance ledger
     audit_md = _build_audit_report(case_plan, lib, ms, pre_audit, plan, synced, verification, uncertainty, human_items, args.checkpoint)
@@ -534,12 +596,15 @@ def main() -> None:
     overrides = plan.get("contract_overrides") or {}
     for field in case_plan.get("output_contract_parsed", {}).get("fields", []):
         fname = field["name"]
+        etype = field.get("expected_type", "any")
         if fname in overrides:
-            result_obj[fname] = _coerce_to_contract_type(overrides[fname], field["expected_type"])
-        elif fname not in result_obj:
+            result_obj[fname] = _coerce_to_contract_type(overrides[fname], etype)
+        elif fname in result_obj:
+            result_obj[fname] = _coerce_to_contract_type(result_obj[fname], etype)
+        else:
             role = field.get("semantic_role", "custom")
             val = role_values.get(role, role_values["summary"])
-            result_obj[fname] = _coerce_to_contract_type(val, field["expected_type"])
+            result_obj[fname] = _coerce_to_contract_type(val, etype)
 
     save_json(out_dir / "result.json", result_obj)
     print(json.dumps({

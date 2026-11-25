@@ -45,6 +45,6 @@ Consult this guide whenever an input file, reference library, or claim exhibits 
 - Never leave uncited library entries inside the numbered reference list (`1..K`); segregate uncited entries into a dedicated `uncited_library_entries` section of the audit report so the bibliography matches in-text citations 1-to-1.
 
 ## 8. File Encoding, Malformed Exports, Empty/Corrupt Inputs
-- Always try `utf-8-sig`, `utf-8`, `gb18030`, `gbk`, `latin-1` in order and report decoding warnings.
-- For malformed BibTeX (unclosed braces, missing commas, duplicate keys), salvage valid entries and log exact line spans in `parse_warnings` without crashing.
-- If `/input/` has 0 usable files, encrypted PDFs, or corrupted binary inputs, run `--checkpoint partial`, document exact file/read errors in `uncertainty` and `human_confirmation_items`, and exit cleanly with `status: "partial"` or `"unable_to_determine"`.
+- Always try UTF-16 BOM (`utf-16`), `utf-8-sig`, `utf-8`, `gb18030`, `gbk`, `latin-1` in order and report decoding warnings.
+- For malformed BibTeX (unclosed braces, quotes nested inside `{...}`, missing commas, duplicate keys), salvage valid entries forward to the next `\n@entry{` and log exact line spans in `parse_warnings` without crashing.
+- If `/input/` has 0 usable files, encrypted PDFs, or corrupted binary inputs (`.docx`/`.pdf`), record honest `uncertainty[]` and `human_confirmation_items[]` in `/app/work/citation_plan.json` and run `finalize_workspace.py` (Step 3) so `result.json` exits cleanly with `status: "unable_to_determine"` or `"partial"`.

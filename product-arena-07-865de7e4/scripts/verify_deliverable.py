@@ -18,8 +18,11 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from analyze_latex import (
+    CITE_CMDS,
+    REF_CMDS,
     check_brace_and_env_balance,
     check_tables_math_and_antipatterns,
+    check_template_requirement,
     parse_bib_file,
 )
 from common import (
@@ -29,11 +32,12 @@ from common import (
     normalize_num_str,
     read_text_safe,
     resolve_skill_dir,
+    sanitize_tex_for_scan,
     save_json,
     strip_tex_comments_preserve_lines,
 )
 
-GAP_TAG_RE = re.compile(r"\[(?:AUTHOR_CONFIRM|待作者确认)\s*:\s*(GAP-[A-Za-z0-9_-]+)\]")
+GAP_TAG_RE = re.compile(r"\[(?:[^\]]*?\b(?:AUTHOR_CONFIRM|待作者确认)\s*:\s*)(GAP-[A-Za-z0-9_-]+)[^\]]*\]")
 LAYOUT_DIM_RE = re.compile(
     r"[-+]?\d+(?:\.\d+)?\s*(?:pt|bp|pc|mm|cm|in|dd|cc|sp|em|ex|px|\\linewidth|\\textwidth|\\textheight|\\columnwidth|\\paperwidth|\\paperheight)\b"
 )
@@ -41,7 +45,7 @@ LAYOUT_DIM_RE = re.compile(
 
 def strip_preamble_and_layout_tokens(tex_text: str) -> str:
     """Return document body stripped of LaTeX layout dimensions/options to reduce false numeric alerts."""
-    no_comments = strip_tex_comments_preserve_lines(tex_text)
+    no_comments = sanitize_tex_for_scan(tex_text)
     m_beg = re.search(r"\\begin\{document\}", no_comments)
     body = no_comments[m_beg.end() :] if m_beg else no_comments
     m_end = re.search(r"\\end\{document\}", body)
@@ -59,21 +63,24 @@ def resolve_deliverable_tex(
     compile_report: Optional[Dict[str, Any]],
     tex_dir_override: Optional[Path],
 ) -> Optional[Path]:
-    """Locate the primary delivered .tex file on disk."""
+    """Locate the primary delivered .tex file on disk. Never mask an explicitly missing primary_tex_path."""
     primary_rel = str(payload.get("primary_tex_path") or "").strip()
     candidates: List[Path] = []
     if tex_dir_override:
         if primary_rel:
             candidates.append(tex_dir_override / primary_rel)
             candidates.append(tex_dir_override / Path(primary_rel).name)
-        candidates.extend(sorted(tex_dir_override.glob("*.tex")))
-    if compile_report and compile_report.get("build_dir"):
-        bdir = Path(compile_report["build_dir"])
-        if primary_rel:
-            candidates.append(bdir / primary_rel)
-            candidates.append(bdir / Path(primary_rel).name)
-        if compile_report.get("tex_file"):
-            candidates.append(bdir / compile_report["tex_file"])
+        else:
+            candidates.extend(sorted(tex_dir_override.rglob("*.tex")))
+    if compile_report:
+        for base_k in ("project_root", "build_dir"):
+            if compile_report.get(base_k):
+                bdir = Path(compile_report[base_k])
+                if primary_rel:
+                    candidates.append(bdir / primary_rel)
+                    candidates.append(bdir / Path(primary_rel).name)
+                elif compile_report.get("tex_file"):
+                    candidates.append(bdir / compile_report["tex_file"])
     if primary_rel and Path(primary_rel).is_file():
         candidates.append(Path(primary_rel))
 
@@ -103,6 +110,19 @@ def verify_deliverable(
     if status not in {"completed", "partial", "unable_to_determine"}:
         errors.append({"axis": "schema", "code": "VER-INVALID-STATUS", "message": f"Invalid payload status '{status}'; must be completed|partial|unable_to_determine."})
 
+    # Validate payload_schema list-of-object fields so string lists don't crash assemble_deliverables.py
+    for list_key in ("sources", "change_records", "uncertainty", "author_confirmation_items", "limitations", "output_files"):
+        lv = payload.get(list_key)
+        if lv is not None:
+            if not isinstance(lv, list) or any(not isinstance(item, dict) for item in lv):
+                errors.append(
+                    {
+                        "axis": "schema",
+                        "code": "VER-INVALID-PAYLOAD-TYPE",
+                        "message": f"payload.{list_key} must be an array of JSON objects per payload_schema.json.",
+                    }
+                )
+
     # ── Axis 1: Compilation & Convergence ────────────────────────────────────
     if status == "completed":
         if not compile_report:
@@ -113,6 +133,8 @@ def verify_deliverable(
             pa = compile_report.get("pdf_audit", {})
             if c_status != "compiled_clean":
                 errors.append({"axis": "compile", "code": "VER-COMPILE-NOT-CLEAN", "message": f"Compile status is '{c_status}' (errors={len(diag.get('errors', []))}). Fix all errors or report honest partial status."})
+            if compile_report.get("bib_error"):
+                errors.append({"axis": "compile", "code": "VER-BIB-ERROR", "message": f"Bibliography pass failed or reported errors: {(compile_report.get('bib_diagnostics') or [])[:5]}."})
             if not compile_report.get("converged"):
                 errors.append({"axis": "compile", "code": "VER-NOT-CONVERGED", "message": "Multi-pass compilation did not converge (rerun warnings or unstable aux state)."})
             if diag.get("missing_characters"):
@@ -124,7 +146,9 @@ def verify_deliverable(
             if pa.get("unresolved_markers"):
                 errors.append({"axis": "compile", "code": "VER-PDF-UNRESOLVED-MARKER", "message": f"Literal unresolved markers (?? / [?]) detected in rendered PDF: {pa['unresolved_markers']}."})
             if pa.get("empty_pages"):
-                errors.append({"axis": "compile", "code": "VER-PDF-EMPTY-PAGES", "message": f"Blank page(s) detected in PDF: {pa['empty_pages']}."})
+                errors.append({"axis": "compile", "code": "VER-PDF-EMPTY-PAGES", "message": f"Blank page(s) with no text or graphics detected in PDF: {pa['empty_pages']}."})
+            if pa.get("image_only_pages"):
+                warnings.append({"axis": "compile", "code": "VER-PDF-IMAGE-ONLY-PAGES", "message": f"Full-page figure/graphic page(s) with zero text detected: {pa['image_only_pages']}."})
             if not compile_report.get("previews"):
                 warnings.append({"axis": "compile", "code": "VER-NO-PREVIEWS", "message": "No PNG preview images rendered from compiled PDF."})
             for oh in diag.get("large_overfull_hboxes", []):
@@ -139,15 +163,23 @@ def verify_deliverable(
     primary_tex = resolve_deliverable_tex(payload, compile_report, tex_dir_override)
     tex_text = ""
     tex_files_checked: List[Path] = []
+    tex_contents_by_rel: Dict[str, str] = {}
     bib_entries_delivered: Dict[str, Any] = {}
+    delivered_packages: List[Dict[str, Any]] = []
+    delivered_labels: Dict[str, List[Dict[str, Any]]] = {}
+    delivered_refs: List[Dict[str, Any]] = []
+    delivered_cites: List[Dict[str, Any]] = []
 
     if primary_tex is None:
-        if status == "completed":
+        if status == "completed" or str(payload.get("primary_tex_path") or "").strip():
             errors.append({"axis": "source_quality", "code": "VER-MISSING-PRIMARY-TEX", "message": f"Delivered primary_tex_path '{payload.get('primary_tex_path')}' not found on disk."})
         checks["source_quality_axis"] = "missing_tex"
     else:
-        tex_dir = primary_tex.parent
-        tex_files_checked = sorted(tex_dir.rglob("*.tex"))
+        tex_root = tex_dir_override.resolve() if (tex_dir_override and tex_dir_override.is_dir()) else primary_tex.parent
+        tex_files_checked = [
+            p for p in sorted(tex_root.rglob("*.tex"))
+            if not any(part.startswith("_fallback") or part in {".git", "__pycache__"} for part in p.parts)
+        ]
         tex_text, err = read_text_safe(primary_tex)
         if err or not tex_text.strip():
             errors.append({"axis": "source_quality", "code": "VER-UNREADABLE-TEX", "message": f"Primary .tex is unreadable or empty ({err})."})
@@ -157,7 +189,8 @@ def verify_deliverable(
             ftxt, ferr = read_text_safe(tf)
             if ferr:
                 continue
-            rel = tf.relative_to(tex_dir).as_posix()
+            rel = tf.relative_to(tex_root).as_posix()
+            tex_contents_by_rel[rel] = ftxt
             for f in check_brace_and_env_balance(rel, ftxt):
                 errors.append({"axis": "source_quality", "code": f["id"], "message": f"{f['file']}:{f['line']} — {f['message']}"})
             for f in check_tables_math_and_antipatterns(rel, ftxt, conflict_rules, eng_used):
@@ -168,13 +201,66 @@ def verify_deliverable(
                 else:
                     warnings.append({"axis": "source_quality", "code": f["id"], "message": f"{f['file']}:{f['line']} — {f['message']}"})
 
-        for bf in sorted(tex_dir.rglob("*.bib")):
+            for pk in extract_tex_commands(ftxt, ("usepackage", "RequirePackage")):
+                for p_item in pk["arg"].split(","):
+                    pname = p_item.strip()
+                    if pname:
+                        delivered_packages.append({"package": pname, "options": pk["opt"], "file": rel, "line": pk["line"]})
+            for lb in extract_tex_commands(ftxt, ("label",)):
+                if lb["arg"]:
+                    delivered_labels.setdefault(lb["arg"], []).append({"file": rel, "line": lb["line"]})
+            for rf in extract_tex_commands(ftxt, REF_CMDS):
+                for rkey in rf["arg"].split(","):
+                    rk = rkey.strip()
+                    if rk:
+                        delivered_refs.append({"key": rk, "cmd": rf["command"], "file": rel, "line": rf["line"]})
+            for ct in extract_tex_commands(ftxt, CITE_CMDS):
+                for ckey in ct["arg"].split(","):
+                    ck = ckey.strip()
+                    if ck:
+                        delivered_cites.append({"key": ck, "cmd": ct["command"], "file": rel, "line": ct["line"]})
+
+        # Package conflict & load order re-verification on delivered sources
+        pkg_names_lower = {p["package"].lower(): p for p in delivered_packages}
+        combined_clean_deliv = "\n".join(sanitize_tex_for_scan(t) for t in tex_contents_by_rel.values())
+        has_eng_guard = bool(re.search(r"\\if(?:PDFTeX|pdfTeX|xetex|XeTeX|luatex|LuaTeX|tutex)\b", combined_clean_deliv))
+        for pair in conflict_rules.get("incompatible_pairs", []):
+            pa, pb = pair["pkg_a"].lower(), pair["pkg_b"].lower()
+            if pa in pkg_names_lower and pb in pkg_names_lower:
+                if {pa, pb} == {"inputenc", "fontspec"} and has_eng_guard:
+                    continue
+                errors.append({"axis": "source_quality", "code": "LINT-PKG-CONFLICT", "message": f"{pkg_names_lower[pb]['file']}:{pkg_names_lower[pb]['line']} — Incompatible packages '{pair['pkg_a']}' and '{pair['pkg_b']}': {pair['reason']}"})
+        pkgs_by_file: Dict[str, List[Dict[str, Any]]] = {}
+        for p in delivered_packages:
+            pkgs_by_file.setdefault(p["file"], []).append(p)
+        for frel, plist in pkgs_by_file.items():
+            idx_map = {p["package"].lower(): i for i, p in enumerate(plist)}
+            for rule in conflict_rules.get("load_order_rules", []):
+                fk, sk = rule["first"].lower(), rule["second"].lower()
+                if fk in idx_map and sk in idx_map and idx_map[sk] < idx_map[fk]:
+                    warnings.append({"axis": "source_quality", "code": "LINT-PKG-ORDER", "message": f"{frel}:{plist[idx_map[sk]]['line']} — Package '{rule['second']}' loaded before '{rule['first']}': {rule['reason']}"})
+
+        # Duplicate \label and unresolved \ref on delivered sources
+        for lkey, locs in delivered_labels.items():
+            if len(locs) > 1:
+                warnings.append({"axis": "source_quality", "code": "LINT-DUPLICATE-LABEL", "message": f"Duplicate \\label{{{lkey}}} in {locs[1]['file']}:{locs[1]['line']} (first at {locs[0]['file']}:{locs[0]['line']})."})
+        for rf in delivered_refs:
+            if rf["key"] not in delivered_labels:
+                errors.append({"axis": "source_quality", "code": "LINT-UNRESOLVED-REF", "message": f"{rf['file']}:{rf['line']} — \\{rf['cmd']}{{{rf['key']}}} has no matching \\label{{{rf['key']}}} in delivered project."})
+
+        for bf in sorted(tex_root.rglob("*.bib")):
+            if any(part.startswith("_fallback") or part in {".git", "__pycache__"} for part in bf.parts):
+                continue
             btxt, berr = read_text_safe(bf)
             if berr:
                 continue
-            rel_b = bf.relative_to(tex_dir).as_posix()
+            rel_b = bf.relative_to(tex_root).as_posix()
             entries, bf_issues = parse_bib_file(rel_b, btxt)
-            bib_entries_delivered.update(entries)
+            for bk, bent in entries.items():
+                if bk in bib_entries_delivered:
+                    errors.append({"axis": "source_quality", "code": "BIB-DUPLICATE-KEY", "message": f"{bent['file']}:{bent['line']} — Duplicate BibTeX key '{bk}' across delivered .bib files (also in {bib_entries_delivered[bk]['file']}:{bib_entries_delivered[bk]['line']})."})
+                else:
+                    bib_entries_delivered[bk] = bent
             for bi in bf_issues:
                 if bi["severity"] == "error":
                     errors.append({"axis": "source_quality", "code": bi["id"], "message": f"{bi['file']}:{bi['line']} — {bi['message']}"})
@@ -183,27 +269,37 @@ def verify_deliverable(
 
         checks["source_quality_axis"] = f"checked_{len(tex_files_checked)}_tex_files"
 
-    # ── Axis 3: Numeric & Citation Fidelity ──────────────────────────────────
-    all_delivered_tex = "\n".join(read_text_safe(p)[0] for p in tex_files_checked) if tex_files_checked else tex_text
+    # ── Axis 3: Numeric & Citation Fidelity (per-file body stripping so subfiles are NEVER dropped) ──
+    all_delivered_tex = "\n".join(tex_contents_by_rel.values()) if tex_contents_by_rel else tex_text
+    all_delivered_clean = "\n".join(sanitize_tex_for_scan(t) for t in tex_contents_by_rel.values()) if tex_contents_by_rel else sanitize_tex_for_scan(tex_text)
     if all_delivered_tex:
-        allowed_nums: Set[str] = set(audit.get("source_numbers", []))
-        # Also harvest numbers from task_md preview & case_json
+        allowed_nums: Set[str] = set()
+        for raw_n in audit.get("source_numbers", []):
+            allowed_nums.add(raw_n)
+            if raw_n.endswith("%"):
+                allowed_nums.add(raw_n[:-1])
         for tok in extract_numeric_tokens(case_plan.get("task_text_preview", "")):
             n = normalize_num_str(tok)
             if n:
                 allowed_nums.add(n)
+                if n.endswith("%"):
+                    allowed_nums.add(n[:-1])
 
-        body_for_nums = strip_preamble_and_layout_tokens(all_delivered_tex)
+        per_file_bodies = [strip_preamble_and_layout_tokens(t) for t in (tex_contents_by_rel.values() or [tex_text])]
+        body_for_nums = "\n".join(per_file_bodies)
         ungrounded_nums: List[str] = []
+        seen_body_nums: Set[str] = set()
         if allowed_nums:
             for tok in extract_numeric_tokens(body_for_nums):
                 n = normalize_num_str(tok)
                 if not n:
                     continue
+                seen_body_nums.add(n)
+                seen_body_nums.add(n.rstrip("%"))
                 # Ignore simple 1-digit integers (often list/section numbers or table cols)
                 if re.fullmatch(r"\d", n):
                     continue
-                if n not in allowed_nums and tok not in ungrounded_nums:
+                if n not in allowed_nums and n.rstrip("%") not in allowed_nums and tok not in ungrounded_nums:
                     ungrounded_nums.append(tok)
 
         if ungrounded_nums:
@@ -215,15 +311,15 @@ def verify_deliverable(
                 }
             )
 
-        # Check citations against delivered bib + inline \bibitem
-        inline_bibs = {b["arg"] for b in extract_tex_commands(all_delivered_tex, ("bibitem",)) if b["arg"]}
+        # Check citations across ALL 13 CITE_CMDS even when .bib is empty (ignore \nocite{*})
+        inline_bibs = {b["arg"] for t in (tex_contents_by_rel.values() or [tex_text]) for b in extract_tex_commands(t, ("bibitem",)) if b["arg"]}
         known_delivered_keys = set(bib_entries_delivered.keys()) | inline_bibs
-        if known_delivered_keys:
-            for ct in extract_tex_commands(all_delivered_tex, ("cite", "citep", "citet", "autocite", "parencite", "textcite")):
-                for ck in ct["arg"].split(","):
-                    ck = ck.strip()
-                    if ck and ck not in known_delivered_keys:
-                        errors.append({"axis": "fidelity", "code": "VER-UNRESOLVED-CITE-IN-DELIVERABLE", "message": f"Citation key '{ck}' at line {ct['line']} has no entry in delivered .bib / \\bibitem."})
+        for ct in delivered_cites:
+            ck = ct["key"]
+            if ct["cmd"] == "nocite" and ck == "*":
+                continue
+            if ck and ck not in known_delivered_keys:
+                errors.append({"axis": "fidelity", "code": "VER-UNRESOLVED-CITE-IN-DELIVERABLE", "message": f"{ct['file']}:{ct['line']} — Citation key '{ck}' in \\{ct['cmd']} has no entry in delivered .bib / \\bibitem."})
         checks["fidelity_axis"] = f"unseen_numbers={len(ungrounded_nums)}"
 
     # ── Axis 4: Template Compliance ──────────────────────────────────────────
@@ -235,15 +331,14 @@ def verify_deliverable(
             tpl_name = dcs[0]["arg"]
 
     prof = template_profiles.get("profiles", {}).get(tpl_name)
-    if prof and all_delivered_tex:
+    if prof and all_delivered_clean:
         missing_reqs: List[str] = []
         for req in prof.get("required_elements", []):
-            stem = req.split("{")[0].split("[")[0]
-            if stem not in all_delivered_tex:
+            if not check_template_requirement(req, all_delivered_clean):
                 missing_reqs.append(req)
         if missing_reqs:
             if status == "completed":
-                warnings.append({"axis": "template", "code": "VER-TEMPLATE-REQ-MISSING", "message": f"Template '{tpl_name}' expected element(s) not detected literally in delivered .tex: {missing_reqs}"})
+                warnings.append({"axis": "template", "code": "VER-TEMPLATE-REQ-MISSING", "message": f"Template '{tpl_name}' expected element(s) not detected in delivered .tex: {missing_reqs}"})
         checks["template_axis"] = f"{tpl_name} (missing={len(missing_reqs)})"
     else:
         checks["template_axis"] = tpl_name or "generic"

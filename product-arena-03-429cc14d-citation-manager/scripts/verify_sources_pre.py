@@ -38,11 +38,13 @@ def _match_author_year(ay_str: str, canonical_records: List[Dict[str, Any]]) -> 
         return [], "no_year_in_marker"
     yr = int(m_yr.group(1))
     auth_part = ay_str[: m_yr.start()].strip(" ,，&＆")
-    auth_part_clean = re.sub(r"\b(?:et\s+al\.?|and)\b|等|和", " ", auth_part, flags=re.I).strip()
+    auth_part_clean = re.sub(r"\b(?:et\s+al\.?|and)\b|等|和|与", " ", auth_part, flags=re.I).strip()
     tokens = [t.strip(".,，") for t in re.split(r"[\s,，&＆]+", auth_part_clean) if t.strip(".,，")]
     if not tokens:
         return [], "no_author_in_marker"
     first_tok = tokens[0].lower()
+    full_clean_low = re.sub(r"\s+", " ", auth_part_clean).lower()
+    full_compact_low = re.sub(r"[^a-z\u4e00-\u9fff]", "", full_clean_low)
 
     matched: List[str] = []
     for rec in canonical_records:
@@ -55,12 +57,27 @@ def _match_author_year(ay_str: str, canonical_records: List[Dict[str, Any]]) -> 
         fam0 = p0["family"].lower()
         skey0 = p0["surname_key"]
         raw0 = p0["raw"].lower()
-        if first_tok == fam0 or first_tok == skey0 or first_tok in raw0 or (len(first_tok) >= 1 and raw0.startswith(first_tok)):
-            # If two explicit surnames given (e.g. Smith & Jones), check second surname too if available
-            if len(tokens) >= 2 and len(authors) >= 2 and "et al" not in ay_str.lower() and "等" not in ay_str:
+        fam0_compact = re.sub(r"[^a-z\u4e00-\u9fff]", "", fam0)
+        first_matches = (
+            first_tok == fam0
+            or first_tok == skey0
+            or full_clean_low == fam0
+            or (fam0_compact and full_compact_low == fam0_compact)
+            or (p0["is_cjk"] and (first_tok == raw0 or full_clean_low == raw0))
+            or (p0["is_corporate"] and (first_tok == raw0 or full_clean_low == raw0))
+        )
+        if first_matches:
+            # If two explicit surnames given (e.g. Smith & Jones), check second surname with exact equality
+            if len(tokens) >= 2 and len(authors) >= 2 and "et al" not in ay_str.lower() and "等" not in ay_str and full_clean_low != fam0:
                 second_tok = tokens[-1].lower()
-                surnames_all = {parse_author_name(a)["family"].lower() for a in authors} | {parse_author_name(a)["surname_key"] for a in authors}
-                if any(second_tok == sn or second_tok in sn for sn in surnames_all):
+                surnames_all = {
+                    s
+                    for a in authors
+                    for p in (parse_author_name(a),)
+                    for s in (p["family"].lower(), p["surname_key"], p["raw"].lower() if p["is_cjk"] else "")
+                    if s
+                }
+                if second_tok in surnames_all:
                     matched.append(rec["ref_id"])
             else:
                 matched.append(rec["ref_id"])
@@ -389,6 +406,8 @@ def main() -> None:
         flagged_sids.update(pc.get("earlier_uncited_claim_sentences") or [])
     for dc in dangling_citations:
         flagged_sids.add(dc["sentence_id"])
+    for am in ambiguous_marker_links:
+        flagged_sids.add(am["sentence_id"])
 
     flagged_hints = [
         {
@@ -400,10 +419,15 @@ def main() -> None:
         if sent["sentence_id"] in flagged_sids
     ]
 
+    raw_to_canon = lib.get("raw_to_canonical_map") or {}
     ambiguous_hints = [
         {
             "candidate_id": ac["candidate_id"],
-            "record_ids": [ac["raw_a"]["raw_id"], ac["raw_b"]["raw_id"]],
+            "record_ids": [
+                raw_to_canon.get(ac["raw_a"]["raw_id"], ac["raw_a"]["raw_id"]),
+                raw_to_canon.get(ac["raw_b"]["raw_id"], ac["raw_b"]["raw_id"]),
+            ],
+            "raw_ids": [ac["raw_a"]["raw_id"], ac["raw_b"]["raw_id"]],
             "rule": ac.get("rule", ""),
         }
         for ac in amb_cands
@@ -424,6 +448,7 @@ def main() -> None:
         "_review_hints": {
             "note": "Read-only checklist of items needing active author decisions before saving citation_plan.json. Put finalized entries in dedup_decisions, manuscript_edits (using [[CITE:REF_XXX]] tokens), and claim_verifications (with verbatim evidence_quote from local evidence).",
             "ambiguous_candidates_to_decide": ambiguous_hints,
+            "ambiguous_marker_links_to_disambiguate": ambiguous_marker_links,
             "flagged_sentences_to_review": flagged_hints,
             "cited_sentences_to_verify_count": len(sentence_links),
         },

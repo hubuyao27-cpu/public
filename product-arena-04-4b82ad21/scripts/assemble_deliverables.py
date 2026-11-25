@@ -3,11 +3,11 @@
 
 Outputs under --out-dir (default /app/output):
 - result.json                        (Harbor-compliant with case_id + ALL output_contract keys + provenance)
-- introduction_and_related_work.md   (Clean publication-ready manuscript + formatted bibliography)
-- related_work_matrix.md & .csv      (Multi-dimensional grouped comparison matrix)
+- introduction_and_related_work.md   (Clean publication-ready manuscript + target-style citations + bibliography)
+- related_work_matrix.md & .csv      (Multi-dimensional grouped comparison matrix with Title column)
 - evidence_and_citation_audit.md     (Independent 7-section verification & author confirmation report)
 - provenance_map.json                (Machine-verifiable claim/gap/contribution source links)
-- Conditional exports + rendered PDF/PNG previews when requested (tex, bib, docx, diagram)
+- Conditional exports + rendered PDF/PNG previews when requested on final checkpoint (tex, bib, docx, diagram)
 """
 
 from __future__ import annotations
@@ -21,23 +21,77 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from common import format_citation_entry, load_json_safe, save_json
+from common import (
+    format_citation_entry,
+    load_json_safe,
+    read_text_safe,
+    render_inline_citations,
+    save_json,
+)
+
+
+def _effective_style(payload: Dict[str, Any]) -> str:
+    style = str(payload.get("citation_style") or "gbt7714").strip()
+    if style == "unspecified" or not style:
+        return "gbt7714" if payload.get("language") == "zh" else "ieee_numeric"
+    return style
+
+
+def _resolve_manuscript_text(payload: Dict[str, Any], payload_path: Optional[Path], manuscript_arg: Optional[str]) -> str:
+    if manuscript_arg:
+        mp = Path(manuscript_arg)
+        if mp.exists():
+            txt, err = read_text_safe(mp)
+            if not err and txt is not None:
+                return txt
+    inline = str(payload.get("manuscript_markdown") or "")
+    if inline.strip():
+        return inline
+    mf = str(payload.get("manuscript_file") or "").strip()
+    if mf:
+        cand = Path(mf)
+        if not cand.is_absolute() and payload_path is not None:
+            cand = payload_path.parent / cand
+        if cand.exists():
+            txt, err = read_text_safe(cand)
+            if not err and txt is not None:
+                return txt
+    return inline
+
+
+def _enrich_matrix_with_titles(matrix: List[Dict[str, Any]], refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    title_by_id = {
+        str(r.get("ref_id") or "").strip().lower(): str(r.get("title") or "")
+        for r in refs
+        if isinstance(r, dict)
+    }
+    enriched: List[Dict[str, Any]] = []
+    for r in matrix:
+        if not isinstance(r, dict):
+            continue
+        row = dict(r)
+        if not row.get("title"):
+            rid = str(row.get("ref_id") or "").strip().lower()
+            row["title"] = title_by_id.get(rid, "")
+        enriched.append(row)
+    return enriched
 
 
 def _render_matrix_md(matrix: List[Dict[str, Any]]) -> str:
     lines = [
         "# Related Work Multi-Dimensional Comparison Matrix (相关工作多维对照表)",
         "",
-        "| Ref ID | Route / Group | Problem Setting | Method Route | Dataset & Eval | Key Result | Applicability Conditions | Limitations | Source Locator |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Ref ID | Title | Route / Group | Problem Setting | Method Route | Dataset & Eval | Key Result | Applicability Conditions | Limitations | Source Locator |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in matrix:
         if not isinstance(r, dict):
             continue
         cells = [
             str(r.get("ref_id") or "-"),
+            str(r.get("title") or "-"),
             str(r.get("route") or "-"),
             str(r.get("problem_setting") or "-"),
             str(r.get("method_route") or "-"),
@@ -49,13 +103,14 @@ def _render_matrix_md(matrix: List[Dict[str, Any]]) -> str:
         ]
         lines.append("| " + " | ".join(c.replace("|", "\\|").replace("\n", " ") for c in cells) + " |")
     if len(lines) == 4:
-        lines.append("| - | *No structured comparisons populated yet* | - | - | - | - | - | - | - |")
+        lines.append("| - | - | *No structured comparisons populated yet* | - | - | - | - | - | - | - |")
     return "\n".join(lines) + "\n"
 
 
 def _write_matrix_csv(matrix: List[Dict[str, Any]], out_path: Path) -> None:
     cols = [
         "ref_id",
+        "title",
         "route",
         "problem_setting",
         "method_route",
@@ -74,21 +129,26 @@ def _write_matrix_csv(matrix: List[Dict[str, Any]], out_path: Path) -> None:
     out_path.write_text(buf.getvalue(), encoding="utf-8-sig", newline="\n")
 
 
-def _render_manuscript_md(payload: Dict[str, Any]) -> str:
-    style = str(payload.get("citation_style") or "gbt7714")
-    if style == "unspecified":
-        style = "gbt7714" if payload.get("language") == "zh" else "ieee_numeric"
-
-    lines: List[str] = []
-    if payload.get("title"):
-        lines.extend([f"# {payload['title']}", ""])
-    lines.append(str(payload.get("manuscript_markdown") or "").rstrip())
-    lines.extend(["", "## References (参考文献)", ""])
-    refs = payload.get("references") or []
+def _fill_reference_citations(refs: List[Dict[str, Any]], style: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
     for idx, r in enumerate(refs, start=1):
         if not isinstance(r, dict):
             continue
-        fmt = str(r.get("formatted_citation") or "").strip() or format_citation_entry(r, style, idx)
+        item = dict(r)
+        if not str(item.get("formatted_citation") or "").strip():
+            item["formatted_citation"] = format_citation_entry(item, style, idx)
+        out.append(item)
+    return out
+
+
+def _render_manuscript_md(payload: Dict[str, Any], rendered_md: str, refs: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    if payload.get("title"):
+        lines.extend([f"# {payload['title']}", ""])
+    lines.append(rendered_md.rstrip())
+    lines.extend(["", "## References (参考文献)", ""])
+    for r in refs:
+        fmt = str(r.get("formatted_citation") or "").strip()
         tag = f" *(Status: `{r.get('verification_status', 'verified')}` | Source: `{r.get('source_locator', '-')}`)*"
         lines.append(f"- {fmt}{tag}")
     if not refs:
@@ -96,17 +156,26 @@ def _render_manuscript_md(payload: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_audit_md(payload: Dict[str, Any], verification: Dict[str, Any]) -> str:
+def _render_audit_md(payload: Dict[str, Any], refs: List[Dict[str, Any]], ledger: Dict[str, Any], verification: Dict[str, Any]) -> str:
+    catalog_count = len(ledger.get("references_catalog") or [])
+    excluded = [e for e in (payload.get("excluded_references") or []) if isinstance(e, dict)]
+    recency_counts: Dict[str, int] = {"foundational": 0, "representative": 0, "recent": 0}
+    for r in refs:
+        rr = str(r.get("recency_role") or "representative")
+        recency_counts[rr] = recency_counts.get(rr, 0) + 1
+
     lines = [
         f"# Evidence, Citation & Provenance Audit Report (`{payload.get('case_id', '')}`)",
         "",
         "## 1. Citation Coverage & Metadata Verification Ledger",
+        f"- **Coverage**: `{len(refs)}` included + `{len(excluded)}` excluded / `{catalog_count}` ledger entries | "
+        f"**Recency Breakdown**: foundational=`{recency_counts.get('foundational', 0)}`, "
+        f"representative=`{recency_counts.get('representative', 0)}`, recent=`{recency_counts.get('recent', 0)}`",
+        "",
         "| Ref ID | Cite Key | Authors | Year | Venue | DOI/ID | Recency | Status | Source |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
-    for r in payload.get("references") or []:
-        if not isinstance(r, dict):
-            continue
+    for r in refs:
         cells = [
             str(r.get("ref_id") or "-"),
             f"`{r.get('cite_key') or '-'}`",
@@ -119,8 +188,13 @@ def _render_audit_md(payload: Dict[str, Any], verification: Dict[str, Any]) -> s
             f"`{r.get('source_locator') or '-'}`",
         ]
         lines.append("| " + " | ".join(c.replace("|", "\\|").replace("\n", " ") for c in cells) + " |")
-    if not (payload.get("references") or []):
+    if not refs:
         lines.append("| - | - | *Empty literature catalog* | - | - | - | - | `unverified_source` | - |")
+
+    if excluded:
+        lines.extend(["", "### Excluded References"])
+        for ex in excluded:
+            lines.append(f"- **{ex.get('ref_id', '-')} (`{ex.get('cite_key', '-')}`)**: {ex.get('reason', 'Excluded without stated reason')}")
 
     lines.extend(["", "## 2. Claim-to-Citation Mapping (`claim_citation_map`)"])
     for cm in payload.get("claim_citation_map") or []:
@@ -135,7 +209,8 @@ def _render_audit_md(payload: Dict[str, Any], verification: Dict[str, Any]) -> s
         if isinstance(g, dict):
             lines.append(
                 f"- **{g.get('gap_id', 'G')}** (`{g.get('derivation_type', '')}` | `{g.get('attribution', '')}`): "
-                f"{g.get('gap_statement', '')} | Cited Refs: `{g.get('supporting_ref_ids', [])}` | Addressed by: {g.get('how_this_work_addresses', '')}"
+                f"{g.get('gap_statement', '')} | Cited Refs: `{g.get('supporting_ref_ids', [])}` | "
+                f"Evidence Locators: `{g.get('supporting_evidence_locators', [])}` | Addressed by: {g.get('how_this_work_addresses', '')}"
             )
 
     lines.extend(["", "## 4. Contribution-to-Evidence Alignment Ledger"])
@@ -151,17 +226,22 @@ def _render_audit_md(payload: Dict[str, Any], verification: Dict[str, Any]) -> s
     for cf in payload.get("conflicts") or []:
         if isinstance(cf, dict):
             lines.append(f"- **{cf.get('conflict_id')}**: {cf.get('item')} -> {cf.get('rationale')} (Adopted: `{cf.get('adopted_value_or_status')}`)")
+            for sc in cf.get("sources_compared") or []:
+                if isinstance(sc, dict):
+                    lines.append(f"  - Source `{sc.get('source_locator', '-')}` (`{sc.get('source_tier', '-')}`): `{sc.get('value', '')}`")
     for ch in payload.get("change_records") or []:
         if isinstance(ch, dict):
             lines.append(f"- **{ch.get('change_id')}** [`{ch.get('target')}` / `{ch.get('action')}`]: `{ch.get('before')}` -> `{ch.get('after')}` (Basis: `{ch.get('basis_locator')}`)")
 
-    lines.extend(["", "## 6. Author Confirmation Questionnaire"])
-    for q in payload.get("author_confirmation_items") or []:
-        if isinstance(q, dict):
-            lines.append(
-                f"- **[{q.get('gap_id', 'GAP')}]** (`{str(q.get('severity', 'important')).upper()}` | `{q.get('location_in_draft', '')}`): "
-                f"{q.get('question', '')} *(Checked: {q.get('what_was_checked', '')})*"
-            )
+    lines.extend(["", "## 6. Author Confirmation Questionnaire (Priority-Grouped)"])
+    confirm_items = [q for q in (payload.get("author_confirmation_items") or []) if isinstance(q, dict)]
+    sev_order = {"critical": 0, "important": 1, "recommended": 2}
+    confirm_items.sort(key=lambda q: sev_order.get(str(q.get("severity") or "important").lower(), 1))
+    for q in confirm_items:
+        lines.append(
+            f"- **[{q.get('gap_id', 'GAP')}]** (`{str(q.get('severity', 'important')).upper()}` | `{q.get('location_in_draft', '')}`): "
+            f"{q.get('question', '')} *(Checked: {q.get('what_was_checked', '')})*"
+        )
 
     if verification:
         lines.extend(
@@ -183,12 +263,36 @@ def _latex_escape(txt: str) -> str:
     return out.replace(bs_tok, r"\textbackslash{}")
 
 
+def _bibtex_escape(txt: str) -> str:
+    out = str(txt or "")
+    out = re.sub(r"(?<!\\)&", r"\&", out)
+    out = re.sub(r"(?<!\\)%", r"\%", out)
+    return out
+
+
+def _infer_bib_type(ref: Dict[str, Any]) -> Tuple[str, str]:
+    raw_t = str(ref.get("entry_type") or "").strip().lower()
+    venue_l = str(ref.get("venue") or "").lower()
+    if raw_t in ("inproceedings", "conference", "proceedings", "conf") or any(
+        w in venue_l for w in ("proceedings", "conference", "workshop", "symposium", "icml", "neurips", "cvpr", "iccv", "acl", "emnlp", "iclr", "aaai")
+    ):
+        return "inproceedings", "booktitle"
+    if raw_t in ("book", "inbook"):
+        return raw_t, "publisher"
+    if raw_t in ("phdthesis", "mastersthesis"):
+        return raw_t, "school"
+    if raw_t == "misc":
+        return "misc", "howpublished"
+    return "article", "journal"
+
+
 def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: Dict[str, int], use_cite_cmd: bool) -> str:
-    """Convert structured Markdown prose into clean standalone LaTeX body while preserving existing \\cite{} commands."""
+    """Convert structured Markdown prose into clean standalone LaTeX body preserving \\cite{} and inline $...$ math."""
     lines_out: List[str] = []
     in_list = False
     cite_cmd_re = re.compile(r"\\cite[a-z]*\{[^}]+\}")
     ref_bracket_re = re.compile(r"\[(R\d{2,3}(?:\s*[,;]\s*R\d{2,3})*)\]")
+    math_inline_re = re.compile(r"(?<!\\)\$([^$\n]{1,120})(?<!\\)\$")
 
     def convert_inline(s: str) -> str:
         saved: Dict[str, str] = {}
@@ -199,6 +303,8 @@ def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: D
             return key
 
         tmp = cite_cmd_re.sub(lambda m: hold(m.group(0)), s)
+        # Protect inline math spans $...$ from escaping
+        tmp = math_inline_re.sub(lambda m: hold(m.group(0)), tmp)
 
         def sub_rids(m: re.Match[str]) -> str:
             rids = [x.strip() for x in re.split(r"[,;]", m.group(1)) if x.strip()]
@@ -209,7 +315,6 @@ def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: D
             return f"[{', '.join(nums)}]"
 
         tmp = ref_bracket_re.sub(sub_rids, tmp)
-        # Handle **bold**, *italic*, `code` after protecting cites
         spans: Dict[str, str] = {}
 
         def hold_fmt(tex_cmd: str, inner: str) -> str:
@@ -239,12 +344,12 @@ def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: D
             if in_list:
                 lines_out.append(r"\end{itemize}")
                 in_list = False
-            lines_out.append(f"\\subsection{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\s*', '', s[4:].strip()))}}}")
+            lines_out.append(f"\\subsection{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\.?\\s*', '', s[4:].strip()))}}}")
         elif s.startswith("## "):
             if in_list:
                 lines_out.append(r"\end{itemize}")
                 in_list = False
-            lines_out.append(f"\\section{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\s*', '', s[3:].strip()))}}}")
+            lines_out.append(f"\\section{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\.?\\s*', '', s[3:].strip()))}}}")
         elif s.startswith("# "):
             if in_list:
                 lines_out.append(r"\end{itemize}")
@@ -285,51 +390,68 @@ def _render_pdf_png_previews(pdf_path: Path, out_dir: Path, prefix: str) -> List
     except Exception:
         pass
     if shutil.which("pdftoppm"):
-        subprocess.run(["pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "3", str(pdf_path), str(out_dir / f"{prefix}_preview")], capture_output=True)
-        for png in sorted(out_dir.glob(f"{prefix}_preview*.png")):
-            pngs.append(png.name)
+        try:
+            subprocess.run(
+                ["pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "3", str(pdf_path), str(out_dir / f"{prefix}_preview")],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=30,
+            )
+            for png in sorted(out_dir.glob(f"{prefix}_preview*.png")):
+                pngs.append(png.name)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
     return pngs
 
 
 def _maybe_export_requested(
     payload: Dict[str, Any],
+    manuscript_raw: str,
+    rendered_md: str,
+    refs_list: List[Dict[str, Any]],
     requested_formats: List[str],
     out_dir: Path,
 ) -> Tuple[List[str], List[str]]:
     extra_files: List[str] = []
     notes: List[str] = []
-    refs_list = [r for r in (payload.get("references") or []) if isinstance(r, dict)]
     ref_by_id = {str(r.get("ref_id") or "").lower(): str(r.get("cite_key") or r.get("ref_id") or f"ref{i}") for i, r in enumerate(refs_list, start=1)}
     ref_idx_by_id = {str(r.get("ref_id") or "").lower(): i for i, r in enumerate(refs_list, start=1)}
+    both_tex_and_docx = ("tex" in requested_formats) and ("docx" in requested_formats)
 
     if "bib" in requested_formats or "tex" in requested_formats:
         bib_path = out_dir / "references.bib"
         bib_entries: List[str] = []
         for idx, r in enumerate(refs_list, start=1):
             ck = str(r.get("cite_key") or f"ref{idx}")
+            btype, venue_field = _infer_bib_type(r)
+            field_lines: List[str] = []
+            if r.get("authors"):
+                field_lines.append(f"  author = {{{_bibtex_escape(r['authors'])}}}")
+            if r.get("title"):
+                field_lines.append(f"  title = {{{{{_bibtex_escape(r['title'])}}}}}")
+            if r.get("venue"):
+                field_lines.append(f"  {venue_field} = {{{_bibtex_escape(r['venue'])}}}")
+            yr = str(r.get("year") or "").strip()
+            if yr and re.match(r"^(19|20)\d{2}$", yr):
+                field_lines.append(f"  year = {{{yr}}}")
             doi_val = str(r.get("doi_or_id") or "").strip()
-            doi_line = f"  doi = {{{doi_val}}},\n" if doi_val.startswith("10.") else (f"  note = {{{doi_val}}},\n" if doi_val else "")
-            bib_entries.append(
-                f"@article{{{ck},\n"
-                f"  author = {{{r.get('authors') or 'Unknown'}}},\n"
-                f"  title = {{{{{r.get('title') or 'Untitled'}}}}},\n"
-                f"  journal = {{{r.get('venue') or 'Unknown'}}},\n"
-                f"  year = {{{r.get('year') or '0000'}}},\n"
-                f"{doi_line}".rstrip(",\n")
-                + "\n}"
-            )
+            if doi_val.startswith("10."):
+                field_lines.append(f"  doi = {{{doi_val}}}")
+            elif doi_val:
+                field_lines.append(f"  note = {{{_bibtex_escape(doi_val)}}}")
+            if not field_lines:
+                field_lines.append("  note = {Incomplete metadata; requires author confirmation}")
+            bib_entries.append(f"@{btype}{{{ck},\n" + ",\n".join(field_lines) + "\n}")
         bib_path.write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8", newline="\n")
         extra_files.append("references.bib")
 
     if "tex" in requested_formats:
         tex_path = out_dir / "introduction_and_related_work.tex"
-        md_raw = str(payload.get("manuscript_markdown") or "")
         title_raw = str(payload.get("title") or "Introduction and Related Work")
-        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", md_raw + title_raw))
-        use_cite_cmd = str(payload.get("citation_style") or "") == "bibtex_latex" or "\\cite" in md_raw
-        body_tex = _markdown_to_latex_body(md_raw, ref_by_id, ref_idx_by_id, use_cite_cmd=use_cite_cmd)
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", manuscript_raw + title_raw))
+        use_cite_cmd = str(payload.get("citation_style") or "") == "bibtex_latex" or "\\cite" in manuscript_raw
+        body_tex = _markdown_to_latex_body(manuscript_raw, ref_by_id, ref_idx_by_id, use_cite_cmd=use_cite_cmd)
 
-        # Build optional booktabs Related Work Comparison Table
         matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
         table_tex = ""
         if matrix:
@@ -362,12 +484,15 @@ def _maybe_export_requested(
             else ""
         )
 
-        doc_cls = "\\documentclass[UTF8]{ctexart}\n" if has_cjk else "\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n"
+        # Do NOT emit \usepackage[T1]{fontenc} under ctexart/xelatex!
+        if has_cjk:
+            doc_cls = "\\documentclass[UTF8]{ctexart}\n"
+        else:
+            doc_cls = "\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n\\usepackage[T1]{fontenc}\n"
         tex_src = (
             doc_cls
             + "\\usepackage[margin=1in]{geometry}\n"
             + "\\usepackage{booktabs}\n"
-            + "\\usepackage[T1]{fontenc}\n"
             + f"\\title{{{_latex_escape(title_raw)}}}\n"
             + "\\date{}\n"
             + "\\begin{document}\n"
@@ -382,18 +507,37 @@ def _maybe_export_requested(
         extra_files.append("introduction_and_related_work.tex")
         compiler = (shutil.which("xelatex") or shutil.which("pdflatex")) if has_cjk else (shutil.which("pdflatex") or shutil.which("xelatex"))
         if compiler:
-            proc = subprocess.run(
-                [compiler, "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
-                capture_output=True,
-                text=True,
-                timeout=45,
-            )
-            pdf_out = out_dir / "introduction_and_related_work.pdf"
-            if proc.returncode == 0 and pdf_out.exists() and pdf_out.stat().st_size > 0:
-                extra_files.append("introduction_and_related_work.pdf")
-                extra_files.extend(_render_pdf_png_previews(pdf_out, out_dir, "tex"))
-            else:
-                notes.append(f"latex_compile_failed:{proc.returncode}")
+            compile_ok = False
+            last_rc = -1
+            try:
+                # Run 2 passes so \cite{...} / \ref{...} converge cleanly
+                for _pass in range(2):
+                    proc = subprocess.run(
+                        [compiler, "-no-shell-escape", "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        stdin=subprocess.DEVNULL,
+                        timeout=45,
+                    )
+                    last_rc = proc.returncode
+                    if proc.returncode != 0:
+                        break
+                pdf_raw = out_dir / "introduction_and_related_work.pdf"
+                if last_rc == 0 and pdf_raw.exists() and pdf_raw.stat().st_size > 0:
+                    compile_ok = True
+                    final_tex_pdf = (out_dir / "introduction_and_related_work_tex.pdf") if both_tex_and_docx else pdf_raw
+                    if both_tex_and_docx:
+                        shutil.move(str(pdf_raw), str(final_tex_pdf))
+                    extra_files.append(final_tex_pdf.name)
+                    extra_files.extend(_render_pdf_png_previews(final_tex_pdf, out_dir, "tex"))
+            except subprocess.TimeoutExpired:
+                notes.append("latex_compile_timeout:45s")
+            except OSError as exc:
+                notes.append(f"latex_compile_oserror:{exc}")
+            if not compile_ok and not any(n.startswith("latex_compile_") for n in notes):
+                notes.append(f"latex_compile_failed:{last_rc}")
         else:
             notes.append("latex_compiler_not_installed:exported_structured_tex_and_bib")
 
@@ -404,8 +548,8 @@ def _maybe_export_requested(
 
             doc = docx.Document()
             doc.add_heading(payload.get("title") or "Introduction and Related Work", level=1)
-            bold_split = re.compile(r"(\*\*[^*]+\*\*)")
-            for ln in str(payload.get("manuscript_markdown") or "").splitlines():
+            fmt_split = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*)")
+            for ln in rendered_md.splitlines():
                 s = ln.strip()
                 if not s:
                     continue
@@ -417,16 +561,19 @@ def _maybe_export_requested(
                     doc.add_heading(s[2:], level=1)
                 else:
                     p = doc.add_paragraph()
-                    for part in bold_split.split(s):
+                    for part in fmt_split.split(s):
                         if part.startswith("**") and part.endswith("**"):
                             r = p.add_run(part[2:-2])
                             r.bold = True
+                        elif part.startswith("*") and part.endswith("*"):
+                            r = p.add_run(part[1:-1])
+                            r.italic = True
                         elif part:
                             p.add_run(part)
             matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
             if matrix:
                 doc.add_heading("Related Work Comparison Matrix", level=2)
-                cols = ["ref_id", "route", "method_route", "key_result", "applicability_conditions", "limitations"]
+                cols = ["ref_id", "title", "route", "method_route", "key_result", "applicability_conditions", "limitations"]
                 tbl = doc.add_table(rows=1, cols=len(cols))
                 hdr = tbl.rows[0].cells
                 for ci, col in enumerate(cols):
@@ -437,21 +584,36 @@ def _maybe_export_requested(
                         row_cells[ci].text = str(m.get(col) or "")
             if refs_list:
                 doc.add_heading("References", level=2)
-                for idx, r in enumerate(refs_list, start=1):
-                    doc.add_paragraph(str(r.get("formatted_citation") or f"[{idx}] {r.get('authors', '')} ({r.get('year', '')}). {r.get('title', '')}. {r.get('venue', '')}."))
+                for r in refs_list:
+                    doc.add_paragraph(str(r.get("formatted_citation") or ""))
             doc.save(str(docx_path))
             extra_files.append("introduction_and_related_work.docx")
             soffice = shutil.which("soffice") or shutil.which("libreoffice")
             if soffice:
-                subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)], capture_output=True, timeout=45)
-                pdf_p = out_dir / "introduction_and_related_work.pdf"
-                if pdf_p.exists() and pdf_p.stat().st_size > 0:
-                    extra_files.append("introduction_and_related_work.pdf")
-                    extra_files.extend(_render_pdf_png_previews(pdf_p, out_dir, "docx"))
+                try:
+                    subprocess.run(
+                        [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
+                        capture_output=True,
+                        stdin=subprocess.DEVNULL,
+                        timeout=45,
+                    )
+                    pdf_p = out_dir / "introduction_and_related_work.pdf"
+                    if pdf_p.exists() and pdf_p.stat().st_size > 0:
+                        final_docx_pdf = (out_dir / "introduction_and_related_work_docx.pdf") if both_tex_and_docx else pdf_p
+                        if both_tex_and_docx:
+                            shutil.move(str(pdf_p), str(final_docx_pdf))
+                        extra_files.append(final_docx_pdf.name)
+                        extra_files.extend(_render_pdf_png_previews(final_docx_pdf, out_dir, "docx"))
+                except subprocess.TimeoutExpired:
+                    notes.append("soffice_convert_timeout:45s")
+                except OSError as exc:
+                    notes.append(f"soffice_convert_error:{exc}")
             else:
                 notes.append("soffice_not_installed:docx_written_without_pdf_preview")
         except ImportError:
             notes.append("python_docx_not_installed:markdown_deliverables_written")
+        except Exception as exc:
+            notes.append(f"docx_export_error:{exc}")
 
     if "diagram" in requested_formats:
         try:
@@ -462,7 +624,6 @@ def _maybe_export_requested(
             from matplotlib import font_manager  # type: ignore
             from matplotlib.patches import FancyBboxPatch  # type: ignore
 
-            # Prefer CJK-capable sans-serif fonts if installed so Chinese labels never render as boxes
             avail_fonts = {f.name for f in font_manager.fontManager.ttflist}
             cjk_prefs = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "Microsoft YaHei", "SimHei", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
             chosen_fonts = [fn for fn in cjk_prefs if fn in avail_fonts]
@@ -517,13 +678,27 @@ def _coerce_type(val: Any, expected_type: str) -> Any:
     if et in ("array", "list"):
         if isinstance(val, list):
             return val
-        return [val] if val is not None else []
+        if val is None or val == "":
+            return []
+        return [val]
     if et in ("object", "dict"):
         if isinstance(val, dict):
             return val
+        if val is None or val == "":
+            return {}
         return {"value": val}
     if et in ("boolean", "bool"):
         return bool(val)
+    if et in ("integer", "int"):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return 0
+    if et in ("number", "float"):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
     return val
 
 
@@ -536,6 +711,7 @@ def build_partial_payload(plan: Dict[str, Any], ledger: Dict[str, Any]) -> Dict[
             {
                 "ref_id": r.get("ref_id"),
                 "cite_key": r.get("cite_key"),
+                "entry_type": r.get("entry_type") or "article",
                 "authors": r.get("authors") or "[待补充作者]",
                 "year": r.get("year") or "[待补充年份]",
                 "title": r.get("title") or "[待补充标题]",
@@ -580,94 +756,31 @@ def build_partial_payload(plan: Dict[str, Any], ledger: Dict[str, Any]) -> Dict[
     }
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Assemble final or partial Harbor deliverables under /app/output.")
-    ap.add_argument("--case-plan", default="/app/work/case_plan.json")
-    ap.add_argument("--ledger", default="/app/work/source_ledger.json")
-    ap.add_argument("--payload", default=None)
-    ap.add_argument("--verification", default=None)
-    ap.add_argument("--checkpoint", choices=["partial", "final"], default="final")
-    ap.add_argument("--out-dir", default="/app/output")
-    args = ap.parse_args()
-
-    plan, p_err = load_json_safe(Path(args.case_plan))
-    ledger, l_err = load_json_safe(Path(args.ledger))
-    if p_err or not isinstance(plan, dict):
-        raise SystemExit(f"Cannot load case_plan: {p_err}")
-    if l_err or not isinstance(ledger, dict):
-        raise SystemExit(f"Cannot load ledger: {l_err}")
-
-    if args.checkpoint == "partial" or not args.payload:
-        payload = build_partial_payload(plan, ledger)
-    else:
-        payload, pay_err = load_json_safe(Path(args.payload))
-        if pay_err or not isinstance(payload, dict):
-            raise SystemExit(f"Cannot load payload: {pay_err}")
-
-    verification: Dict[str, Any] = {}
-    if args.verification and Path(args.verification).exists():
-        vdata, _ = load_json_safe(Path(args.verification))
-        if isinstance(vdata, dict):
-            verification = vdata
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Write core human-readable deliverables
-    (out_dir / "introduction_and_related_work.md").write_text(_render_manuscript_md(payload), encoding="utf-8", newline="\n")
-    matrix = payload.get("comparison_matrix") or []
-    (out_dir / "related_work_matrix.md").write_text(_render_matrix_md(matrix), encoding="utf-8", newline="\n")
-    _write_matrix_csv(matrix, out_dir / "related_work_matrix.csv")
-    (out_dir / "evidence_and_citation_audit.md").write_text(_render_audit_md(payload, verification), encoding="utf-8", newline="\n")
-
-    provenance_map = {
-        "case_id": plan.get("case_id"),
-        "claim_citation_map": payload.get("claim_citation_map") or [],
-        "research_gaps": payload.get("research_gaps") or [],
-        "contributions": payload.get("contributions") or [],
-        "references": payload.get("references") or [],
-        "conflicts": payload.get("conflicts") or [],
-        "change_records": payload.get("change_records") or [],
-    }
-    save_json(out_dir / "provenance_map.json", provenance_map)
-
-    extra_files, export_notes = _maybe_export_requested(
-        payload,
-        (plan.get("signals") or {}).get("requested_formats") or ["md"],
-        out_dir,
-    )
-
-    deliverables = [
-        "result.json",
-        "introduction_and_related_work.md",
-        "related_work_matrix.md",
-        "related_work_matrix.csv",
-        "evidence_and_citation_audit.md",
-        "provenance_map.json",
-    ] + extra_files
-
-    uncertainty = list(payload.get("uncertainty") or []) + export_notes
-    sources_list = []
-    for r in payload.get("references") or []:
-        if isinstance(r, dict):
-            sources_list.append({"id": r.get("ref_id"), "cite_key": r.get("cite_key"), "locator": r.get("source_locator"), "status": r.get("verification_status")})
-    for c in payload.get("contributions") or []:
-        if isinstance(c, dict):
-            sources_list.append({"id": c.get("contrib_id"), "locators": c.get("own_evidence_locators"), "status": c.get("verification_status")})
-
-    # Populate result.json respecting EVERY output_contract field
+def _build_result_json(
+    plan: Dict[str, Any],
+    payload: Dict[str, Any],
+    rendered_md: str,
+    matrix: List[Dict[str, Any]],
+    refs_filled: List[Dict[str, Any]],
+    sources_list: List[Dict[str, Any]],
+    deliverables: List[str],
+    uncertainty: List[str],
+    verification: Dict[str, Any],
+    checkpoint: str,
+) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "case_id": plan.get("case_id"),
         "status": payload.get("status", "partial"),
-        "checkpoint": args.checkpoint,
+        "checkpoint": checkpoint,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "manuscript_markdown": payload.get("manuscript_markdown", ""),
+        "manuscript_markdown": rendered_md,
         "research_background": payload.get("research_background", {}),
         "related_work_groups": payload.get("related_work_groups", []),
         "comparison_matrix": matrix,
         "research_gaps": payload.get("research_gaps", []),
         "contributions": payload.get("contributions", []),
-        "references": payload.get("references", []),
+        "references": refs_filled,
+        "excluded_references": payload.get("excluded_references", []),
         "claim_citation_map": payload.get("claim_citation_map", []),
         "sources": sources_list,
         "conflicts": payload.get("conflicts", []),
@@ -705,15 +818,146 @@ def main() -> None:
         role = fspec.get("semantic_role", "custom")
         if fname in overrides:
             result[fname] = _coerce_type(overrides[fname], etype)
-        elif fname in payload and fname not in ("contract_overrides",):
+        elif fname == "manuscript_markdown":
+            result[fname] = _coerce_type(rendered_md, etype)
+        elif fname == "references":
+            result[fname] = _coerce_type(refs_filled, etype)
+        elif fname == "comparison_matrix":
+            result[fname] = _coerce_type(matrix, etype)
+        elif fname in payload and fname not in ("contract_overrides", "manuscript_file"):
             result[fname] = _coerce_type(payload[fname], etype)
         elif role in role_map:
             result[fname] = _coerce_type(role_map[role], etype)
         elif fname not in result:
             result[fname] = _coerce_type("", etype)
+    return result
 
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Assemble final or partial Harbor deliverables under /app/output.")
+    ap.add_argument("--case-plan", default="/app/work/case_plan.json")
+    ap.add_argument("--ledger", default="/app/work/source_ledger.json")
+    ap.add_argument("--payload", default=None)
+    ap.add_argument("--manuscript", default=None, help="Optional external markdown manuscript path")
+    ap.add_argument("--verification", default=None)
+    ap.add_argument("--checkpoint", choices=["partial", "final"], default="final")
+    ap.add_argument("--out-dir", default="/app/output")
+    args = ap.parse_args()
+
+    plan, p_err = load_json_safe(Path(args.case_plan))
+    ledger, l_err = load_json_safe(Path(args.ledger))
+    if p_err or not isinstance(plan, dict):
+        raise SystemExit(f"Cannot load case_plan: {p_err}")
+    if l_err or not isinstance(ledger, dict):
+        raise SystemExit(f"Cannot load ledger: {l_err}")
+
+    payload_path: Optional[Path] = None
+    if args.checkpoint == "partial" or not args.payload:
+        payload = build_partial_payload(plan, ledger)
+    else:
+        payload_path = Path(args.payload)
+        payload, pay_err = load_json_safe(payload_path)
+        if pay_err or not isinstance(payload, dict):
+            raise SystemExit(f"Cannot load payload: {pay_err}")
+
+    verification: Dict[str, Any] = {}
+    if args.verification and Path(args.verification).exists():
+        vdata, _ = load_json_safe(Path(args.verification))
+        if isinstance(vdata, dict):
+            verification = vdata
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    eff_style = _effective_style(payload)
+    lang = str(payload.get("language") or (plan.get("signals") or {}).get("language") or "zh")
+    refs_filled = _fill_reference_citations(payload.get("references") or [], eff_style)
+    manuscript_raw = _resolve_manuscript_text(payload, payload_path, args.manuscript)
+    rendered_md = render_inline_citations(manuscript_raw, refs_filled, eff_style, language=lang)
+    matrix = _enrich_matrix_with_titles(payload.get("comparison_matrix") or [], refs_filled)
+
+    # Uniform sources_list schema across references and contributions
+    sources_list: List[Dict[str, Any]] = []
+    for r in refs_filled:
+        loc = str(r.get("source_locator") or "")
+        sources_list.append(
+            {
+                "id": r.get("ref_id"),
+                "kind": "reference",
+                "cite_key": r.get("cite_key"),
+                "locators": [loc] if loc else [],
+                "status": r.get("verification_status"),
+            }
+        )
+    for c in payload.get("contributions") or []:
+        if isinstance(c, dict):
+            sources_list.append(
+                {
+                    "id": c.get("contrib_id"),
+                    "kind": "contribution",
+                    "cite_key": "",
+                    "locators": list(c.get("own_evidence_locators") or []),
+                    "status": c.get("verification_status"),
+                }
+            )
+
+    # Write core human-readable deliverables FIRST
+    (out_dir / "introduction_and_related_work.md").write_text(_render_manuscript_md(payload, rendered_md, refs_filled), encoding="utf-8", newline="\n")
+    (out_dir / "related_work_matrix.md").write_text(_render_matrix_md(matrix), encoding="utf-8", newline="\n")
+    _write_matrix_csv(matrix, out_dir / "related_work_matrix.csv")
+    (out_dir / "evidence_and_citation_audit.md").write_text(_render_audit_md(payload, refs_filled, ledger, verification), encoding="utf-8", newline="\n")
+
+    provenance_map = {
+        "case_id": plan.get("case_id"),
+        "claim_citation_map": payload.get("claim_citation_map") or [],
+        "research_gaps": payload.get("research_gaps") or [],
+        "contributions": payload.get("contributions") or [],
+        "references": refs_filled,
+        "excluded_references": payload.get("excluded_references") or [],
+        "conflicts": payload.get("conflicts") or [],
+        "change_records": payload.get("change_records") or [],
+    }
+    save_json(out_dir / "provenance_map.json", provenance_map)
+
+    core_deliverables = [
+        "result.json",
+        "introduction_and_related_work.md",
+        "related_work_matrix.md",
+        "related_work_matrix.csv",
+        "evidence_and_citation_audit.md",
+        "provenance_map.json",
+    ]
+
+    # Write crash-safe result.json BEFORE optional external binary exports (xelatex/soffice/matplotlib)
+    base_uncertainty = list(payload.get("uncertainty") or [])
+    result = _build_result_json(
+        plan, payload, rendered_md, matrix, refs_filled, sources_list, core_deliverables, base_uncertainty, verification, args.checkpoint
+    )
     save_json(out_dir / "result.json", result)
-    print(json.dumps({"status": "ok", "checkpoint": args.checkpoint, "out_dir": str(out_dir), "deliverables": deliverables}, ensure_ascii=False))
+
+    # Skip heavy binary exports on partial checkpoint; run safely on final checkpoint
+    extra_files: List[str] = []
+    export_notes: List[str] = []
+    if args.checkpoint == "final":
+        extra_files, export_notes = _maybe_export_requested(
+            payload,
+            manuscript_raw,
+            rendered_md,
+            refs_filled,
+            (plan.get("signals") or {}).get("requested_formats") or ["md"],
+            out_dir,
+        )
+        if extra_files or export_notes:
+            deliverables = core_deliverables + extra_files
+            uncertainty = base_uncertainty + export_notes
+            result = _build_result_json(
+                plan, payload, rendered_md, matrix, refs_filled, sources_list, deliverables, uncertainty, verification, args.checkpoint
+            )
+            save_json(out_dir / "result.json", result)
+    else:
+        deliverables = core_deliverables
+
+    print(json.dumps({"status": "ok", "checkpoint": args.checkpoint, "out_dir": str(out_dir), "deliverables": result["deliverable_files"]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

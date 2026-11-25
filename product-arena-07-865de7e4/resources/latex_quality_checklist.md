@@ -7,7 +7,7 @@ Use this checklist before declaring any `.tex` deliverable complete.
 - [ ] Multi-pass convergence achieved: `.aux`/`.toc`/`.out` stabilized and no `Rerun to get cross-references right` warnings remain.
 - [ ] Zero unresolved citations or references (`??`, `[?]`, `Citation ... undefined`, `Reference ... undefined`).
 - [ ] Zero missing glyphs (`Missing character: There is no ...`) in `.log`.
-- [ ] Rendered PDF previews (`previews/page_*.png`) visually inspected for clipping, blank pages, or overlapping floats.
+- [ ] Rendered PDF previews (`previews/page-*.png`) visually inspected for clipping, blank pages, or overlapping floats.
 - [ ] `build.sh` and `reproducibility_manifest.json` record exact engine version, flags, pass order, and package/font dependencies.
 
 ## 2. Math & Scientific Notation (`改得对`)

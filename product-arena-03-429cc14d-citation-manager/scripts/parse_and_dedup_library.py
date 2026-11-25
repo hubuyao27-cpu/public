@@ -100,12 +100,17 @@ def _make_record(
     doi_raw = str(raw_fields.get("doi") or "").strip()
     doi = normalize_doi(doi_raw)
     url = normalize_url(raw_fields.get("url"))
-    arxiv_id = normalize_arxiv(str(raw_fields.get("arxiv_id") or "") + " " + url + " " + venue + " " + doi_raw)
+    arxiv_id = ""
+    for cand_ax in (raw_fields.get("arxiv_id"), url, doi_raw, venue):
+        arxiv_id = normalize_arxiv(str(cand_ax or ""))
+        if arxiv_id:
+            break
     if not doi and "doi.org/" in url.lower():
         doi = normalize_doi(url)
 
     doc_type = raw_fields.get("doc_type") or _map_doc_type(str(raw_fields.get("raw_type") or ""), raw_fields.get("type_family", "bibtex"), style_rules)
-    if any(p in venue.lower() for p in ("arxiv", "biorxiv", "medrxiv", "chemrxiv", "ssrn", "preprint")) and doc_type in ("other", "journal", "electronic_or_preprint"):
+    preprint_doi = bool(doi and (doi.startswith("10.1101/") or doi.startswith("10.26434/chemrxiv") or doi.startswith("10.48550/arxiv")))
+    if (any(p in venue.lower() for p in ("arxiv", "biorxiv", "medrxiv", "chemrxiv", "ssrn", "preprint")) or (preprint_doi and not venue)) and doc_type in ("other", "journal", "electronic_or_preprint"):
         doc_type = "preprint"
 
     lang = detect_script_lang(title or venue)
@@ -194,7 +199,8 @@ def parse_bibtex(text: str, src_rel: str, style_rules: Dict[str, Any], start_idx
         in_quote = False
         while j < n and depth > 0:
             ch = text[j]
-            if ch == '"' and (j == 0 or text[j - 1] != "\\"):
+            # JabRef-style: quotes inside nested braces (depth >= 2) are literal text, not field delimiters
+            if ch == '"' and depth == 1 and (j == 0 or text[j - 1] != "\\"):
                 in_quote = not in_quote
             elif not in_quote:
                 if ch == open_ch:
@@ -204,10 +210,17 @@ def parse_bibtex(text: str, src_rel: str, style_rules: Dict[str, Any], start_idx
             j += 1
 
         if depth != 0:
-            warnings.append(f"{src_rel}:L{start_line}: unclosed BibTeX entry `@{etype}` salvaged to EOF/next entry")
-            body = text[at + m.end() : min(n, at + m.end() + 2000)]
-            end_line = pos_to_line(min(n - 1, at + m.end() + len(body)))
-            i = n
+            warnings.append(f"{src_rel}:L{start_line}: unclosed BibTeX entry `@{etype}` salvaged to next entry/EOF")
+            m_next = re.search(r"\n\s*@[A-Za-z]+\s*[({]", text[at + m.end() :])
+            if m_next:
+                salvage_end = at + m.end() + m_next.start()
+                body = text[at + m.end() : salvage_end]
+                end_line = pos_to_line(max(at, salvage_end - 1))
+                i = salvage_end + 1
+            else:
+                body = text[at + m.end() : min(n, at + m.end() + 4000)]
+                end_line = pos_to_line(min(n - 1, at + m.end() + len(body)))
+                i = n
         else:
             body = text[at + m.end() : j - 1]
             end_line = pos_to_line(j - 1)
@@ -464,14 +477,14 @@ def parse_cnki_txt(text: str, src_rel: str, style_rules: Dict[str, Any], start_i
     records: List[Dict[str, Any]] = []
     lines = text.splitlines()
 
-    if "Title-题名:" in text or "Author-作者:" in text or "SrcDatabase-来源库:" in text:
+    if re.search(r"(?:Title-题名|Author-作者|SrcDatabase-来源库)\s*[:：]", text):
         blocks = re.split(r"\n\s*\n+", text.strip())
         cur_line = 1
         for blk in blocks:
             kv: Dict[str, str] = {}
             blines = blk.splitlines()
             for bl in blines:
-                m = re.match(r"^([A-Za-z\u4e00-\u9fff\-]+)\s*:\s*(.*)$", bl.strip())
+                m = re.match(r"^([A-Za-z\u4e00-\u9fff\-]+)\s*[:：]\s*(.*)$", bl.strip())
                 if m:
                     kv[m.group(1).strip()] = m.group(2).strip()
             if kv:
@@ -482,9 +495,9 @@ def parse_cnki_txt(text: str, src_rel: str, style_rules: Dict[str, Any], start_i
                     "authors": kv.get("Author-作者") or kv.get("作者") or "",
                     "venue": kv.get("Source-文献来源") or kv.get("文献来源") or "",
                     "year": kv.get("PubTime-发表时间") or kv.get("Year-年") or "",
-                    "volume": kv.get("Volume-卷") or "",
+                    "volume": kv.get("Volume-卷") or kv.get("Roll-卷") or "",
                     "issue": kv.get("Period-期") or kv.get("Issue-期") or "",
-                    "pages": kv.get("PageCount-页码") or kv.get("Page-页码") or "",
+                    "pages": kv.get("Page-页码") or kv.get("PageCount-页码") or "",
                     "doi": kv.get("DOI") or "",
                     "abstract": kv.get("Summary-摘要") or kv.get("摘要") or "",
                 }
@@ -631,7 +644,21 @@ def parse_csv_tsv(text: str, src_rel: str, is_tsv: bool, style_rules: Dict[str, 
 
 def parse_numbered_ref_lines(lines_with_src: List[Dict[str, str]], style_rules: Dict[str, Any], start_idx: int, fmt_label: str) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
-    gbt_code_to_type = {v: k for k, v in style_rules.get("gbt7714_type_codes", {}).items()}
+    # Explicit primary mapping so [C] -> conference and [M] -> book (not overwritten by proceedings/book_chapter)
+    gbt_code_to_type = {
+        "J": "journal",
+        "C": "conference",
+        "M": "book",
+        "D": "thesis",
+        "R": "report",
+        "S": "standard",
+        "P": "patent",
+        "N": "newspaper",
+        "EB": "electronic",
+        "DB": "electronic",
+        "CP": "electronic",
+        "Z": "other",
+    }
 
     for idx, item in enumerate(lines_with_src, start=1):
         raw = item["raw"].strip()
@@ -639,6 +666,7 @@ def parse_numbered_ref_lines(lines_with_src: List[Dict[str, str]], style_rules: 
         if not raw:
             continue
         num = None
+        bib_key = ""
         body = raw
         m_num = re.match(r"^(?:\[(\d+)\]|(\d+)[.)])\s*(.*)$", raw)
         if m_num:
@@ -647,6 +675,7 @@ def parse_numbered_ref_lines(lines_with_src: List[Dict[str, str]], style_rules: 
         elif raw.startswith("\\bibitem"):
             m_bib = re.match(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}\s*(.*)", raw)
             if m_bib:
+                bib_key = m_bib.group(1).strip()
                 body = m_bib.group(2).strip()
 
         doi = ""
@@ -693,25 +722,83 @@ def parse_numbered_ref_lines(lines_with_src: List[Dict[str, str]], style_rules: 
                 else:
                     venue = after_tag.rstrip(".").strip()
             arxiv_body = normalize_arxiv(body)
-            if arxiv_body and doc_type in ("journal", "other"):
+            if arxiv_body and doc_type in ("journal", "other") and not venue:
                 doc_type = "preprint"
         else:
-            m_yr = re.search(r"\b((?:19|20)\d{2})\b", body)
-            if m_yr:
+            # Strip trailing DOI/URL before structural split
+            body_clean = re.sub(r"(?:https?://\S+|doi\s*:\s*10\.\d{4,9}/\S+)", "", body, flags=re.I).strip(" .;,")
+            m_quoted = re.search(r'["“]([^"”]{6,})["”]', body_clean)
+            m_yr = re.search(r"\b((?:19|20)\d{2})\b", body_clean)
+            if m_quoted:
+                # IEEE / Chicago style with quoted title
+                authors = body_clean[: m_quoted.start()].strip(" ,.;")
+                title = m_quoted.group(1).strip(" ,.")
+                after_q = body_clean[m_quoted.end() :].strip(" ,.")
+                m_vol = re.search(r"\bvol\.?\s*(\d+)", after_q, re.I)
+                m_no = re.search(r"\bno\.?\s*(\d+)", after_q, re.I)
+                m_pp = re.search(r"\bpp?\.?\s*([A-Za-z0-9]+[-–—][A-Za-z0-9]+|\d+)", after_q, re.I)
+                if m_vol:
+                    volume = m_vol.group(1)
+                if m_no:
+                    issue = m_no.group(1)
+                if m_pp:
+                    pages = m_pp.group(1)
+                if m_yr:
+                    year = m_yr.group(1)
+                v_cand = re.split(r",\s*(?:vol\.|no\.|pp?\.|(?:19|20)\d{2})", after_q, maxsplit=1, flags=re.I)[0]
+                venue = v_cand.strip(" *,.")
+            elif m_yr and m_yr.start() > len(body_clean) * 0.55:
+                # Year-at-end styles: Nature / Vancouver / numeric
                 year = m_yr.group(1)
-                authors = body[: m_yr.start()].strip(" .(,")
-                after_yr = body[m_yr.end() :].strip(" ).,:")
+                before_yr = body_clean[: m_yr.start()].strip(" .(,;")
+                after_yr = body_clean[m_yr.end() :].strip(" ).,;")
+                # Vancouver YYYY;Vol(Iss):Pages
+                m_van = re.match(r"^;?\s*(\d+)(?:\((\d+)\))?\s*:\s*([A-Za-z0-9\-–—]+)", after_yr)
+                if m_van:
+                    volume = m_van.group(1)
+                    issue = m_van.group(2) or ""
+                    pages = m_van.group(3)
+                # Split before_yr into authors. title. venue
+                segs = [p.strip() for p in re.split(r"(?<!\b[A-Z])(?<!\bet al)\.\s+", before_yr) if p.strip()]
+                if len(segs) >= 3:
+                    authors = segs[0]
+                    title = segs[1]
+                    venue = segs[2].strip(" *")
+                elif len(segs) == 2:
+                    authors = segs[0]
+                    title = segs[1]
+                else:
+                    title = before_yr
+                # Extract trailing Nature "**vol**, pages" from venue if present
+                m_nat = re.search(r"\*\*(\d+)\*\*\s*,\s*([A-Za-z0-9\-–—]+)", venue)
+                if m_nat:
+                    volume = volume or m_nat.group(1)
+                    pages = pages or m_nat.group(2)
+                    venue = venue[: m_nat.start()].strip(" *,.")
+            elif m_yr:
+                # Author-Year style: Author (YYYY). Title. Venue, vol(issue), pages.
+                year = m_yr.group(1)
+                authors = body_clean[: m_yr.start()].strip(" .(,")
+                after_yr = body_clean[m_yr.end() :].strip(" ).,:")
                 parts = [p.strip() for p in re.split(r"\.\s+", after_yr) if p.strip()]
                 if parts:
                     title = parts[0]
                 if len(parts) > 1:
-                    venue = parts[1].split(",")[0].strip()
+                    v_tail = parts[1]
+                    m_vip = re.search(r",\s*\*?(\d+)\*?(?:\((\d+)\))?\s*[,:]\s*([A-Za-z0-9\-–—]+)", v_tail)
+                    if m_vip:
+                        venue = v_tail[: m_vip.start()].strip(" *,.")
+                        volume = m_vip.group(1)
+                        issue = m_vip.group(2) or ""
+                        pages = m_vip.group(3)
+                    else:
+                        venue = v_tail.split(",")[0].strip(" *,.")
             else:
-                title = body
+                title = body_clean
 
         raw_fields = {
             "original_list_number": num,
-            "source_key": str(num) if num is not None else "",
+            "source_key": bib_key or (str(num) if num is not None else ""),
             "doc_type": doc_type,
             "title": title,
             "authors": authors,
@@ -725,7 +812,7 @@ def parse_numbered_ref_lines(lines_with_src: List[Dict[str, str]], style_rules: 
             "url": url,
         }
         rid = f"RAW_{start_idx + len(records) + 1:03d}"
-        records.append(_make_record(rid, src_rel, f"{src_rel}:ref#{num or idx}", fmt_label, raw_fields, style_rules))
+        records.append(_make_record(rid, src_rel, f"{src_rel}:ref#{bib_key or num or idx}", fmt_label, raw_fields, style_rules))
     return records
 
 
@@ -814,12 +901,27 @@ def evaluate_pair(r1: Dict[str, Any], r2: Dict[str, Any], rules: Dict[str, Any])
     if shared_doi or shared_arxiv or shared_pmid:
         id_name = "doi" if shared_doi else ("arxiv_id" if shared_arxiv else "pmid")
         id_val = r1[id_name]
-        if same_script and tsim < thr.get("tier1_identifier_title_coherence_min", 0.30) and aov < 0.30:
+        t_floor = thr.get("tier1_identifier_title_coherence_min", 0.30)
+        if same_script and r1["title"] and r2["title"] and tsim < t_floor:
             return {
                 "verdict": "recycled_doi_conflict",
                 "tier": "conflict",
-                "rule": f"shared_{id_name}_but_unrelated_titles_and_authors",
+                "rule": f"shared_{id_name}_but_unrelated_titles",
                 "metrics": {"title_sim": tsim, "author_overlap": aov, "shared_id": f"{id_name}:{id_val}"},
+            }
+        if (
+            not same_script
+            and r1["authors"]
+            and r2["authors"]
+            and not bilingual_surname_compatible(r1["authors"], r2["authors"])
+            and ydiff is not None
+            and ydiff > 2
+        ):
+            return {
+                "verdict": "recycled_doi_conflict",
+                "tier": "conflict",
+                "rule": f"shared_{id_name}_cross_script_incompatible_authors_and_year",
+                "metrics": {"title_sim": tsim, "author_overlap": aov, "year_diff": ydiff, "shared_id": f"{id_name}:{id_val}"},
             }
         return {
             "verdict": "auto_merge",
@@ -871,11 +973,19 @@ def evaluate_pair(r1: Dict[str, Any], r2: Dict[str, Any], rules: Dict[str, Any])
             }
         p1s = r1["pages_info"].get("start")
         p2s = r2["pages_info"].get("start")
+        biling_auth_ok = bilingual_surname_compatible(r1["authors"], r2["authors"])
         if y1 and y2 and y1 == y2 and r1["volume"] and r1["volume"] == r2["volume"] and p1s and p1s == p2s:
+            if biling_auth_ok or (not r1["authors"] or not r2["authors"]):
+                return {
+                    "verdict": "auto_merge",
+                    "tier": "tier2_bilingual_with_doi_or_locator",
+                    "rule": "bilingual_shared_year_volume_start_page_and_compatible_authors",
+                    "metrics": {"year": y1, "volume": r1["volume"], "start_page": p1s},
+                }
             return {
-                "verdict": "auto_merge",
-                "tier": "tier2_bilingual_with_doi_or_locator",
-                "rule": "bilingual_shared_year_volume_start_page",
+                "verdict": "ambiguous_candidate",
+                "tier": "tier3_suspected_bilingual_pair",
+                "rule": "bilingual_shared_year_volume_start_page_needs_author_venue_check",
                 "metrics": {"year": y1, "volume": r1["volume"], "start_page": p1s},
             }
         if (ydiff is None or ydiff <= thr.get("tier3_bilingual_max_year_gap", 1)) and (
@@ -948,7 +1058,7 @@ def merge_cluster(
     tracked_fields = [
         "doc_type", "title", "title_translated", "authors", "year", "venue",
         "volume", "issue", "pages", "doi", "arxiv_id", "pmid", "url",
-        "publisher", "city", "abstract", "patent_number", "standard_number",
+        "publisher", "city", "abstract", "patent_number", "standard_number", "access_date",
     ]
     merged_fields: Dict[str, Any] = {}
     field_provenance: Dict[str, Any] = {}
@@ -1027,9 +1137,13 @@ def merge_cluster(
         integrity_flags.extend(r.get("parse_warnings", []))
 
     doi_status = "not_checked_offline" if merged_fields.get("doi") else "missing_doi"
-    for r in ordered:
-        if r.get("doi_raw") and not r.get("doi"):
-            doi_status = "invalid_doi_syntax"
+    if not merged_fields.get("doi"):
+        for r in ordered:
+            if r.get("doi_raw") and not r.get("doi"):
+                doi_status = "invalid_doi_syntax"
+                break
+
+    merged_pages_info = parse_page_range(merged_fields.get("pages", ""))
 
     canon_rec = {
         "ref_id": canon_id,
@@ -1039,6 +1153,7 @@ def merge_cluster(
         "original_list_numbers": [r["original_list_number"] for r in ordered if r.get("original_list_number") is not None],
         "language": detect_script_lang(merged_fields.get("title") or primary.get("venue") or ""),
         **merged_fields,
+        "pages_info": merged_pages_info,
         "doi_verification_status": doi_status,
         "missing_required_fields": missing_req,
         "integrity_flags": sorted(set(integrity_flags)),
@@ -1093,11 +1208,11 @@ def main() -> None:
                 parse_warnings.append(f"{rel}: {warn}")
             if not txt.strip():
                 continue
-            if ext == ".bib" or "@article" in txt[:2000].lower() or "@inproceedings" in txt[:2000].lower():
+            if ext == ".bib":
                 recs, warns = parse_bibtex(txt, rel, style_rules, len(raw_records))
-            elif ext == ".ris" or ("TY  -" in txt[:3000] and "ER  -" in txt):
+            elif ext == ".ris":
                 recs, warns = parse_ris(txt, rel, style_rules, len(raw_records))
-            elif ext == ".enw" or ("%0 " in txt[:2000] and "%T " in txt[:2000]):
+            elif ext == ".enw":
                 recs, warns = parse_endnote_tagged(txt, rel, style_rules, len(raw_records))
             elif ext == ".xml":
                 recs, warns = parse_endnote_xml(txt, rel, style_rules, len(raw_records))
@@ -1105,7 +1220,13 @@ def main() -> None:
                 recs, warns = parse_csl_or_json(txt, rel, style_rules, len(raw_records))
             elif ext in (".csv", ".tsv"):
                 recs, warns = parse_csv_tsv(txt, rel, ext == ".tsv", style_rules, len(raw_records))
-            elif any(k in txt[:2000] for k in ("RT ", "Title-题名:", "SrcDatabase-")):
+            elif re.search(r"^\s*@[A-Za-z]+\s*[({]", txt[:3000], re.M):
+                recs, warns = parse_bibtex(txt, rel, style_rules, len(raw_records))
+            elif "TY  -" in txt[:3000] and "ER  -" in txt:
+                recs, warns = parse_ris(txt, rel, style_rules, len(raw_records))
+            elif "%0 " in txt[:2000] and "%T " in txt[:2000]:
+                recs, warns = parse_endnote_tagged(txt, rel, style_rules, len(raw_records))
+            elif re.search(r"(?:^RT\s+|Title-题名\s*[:：]|SrcDatabase-)", txt[:3000], re.M):
                 recs, warns = parse_cnki_txt(txt, rel, style_rules, len(raw_records))
             else:
                 lines_src = [{"source_file": rel, "raw": ln} for ln in txt.splitlines() if ln.strip()]
@@ -1206,6 +1327,8 @@ def main() -> None:
             parent[rb] = ra
 
     merge_edges: List[Dict[str, Any]] = []
+    candidate_auto_edges: List[Tuple[int, int, Dict[str, Any]]] = []
+    forbidden_pairs: set[Tuple[int, int]] = set()
     ambiguous_candidates: List[Dict[str, Any]] = []
     protected_non_duplicates: List[Dict[str, Any]] = []
     recycled_doi_conflicts: List[Dict[str, Any]] = []
@@ -1215,14 +1338,7 @@ def main() -> None:
             res = evaluate_pair(raw_records[i], raw_records[j], dedup_rules)
             v = res["verdict"]
             if v == "auto_merge":
-                union(i, j)
-                merge_edges.append({
-                    "raw_a": raw_records[i]["raw_id"],
-                    "raw_b": raw_records[j]["raw_id"],
-                    "tier": res["tier"],
-                    "rule": res["rule"],
-                    "metrics": res["metrics"],
-                })
+                candidate_auto_edges.append((i, j, res))
             elif v == "ambiguous_candidate":
                 ambiguous_candidates.append({
                     "candidate_id": f"AMB_{len(ambiguous_candidates) + 1:03d}",
@@ -1233,6 +1349,7 @@ def main() -> None:
                     "metrics": res["metrics"],
                 })
             elif v == "protected_non_duplicate":
+                forbidden_pairs.add((i, j))
                 protected_non_duplicates.append({
                     "raw_a": raw_records[i]["raw_id"],
                     "raw_b": raw_records[j]["raw_id"],
@@ -1242,6 +1359,7 @@ def main() -> None:
                     "metrics": res["metrics"],
                 })
             elif v == "recycled_doi_conflict":
+                forbidden_pairs.add((i, j))
                 recycled_doi_conflicts.append({
                     "raw_a": raw_records[i]["raw_id"],
                     "raw_b": raw_records[j]["raw_id"],
@@ -1250,6 +1368,52 @@ def main() -> None:
                     "rule": res["rule"],
                     "metrics": res["metrics"],
                 })
+
+    # Phase 2: Guarded Union-Find — never transitively merge clusters that contain a forbidden pair
+    cluster_members: Dict[int, set[int]] = {idx: {idx} for idx in range(n)}
+    for i, j, res in candidate_auto_edges:
+        ri, rj = find(i), find(j)
+        if ri == rj:
+            merge_edges.append({
+                "raw_a": raw_records[i]["raw_id"],
+                "raw_b": raw_records[j]["raw_id"],
+                "tier": res["tier"],
+                "rule": res["rule"],
+                "metrics": res["metrics"],
+            })
+            continue
+        conflict = False
+        if forbidden_pairs:
+            mi, mj = cluster_members[ri], cluster_members[rj]
+            for a in mi:
+                for b in mj:
+                    pair = (a, b) if a < b else (b, a)
+                    if pair in forbidden_pairs:
+                        conflict = True
+                        break
+                if conflict:
+                    break
+        if conflict:
+            ambiguous_candidates.append({
+                "candidate_id": f"AMB_{len(ambiguous_candidates) + 1:03d}",
+                "raw_a": {"raw_id": raw_records[i]["raw_id"], "title": raw_records[i]["title"], "authors": raw_records[i]["authors"], "year": raw_records[i]["year"], "venue": raw_records[i]["venue"], "doi": raw_records[i]["doi"], "source_locator": raw_records[i]["source_locator"]},
+                "raw_b": {"raw_id": raw_records[j]["raw_id"], "title": raw_records[j]["title"], "authors": raw_records[j]["authors"], "year": raw_records[j]["year"], "venue": raw_records[j]["venue"], "doi": raw_records[j]["doi"], "source_locator": raw_records[j]["source_locator"]},
+                "tier": "tier3_blocked_transitive_merge",
+                "rule": f"blocked_transitive_merge_against_protected_or_recycled_pair ({res['rule']})",
+                "metrics": res["metrics"],
+            })
+        else:
+            union(ri, rj)
+            new_root = find(ri)
+            merged_set = cluster_members.pop(ri) | cluster_members.pop(rj)
+            cluster_members[new_root] = merged_set
+            merge_edges.append({
+                "raw_a": raw_records[i]["raw_id"],
+                "raw_b": raw_records[j]["raw_id"],
+                "tier": res["tier"],
+                "rule": res["rule"],
+                "metrics": res["metrics"],
+            })
 
     clusters: Dict[int, List[Dict[str, Any]]] = {}
     for idx in range(n):
@@ -1278,6 +1442,10 @@ def main() -> None:
                 key_to_canonical_map.setdefault(m["source_key"], cid)
             if m.get("original_list_number") is not None:
                 inline_num_to_canonical_map[str(m["original_list_number"])] = cid
+
+    for ac in ambiguous_candidates:
+        ac["raw_a"]["ref_id"] = raw_to_canonical_map.get(ac["raw_a"]["raw_id"], "")
+        ac["raw_b"]["ref_id"] = raw_to_canonical_map.get(ac["raw_b"]["raw_id"], "")
 
     lib_out = {
         "case_id": case_plan.get("case_id", ""),
@@ -1327,8 +1495,8 @@ def main() -> None:
         dlines.append("## Tier-3 Ambiguous Candidates (Decide merge vs keep_separate in citation_plan.json)")
         for ac in ambiguous_candidates:
             dlines.append(f"- **`{ac['candidate_id']}`** ({ac['tier']} | {ac['rule']}):")
-            dlines.append(f"  - A (`{ac['raw_a']['raw_id']}` @ `{ac['raw_a']['source_locator']}`): {ac['raw_a']['title']} | {ac['raw_a']['authors']} | {ac['raw_a']['year']} | {ac['raw_a']['venue']}")
-            dlines.append(f"  - B (`{ac['raw_b']['raw_id']}` @ `{ac['raw_b']['source_locator']}`): {ac['raw_b']['title']} | {ac['raw_b']['authors']} | {ac['raw_b']['year']} | {ac['raw_b']['venue']}")
+            dlines.append(f"  - A (`{ac['raw_a'].get('ref_id', '')}` / `{ac['raw_a']['raw_id']}` @ `{ac['raw_a']['source_locator']}`): {ac['raw_a']['title']} | {ac['raw_a']['authors']} | {ac['raw_a']['year']} | {ac['raw_a']['venue']}")
+            dlines.append(f"  - B (`{ac['raw_b'].get('ref_id', '')}` / `{ac['raw_b']['raw_id']}` @ `{ac['raw_b']['source_locator']}`): {ac['raw_b']['title']} | {ac['raw_b']['authors']} | {ac['raw_b']['year']} | {ac['raw_b']['venue']}")
         dlines.append("")
     if recycled_doi_conflicts:
         dlines.append("## CRITICAL: Recycled / Conflicting DOI Alerts (DO NOT MERGE)")

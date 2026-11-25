@@ -60,18 +60,14 @@ Ni-N-C & 300 & 94.2 \\
 
 ---
 
-## 2. Step-by-Step Invocation
+## 2. Streamlined Invocation (Step 1)
 
 ```bash
 export SKILL_DIR=/skills/weekly-skill
 mkdir -p /app/work/src /app/work/build /app/work/previews /app/output
 
-python3 "$SKILL_DIR/scripts/inspect_case.py" --input-dir /input --out /app/work/case_plan.json
-python3 "$SKILL_DIR/scripts/analyze_latex.py" --case-plan /app/work/case_plan.json \
-  --out-audit /app/work/latex_audit.json --out-digest /app/work/latex_digest.md
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" \
-  --case-plan /app/work/case_plan.json --audit /app/work/latex_audit.json \
-  --checkpoint partial --out-dir /app/output
+python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
+  --input-dir /input --work-dir /app/work --out-dir /app/output
 ```
 
 ### Illustrative Output Excerpt from `/app/work/latex_digest.md`
@@ -129,19 +125,10 @@ Ni-N-C & 300 & 94.2 \\
 ## 4. Illustrative Verification & Final Output (`result.json`)
 
 ```bash
-python3 "$SKILL_DIR/scripts/compile_and_diagnose.py" --tex /app/work/src/main.tex \
-  --work-dir /app/work/build --preview-dir /app/work/previews \
-  --out-report /app/work/compile_report.json --out-summary /app/work/compile_summary.md
-
-python3 "$SKILL_DIR/scripts/verify_deliverable.py" --payload /app/work/deliverable_payload.json \
-  --case-plan /app/work/case_plan.json --audit /app/work/latex_audit.json \
-  --compile-report /app/work/compile_report.json --work-tex-dir /app/work/src \
-  --out /app/work/verification_report.json
-
-python3 "$SKILL_DIR/scripts/assemble_deliverables.py" --case-plan /app/work/case_plan.json \
-  --audit /app/work/latex_audit.json --compile-report /app/work/compile_report.json \
-  --payload /app/work/deliverable_payload.json --verification /app/work/verification_report.json \
-  --work-tex-dir /app/work/src --checkpoint final --out-dir /app/output
+python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+  --tex /app/work/src/main.tex --project-root /app/work/src \
+  --payload /app/work/deliverable_payload.json \
+  --work-dir /app/work --out-dir /app/output
 ```
 
 Illustrative `/app/output/result.json` excerpt:

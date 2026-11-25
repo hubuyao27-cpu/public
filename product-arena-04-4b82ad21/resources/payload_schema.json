@@ -39,12 +39,20 @@
       "type": "string",
       "enum": ["ieee_numeric", "gbt7714", "apa_author_year", "nature_numeric", "bibtex_latex", "unspecified"]
     },
+    "task_mode": {
+      "type": "string",
+      "enum": ["draft_intro_rw", "revise_and_strengthen", "organize_related_work", "fill_and_audit_citations", "align_contributions", "bilingual_writing"]
+    },
     "title": {
       "type": "string"
     },
+    "manuscript_file": {
+      "type": "string",
+      "description": "Optional path to an external Markdown manuscript file (e.g. /app/work/manuscript.md) to avoid JSON-escaping long prose inside section_payload.json."
+    },
     "manuscript_markdown": {
       "type": "string",
-      "description": "Publication-ready Introduction & Related Work text with explicit headings, anchored inline citations, [作者判断]/[AUTHOR_JUDGMENT] where judgment is used, and [待作者确认: GAP-XX]/[AUTHOR_CONFIRM: GAP-XX] markers."
+      "description": "Publication-ready Introduction & Related Work text with explicit headings, anchored inline citations ([R01] auto-renders to target style upon assembly), [作者判断]/[AUTHOR_JUDGMENT] where judgment is used, and [待作者确认: GAP-XX]/[AUTHOR_CONFIRM: GAP-XX] markers. May be left empty if manuscript_file is supplied."
     },
     "research_background": {
       "type": "object",
