@@ -75,21 +75,17 @@ python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
 # Step 2: 阅读 /app/work/evidence_digest.md 与 section_payload_skeleton.json，
 # 补全 /app/work/section_payload.json（长正文可选写为 /app/work/manuscript.md 并通过 manuscript_file 引用）
 
-# Step 3: 十轴机械核验
-python3 -B "$SKILL_DIR/scripts/verify_intro_rw.py" \
-  --payload /app/work/section_payload.json \
-  --ledger /app/work/source_ledger.json \
-  --case-plan /app/work/case_plan.json \
-  --out /app/work/verification_report.json
-
-# Step 4: 组装最终产物（自动将内文 [R01]/[R02] 渲染为目标格式 [1]/[2]）
-python3 -B "$SKILL_DIR/scripts/assemble_deliverables.py" \
-  --case-plan /app/work/case_plan.json \
-  --ledger /app/work/source_ledger.json \
-  --payload /app/work/section_payload.json \
-  --verification /app/work/verification_report.json \
-  --checkpoint final --out-dir /app/output
+# Step 3: 一键机械核验与组装最终产物（自动将内文 [R01]/[R02] 按首次出现顺序渲染为目标格式 [1]/[2]）
+python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+  --work-dir /app/work --out-dir /app/output
 ```
+
+---
+
+## 2b. 多篇 PDF 与英文/修订场景要点（Synthetic Illustration）
+
+- **英文目标提示（中文提问）**：如 `/input/task.md` 写明“请用英文完成引言与相关工作，采用 IEEE 格式”，`inspect_case.py` 自动置 `language: "en"`、`citation_style: "ieee_numeric"`；同时读取多篇两栏 PDF 的 `Abstract / Method / Experiments / Limitations` 分节卡写入 `/app/work/evidence_digest.md`。
+- **缺料诚实短路**：当 `/input/` 仅含外部文献（无自研实验数据时）或为空时，不会因外部文献的 `Fig./Table` 强迫伪造 `contributions[]`；缺料则设置 `status: "insufficient_material"`。
 
 ---
 

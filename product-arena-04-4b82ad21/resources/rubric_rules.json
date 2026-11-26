@@ -48,7 +48,7 @@
     "gbt7714": {
       "label": "GB/T 7714-2015",
       "inline_example": "[1], [1, 2]",
-      "reference_template": "[idx] {authors}. {title}[J/C]. {venue}, {year}{extra}."
+      "reference_template": "[idx] {authors}. {title}{doc_type_code}. {venue}{extra}."
     },
     "ieee_numeric": {
       "label": "IEEE Numeric",

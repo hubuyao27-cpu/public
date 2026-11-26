@@ -52,14 +52,29 @@ def _peek_ambiguous_file(path: Path) -> str:
         if not err and txt:
             sample = txt[:2500]
     elif ext == ".pdf":
+        # Prefer PyMuPDF for accurate multi-column reading order before falling back to pypdf
         try:
-            import pypdf  # type: ignore
-
-            reader = pypdf.PdfReader(str(path))
-            if not reader.is_encrypted and reader.pages:
-                sample = (reader.pages[0].extract_text() or "")[:2500]
+            fitz_mod: Any = None
+            try:
+                import pymupdf as fitz_mod  # type: ignore
+            except ImportError:
+                import fitz as fitz_mod  # type: ignore
+            if hasattr(fitz_mod, "open"):
+                doc = fitz_mod.open(str(path))
+                if not getattr(doc, "needs_pass", False) and len(doc) > 0:
+                    sample = (doc[0].get_text("text") or "")[:2500]
+                doc.close()
         except Exception:
             sample = ""
+        if not sample:
+            try:
+                import pypdf  # type: ignore
+
+                reader = pypdf.PdfReader(str(path))
+                if not reader.is_encrypted and reader.pages:
+                    sample = (reader.pages[0].extract_text() or "")[:2500]
+            except Exception:
+                sample = ""
     if not sample:
         return "literature_source"
     low = sample.lower()
@@ -77,6 +92,7 @@ def _peek_ambiguous_file(path: Path) -> str:
 
 def classify_file(path: Path, rel: str) -> str:
     name_low = path.name.lower()
+    stem_low = path.stem.lower()
     rel_low = rel.lower()
     ext = path.suffix.lower()
     parent_parts = [pt.lower() for pt in Path(rel).parts[:-1]]
@@ -85,25 +101,28 @@ def classify_file(path: Path, rel: str) -> str:
         return "control"
     if ext in BINARY_EXTS:
         return "binary_or_figure"
+
+    # Check own-paper drafts BEFORE generic bibliography substrings (e.g. intro_draft_with_references.tex)
+    if any(pt in DRAFT_DIR_NAMES for pt in parent_parts) or any(
+        w in name_low for w in ("draft", "existing_intro", "old_intro", "manuscript_draft", "raw_draft")
+    ):
+        return "own_paper_draft"
+
     if ext in BIB_EXTS or any(w in name_low for w in ("bib", "citation", "references", "ref_list", "library")):
         if ext in (".bib", ".ris", ".enw", ".json", ".csv", ".tsv", ".md", ".txt", ".tex"):
             return "bibliography"
 
     # Directory-aware priority prevents papers/smith_methods.pdf from becoming own_paper_evidence
-    if any(pt in DRAFT_DIR_NAMES for pt in parent_parts) or any(
-        w in name_low for w in ("draft", "existing_intro", "old_intro", "manuscript_draft", "raw_draft")
-    ):
-        return "own_paper_draft"
     if any(pt in LIT_DIR_NAMES for pt in parent_parts):
         return "literature_source"
     if any(pt in OWN_DIR_NAMES for pt in parent_parts):
         return "own_paper_evidence"
 
-    # Top-level filename heuristics
-    if any(
-        w in name_low
-        for w in ("own_paper", "our_paper", "own_result", "our_result", "result", "experiment", "eval", "metric", "ablation", "figure", "table", "methods")
-    ):
+    # Top-level filename heuristics using word boundaries (avoid matching substrings inside e.g. self_evaluation_survey.pdf)
+    is_own_name = bool(
+        re.search(r"\b(?:own_paper|our_paper|own_result|our_result|results?|experiments?|evaluation|eval|metrics?|ablations?|figures?|tables?|methods?)\b", stem_low)
+    )
+    if is_own_name and not re.search(r"\b(?:survey|review|benchmark|retrieval|corpus|literature|related)\b", stem_low):
         return "own_paper_evidence"
     if name_low in ("paper.pdf", "main.tex", "manuscript.pdf", "manuscript.tex", "submission.pdf"):
         return _peek_ambiguous_file(path)
@@ -134,9 +153,13 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
     elif explicit_lang.startswith("en") or explicit_lang in ("english", "英文"):
         lang = "en"
     else:
-        if "bilingual" in low or "双语" in blob or "中英文" in blob or "中英双语" in blob:
+        clean_lang_blob = re.sub(r"(?:无需|不需要|不用|非|no|not)\s*(?:双语|bilingual)", " ", blob, flags=re.I)
+        if re.search(r"\bbilingual\b|双语|中英文|中英双语", clean_lang_blob, re.I):
             lang = "bilingual"
-        elif re.search(r"(?:write|draft|output)\s+(?:in\s+)?english|用英文(?:撰写|写作|输出)|英文撰写", low):
+        elif re.search(
+            r"(?:write|draft|output|compose)\s+(?:in\s+)?english|(?:请?用|以|使用)英文(?:完成|撰写|写作|编写|输出|润色|撰写引言)|英文(?:论文|引言|相关工作|写作)|目标语言\s*[:：]\s*英文",
+            low,
+        ) and not re.search(r"(?:不要|无需|非)英文", blob):
             lang = "en"
         elif re.search(r"[\u4e00-\u9fff]", task_text or blob):
             lang = "zh"
@@ -163,17 +186,21 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
         cstyle = "ieee_numeric"
     elif re.search(r"\bnature\s*(?:style|format|citation|reference|journal|numeric|格式|引用|期刊)|(?:style|format|citation|格式|引用)[^.\n]{0,20}\bnature\b", low):
         cstyle = "nature_numeric"
-    elif re.search(r"\bbibtex\b|\\cite|\blatex\b|\.tex\b", low):
+    elif re.search(r"\bbibtex\b|\\cite|\blatex\b|\.tex\b", low) and not re.search(r"(?:无需|不用|不要求|no)\s*(?:latex|bibtex|\.tex)", low):
         cstyle = "bibtex_latex"
     else:
         cstyle = "unspecified"
 
-    # 3. Task mode: strip '修改记录/revision log' before checking revision cues
+    # 3. Task mode: strip '修改记录/revision log' before checking revision cues; prioritize explicit targeted actions
     mode_blob = re.sub(r"修改记录|修改日志|修改差异|change_records|revision\s+log", " ", low)
     has_intro_cue = bool(re.search(r"\bintroduction\b|引言", mode_blob))
     has_rw_cue = bool(re.search(r"related work|相关工作", mode_blob))
     if lang == "bilingual" or any(w in mode_blob for w in ("bilingual", "双语")):
         tmode = "bilingual_writing"
+    elif re.search(r"(?:核对|补全|补齐|检查|审计)[^\n。]{0,12}引用|\b(?:fill|audit|check|verify)\b[^\n.]{0,18}\bcitation", mode_blob) and not re.search(r"撰写|写作|起草|draft|write", mode_blob):
+        tmode = "fill_and_audit_citations"
+    elif re.search(r"对齐[^\n。]{0,12}贡献|\balign\b[^\n.]{0,18}\bcontribution", mode_blob) and not re.search(r"撰写|写作|起草|draft|write", mode_blob):
+        tmode = "align_contributions"
     elif re.search(r"\b(?:revise|rewrite|polish)\b|修改(?:草稿|现有|已有|原文|引言|相关工作)|改写|润色|重构", mode_blob):
         tmode = "revise_and_strengthen"
     elif any(w in mode_blob for w in ("audit", "verify", "check", "核对", "补引", "补全引用", "校对")) and not (has_intro_cue or has_rw_cue):
@@ -185,17 +212,21 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
     else:
         tmode = "draft_intro_rw"
 
-    # 4. Requested output formats (avoid matching 'text'/'context' as 'tex', 'word limit' as 'docx', bare 'taxonomy' as diagram)
+    # 4. Requested output formats (guard against input file mentions and explicit negations)
+    fmt_blob = re.sub(r"(?:无需|不用|不要求|不需要|no|without)\s*(?:latex|bibtex|docx|word|pdf|tex|diagram)", " ", low)
+    fmt_blob = re.sub(r"(?:读取|基于|输入|依据|from|read|parse)\s+[A-Za-z0-9_./-]+\.(?:tex|bib|docx|pdf)\b", " ", fmt_blob)
     req_fmts = ["md"]
-    if re.search(r"\b(?:latex|xelatex|pdflatex|tex)\b|\.tex\b|\\cite", low):
+    if re.search(r"\b(?:latex|xelatex|pdflatex|tex)\b|\.tex\b|\\cite", fmt_blob):
         req_fmts.append("tex")
-    if re.search(r"\bbibtex\b|\.bib\b", low):
+    if re.search(r"\bbibtex\b|\.bib\b", fmt_blob):
         req_fmts.append("bib")
-    if re.search(r"\b(?:docx|ms\s*word|microsoft\s*word)\b|\.docx\b|word\s*文档", low):
+    if re.search(r"\b(?:docx|ms\s*word|microsoft\s*word)\b|\.docx\b|word\s*文档", fmt_blob):
         req_fmts.append("docx")
-    if re.search(r"\bcsv\b|\.csv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", low):
+    if re.search(r"\bpdf\b|导出\s*pdf", fmt_blob) and "tex" not in req_fmts and "docx" not in req_fmts:
+        req_fmts.append("tex")
+    if re.search(r"\bcsv\b|\.csv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", fmt_blob):
         req_fmts.append("csv")
-    if re.search(r"\b(?:diagram|flowchart)\b|\btaxonomy\s+(?:diagram|figure|chart|plot)\b|路线图|关系图|演化图|结构图", low):
+    if re.search(r"\b(?:diagram|flowchart)\b|\btaxonomy\s+(?:diagram|figure|chart|plot)\b|路线图|关系图|演化图|结构图", fmt_blob):
         req_fmts.append("diagram")
 
     venue = str(case_data.get("venue") or case_data.get("audience") or case_data.get("journal") or "").strip()
@@ -271,7 +302,7 @@ def main() -> None:
                 }
             )
 
-    # Check explicitly referenced files in case.json
+    # Check explicitly referenced files in case.json (list OR singular keys)
     missing_refs: List[str] = []
     for key in ("files", "materials", "artifacts", "documents", "papers", "input_files"):
         val = case_data.get(key)
@@ -286,6 +317,12 @@ def main() -> None:
                     cp = (input_dir / cand) if not Path(cand).is_absolute() else Path(cand)
                     if not cp.exists():
                         missing_refs.append(cand)
+    for skey in ("input_file", "pdf_path", "draft_file", "manuscript_file", "bib_file"):
+        sval = case_data.get(skey)
+        if isinstance(sval, str) and ("/" in sval or "." in sval):
+            cp = (input_dir / sval) if not Path(sval).is_absolute() else Path(sval)
+            if not cp.exists():
+                missing_refs.append(sval)
 
     # Identify inline material keys in case.json
     inline_keys: List[str] = []

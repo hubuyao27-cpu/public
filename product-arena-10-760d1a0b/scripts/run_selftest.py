@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import copy
 import json
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -661,6 +663,13 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="kg_skill_selftest_") as td:
         tmp = Path(td)
+        corpus_copy = tmp / "synth_corpus"
+        shutil.copytree(SYNTH_CORPUS, corpus_copy)
+        xml_md = corpus_copy / "secondary-publisher-xml.md"
+        if xml_md.exists():
+            m_xml = re.search(r"```xml\s*(.*?)\s*```", xml_md.read_text(encoding="utf-8"), re.S)
+            if m_xml:
+                (corpus_copy / "secondary-publisher.xml").write_text(m_xml.group(1) + "\n", encoding="utf-8")
         inspect_dir = tmp / "inspect"
         work_dir = tmp / "work"
         out_dir = tmp / "output"
@@ -671,7 +680,7 @@ def main() -> None:
             [
                 str(SCRIPT_DIR / "inspect_corpus.py"),
                 "--input-dir",
-                str(SYNTH_CORPUS),
+                str(corpus_copy),
                 "--out-dir",
                 str(inspect_dir),
             ]

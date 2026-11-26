@@ -30,6 +30,7 @@ def main() -> None:
     ap.add_argument("--work-dir", default="/app/work")
     ap.add_argument("--out-dir", default="/app/output")
     ap.add_argument("--plan", default=None)
+    ap.add_argument("--allow-partial", action="store_true", help="Exit 0 even if verification errors remain after honest partial assembly")
     args = ap.parse_args()
 
     sdir = Path(__file__).resolve().parent
@@ -102,7 +103,7 @@ def main() -> None:
         ],
     )
     print(ver_proc.stdout)
-    if ver_proc.returncode != 0:
+    if ver_proc.returncode != 0 and not args.allow_partial:
         raise SystemExit(ver_proc.returncode)
 
 

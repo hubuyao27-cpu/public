@@ -72,17 +72,20 @@ def load_rubric_rules(rules_path: Optional[str] = None) -> Dict[str, Any]:
 def load_json_safe(path: Path) -> Tuple[Optional[Any], Optional[str]]:
     if not path.exists():
         return None, f"file_not_found:{path}"
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+    raw = None
+    last_exc: Optional[Exception] = None
+    for enc in ("utf-8-sig", "utf-8"):
         try:
-            raw = path.read_text(encoding="utf-8-sig")
+            raw = path.read_text(encoding=enc)
+            break
+        except UnicodeDecodeError as exc:
+            last_exc = exc
+        except PermissionError as exc:
+            return None, f"permission_denied:{exc}"
         except Exception as exc:
-            return None, f"encoding_error:{exc}"
-    except PermissionError as exc:
-        return None, f"permission_denied:{exc}"
-    except Exception as exc:
-        return None, f"read_error:{exc}"
+            return None, f"read_error:{exc}"
+    if raw is None:
+        return None, f"encoding_error:{last_exc}"
     try:
         return json.loads(raw), None
     except json.JSONDecodeError as exc:
@@ -98,7 +101,7 @@ def save_json(path: Path, data: Any) -> None:
 def read_text_safe(path: Path) -> Tuple[Optional[str], Optional[str]]:
     if not path.exists():
         return None, f"file_not_found:{path}"
-    for enc in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "gb18030", "latin-1"):
         try:
             return path.read_text(encoding=enc), None
         except UnicodeDecodeError:
@@ -136,11 +139,11 @@ def infer_semantic_role(field_name: str, desc: str = "") -> str:
         or fn in ("files", "deliverables", "deliverable_files", "output_files", "artifacts", "generated_files", "previews")
     ):
         return "deliverable_files"
-    if any(w in fn for w in ("claim_citation", "claim_map", "citation_map", "claim_to_citation")):
+    if any(w in fn for w in ("claim_citation", "claim_map", "citation_map", "claim_to_citation")) or fn in ("claims", "claim_evidence"):
         return "claim_citation_map"
     if any(w in fn for w in ("comparison_matrix", "related_work_matrix", "matrix", "comparison_table", "rw_table", "literature_table")):
         return "comparison_matrix"
-    if any(w in fn for w in ("research_gap", "gap_list", "gaps", "open_problem")) or fn == "gap":
+    if any(w in fn for w in ("research_gap", "gap_analysis", "gap_list", "gaps", "open_problem")) or fn == "gap":
         return "research_gaps"
     if any(w in fn for w in ("contrib", "contribution")):
         return "contributions"
@@ -148,9 +151,9 @@ def infer_semantic_role(field_name: str, desc: str = "") -> str:
         return "conflicts"
     if any(w in fn for w in ("confirm", "question", "author_confirm", "todo_author", "open_issue")):
         return "author_confirmation_items"
-    if any(w in fn for w in ("change_record", "changes", "revision", "diff", "edit_log", "modification")):
+    if any(w in fn for w in ("change_record", "changes", "revision", "diff", "edit_log", "edit_history", "modification")):
         return "change_records"
-    if any(w in fn for w in ("uncertain", "unknown", "warning", "limit", "boundary")):
+    if any(w in fn for w in ("uncertain", "unknown", "warning", "limit", "boundary", "author_notes")):
         return "uncertainty"
     if any(w in fn for w in ("citation_check", "citation_list", "citation_audit", "citations", "reference", "bib", "cited_work")):
         return "references"
@@ -272,7 +275,8 @@ def parse_output_contract(contract: Any) -> Dict[str, Any]:
             return parse_output_contract(contract["schema"])
 
         if isinstance(contract.get("properties"), dict):
-            req_raw = contract.get("required") or contract.get("required_fields") or []
+            has_explicit_req = isinstance(contract.get("required"), list) or isinstance(contract.get("required_fields"), list)
+            req_raw = contract.get("required") if isinstance(contract.get("required"), list) else contract.get("required_fields", [])
             req_set = set(req_raw) if isinstance(req_raw, list) else set()
             for k, spec in contract["properties"].items():
                 sd = spec if isinstance(spec, dict) else {"example": spec}
@@ -282,7 +286,7 @@ def parse_output_contract(contract: Any) -> Dict[str, Any]:
                     {
                         "name": k,
                         "expected_type": ftype,
-                        "required": (k in req_set) if req_set else True,
+                        "required": (k in req_set) if has_explicit_req else True,
                         "description": desc,
                         "semantic_role": infer_semantic_role(k, desc),
                     }
@@ -303,9 +307,9 @@ def parse_output_contract(contract: Any) -> Dict[str, Any]:
             or isinstance(contract.get("required_fields"), list)
         )
         meta_keys = (
-            {"type", "description", "format", "required", "required_fields", "$schema", "title", "additionalProperties"}
+            {"type", "description", "format", "required", "required_fields", "$schema", "title", "additionalProperties", "example", "sample", "instructions", "constraints"}
             if is_schema_wrapper
-            else {"required", "required_fields", "$schema", "additionalProperties"}
+            else {"required", "required_fields", "$schema", "additionalProperties", "example", "sample", "instructions", "constraints"}
         )
         req_list = (
             contract.get("required")
@@ -489,10 +493,49 @@ def _pdf_total_chars(pages: List[Dict[str, Any]]) -> int:
     return sum(len((p.get("text") or "").strip()) for p in pages)
 
 
-def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Extract per-page text from PDF with quality-aware multi-backend fallback and error flags.
+def _pdf_sort_page_blocks_reading_order(page: Any) -> str:
+    """Reconstruct multi-column reading order cleanly for PyMuPDF pages."""
+    try:
+        blocks = page.get_text("blocks") or []
+    except Exception:
+        return page.get_text("text") or ""
+    text_blocks = []
+    for b in blocks:
+        if len(b) >= 5 and isinstance(b[4], str) and b[4].strip() and (len(b) < 7 or b[6] == 0):
+            text_blocks.append((float(b[0]), float(b[1]), float(b[2]), float(b[3]), b[4].strip()))
+    if not text_blocks:
+        return page.get_text("text") or ""
+    pw = float(getattr(getattr(page, "rect", None), "width", 0.0) or 600.0)
+    mid = pw * 0.5
+    left_blk = [b for b in text_blocks if b[2] <= mid + 18.0]
+    right_blk = [b for b in text_blocks if b[0] >= mid - 18.0]
+    span_blk = [b for b in text_blocks if b not in left_blk and b not in right_blk]
+    if len(left_blk) >= 2 and len(right_blk) >= 2:
+        # Band around full-width spanning blocks (title/abstract/spanning figures)
+        ordered: List[str] = []
+        span_sorted = sorted(span_blk, key=lambda b: b[1])
+        bands: List[Tuple[float, float]] = []
+        prev_y = -1e9
+        for sb in span_sorted:
+            bands.append((prev_y, sb[1]))
+            prev_y = sb[3]
+        bands.append((prev_y, 1e9))
+        for idx_b, (y_lo, y_hi) in enumerate(bands):
+            l_part = sorted([b for b in left_blk if y_lo <= 0.5 * (b[1] + b[3]) < y_hi], key=lambda b: (b[1], b[0]))
+            r_part = sorted([b for b in right_blk if y_lo <= 0.5 * (b[1] + b[3]) < y_hi], key=lambda b: (b[1], b[0]))
+            ordered.extend(b[4] for b in l_part)
+            ordered.extend(b[4] for b in r_part)
+            if idx_b < len(span_sorted):
+                ordered.append(span_sorted[idx_b][4])
+        return "\n".join(ordered)
+    text_blocks.sort(key=lambda b: (round(b[1] / 6.0), b[0]))
+    return "\n".join(b[4] for b in text_blocks)
 
-    Returns: (pages=[{"page": 1, "text": "...", "method": "..."}], warnings=[...])
+
+def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Extract per-page text from PDF with reading-order-first multi-backend fallback and error flags.
+
+    Precedence: PyMuPDF (reading-order sorted) -> pdfplumber -> pdftotext -layout -> pypdf -> stdlib literal scan.
     """
     warnings: List[str] = []
     if not path.exists():
@@ -502,7 +545,7 @@ def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
     except Exception as exc:
         return [], [f"read_error:{exc}"]
 
-    if not header.lstrip().startswith(b"%PDF"):
+    if b"%PDF" not in header:
         return [], [f"pdf_corrupt:missing_pdf_header:{path.name}"]
 
     best_pages: List[Dict[str, Any]] = []
@@ -515,53 +558,33 @@ def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
             best_pages = cand
             best_chars = c
 
-    # 1. pypdf
+    # 1. PyMuPDF (fitz) with column reading-order sorting
     try:
-        import pypdf  # type: ignore
-
-        reader = pypdf.PdfReader(str(path))
-        if reader.is_encrypted:
-            try:
-                if reader.decrypt("") == 0:
-                    return [], [f"pdf_encrypted:{path.name}"]
-            except Exception:
+        fitz_mod: Any = None
+        try:
+            import pymupdf as fitz_mod  # type: ignore
+        except ImportError:
+            import fitz as fitz_mod  # type: ignore
+        if hasattr(fitz_mod, "open"):
+            doc = fitz_mod.open(str(path))
+            if getattr(doc, "needs_pass", False):
+                doc.close()
                 return [], [f"pdf_encrypted:{path.name}"]
-        cand = []
-        for i, page in enumerate(reader.pages, start=1):
-            txt = page.extract_text() or ""
-            cand.append({"page": i, "text": txt, "method": "pypdf"})
-        consider(cand)
+            cand = []
+            for i, page in enumerate(doc, start=1):
+                txt = _pdf_sort_page_blocks_reading_order(page)
+                cand.append({"page": i, "text": txt, "method": "pymupdf"})
+            doc.close()
+            consider(cand)
     except ImportError:
         pass
     except Exception as exc:
         msg = str(exc).lower()
         if "encrypt" in msg or "password" in msg:
             return [], [f"pdf_encrypted:{path.name}"]
-        warnings.append(f"pypdf_failed:{exc}")
+        warnings.append(f"pymupdf_failed:{exc}")
 
-    # 2. fitz (PyMuPDF) - also retry when pypdf returned near-empty text
-    if best_chars < 100:
-        try:
-            try:
-                import pymupdf as fitz  # type: ignore
-            except ImportError:
-                import fitz  # type: ignore
-
-            doc = fitz.open(str(path))
-            if getattr(doc, "needs_pass", False):
-                doc.close()
-                return [], [f"pdf_encrypted:{path.name}"]
-            cand = []
-            for i, page in enumerate(doc, start=1):
-                cand.append({"page": i, "text": page.get_text("text") or "", "method": "pymupdf"})
-            doc.close()
-            consider(cand)
-        except ImportError:
-            pass
-        except Exception as exc:
-            warnings.append(f"pymupdf_failed:{exc}")
-
-    # 3. pdfplumber
+    # 2. pdfplumber (preserves column layout better than pypdf)
     if best_chars < 100:
         try:
             import pdfplumber  # type: ignore
@@ -576,7 +599,7 @@ def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
         except Exception as exc:
             warnings.append(f"pdfplumber_failed:{exc}")
 
-    # 4. pdftotext CLI
+    # 3. pdftotext CLI
     if best_chars < 100 and shutil.which("pdftotext"):
         try:
             proc = subprocess.run(
@@ -603,12 +626,37 @@ def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
         except (subprocess.TimeoutExpired, OSError) as exc:
             warnings.append(f"pdftotext_timeout_or_error:{exc}")
 
+    # 4. pypdf fallback
+    if best_chars < 100:
+        try:
+            import pypdf  # type: ignore
+
+            reader = pypdf.PdfReader(str(path))
+            if reader.is_encrypted:
+                try:
+                    if reader.decrypt("") == 0:
+                        return [], [f"pdf_encrypted:{path.name}"]
+                except Exception:
+                    return [], [f"pdf_encrypted:{path.name}"]
+            cand = []
+            for i, page in enumerate(reader.pages, start=1):
+                txt = page.extract_text() or ""
+                cand.append({"page": i, "text": txt, "method": "pypdf"})
+            consider(cand)
+        except ImportError:
+            pass
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "encrypt" in msg or "password" in msg:
+                return [], [f"pdf_encrypted:{path.name}"]
+            warnings.append(f"pypdf_failed:{exc}")
+
     pages = best_pages
 
     # 5. Pure-stdlib fallback: scan PDF text literals or mark corrupt/unavailable
     if not pages:
         raw_bytes = path.read_bytes()
-        if b"/Encrypt" in raw_bytes[:16384]:
+        if b"/Encrypt" in raw_bytes[:16384] or b"/Encrypt" in raw_bytes[-32768:]:
             return [], [f"pdf_encrypted:{path.name}"]
         if b"%%EOF" not in raw_bytes[-4096:] and b"endobj" not in raw_bytes:
             return [], [f"pdf_corrupt:{path.name}"]
@@ -636,42 +684,94 @@ def extract_pdf_text(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
     return pages, warnings
 
 
-def _clean_bib_value(val: str) -> str:
-    val = val.strip().rstrip(",").strip()
-    while (val.startswith("{") and val.endswith("}")) or (val.startswith('"') and val.endswith('"')):
-        val = val[1:-1].strip()
-    val = re.sub(r"(?<!\\)[{}]", "", val)
-    val = val.replace(r"\{", "{").replace(r"\}", "}")
-    return normalize_ws(val)
+def _clean_bib_value(val: str, string_macros: Optional[Dict[str, str]] = None) -> str:
+    macros = string_macros or {}
+    raw = val.strip().rstrip(",").strip()
+    # Expand BibTeX `#` string concatenation & `@string` macros outside quotes/braces
+    parts: List[str] = []
+    cur: List[str] = []
+    bdepth = 0
+    in_q = False
+    for idx, ch in enumerate(raw):
+        prev_esc = idx > 0 and raw[idx - 1] == "\\"
+        if ch == "{" and not prev_esc and not in_q:
+            bdepth += 1
+        elif ch == "}" and not prev_esc and not in_q and bdepth > 0:
+            bdepth -= 1
+        elif ch == '"' and not prev_esc and bdepth == 0:
+            in_q = not in_q
+        if ch == "#" and bdepth == 0 and not in_q:
+            parts.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur).strip())
+
+    out_chunks: List[str] = []
+    for p in parts:
+        if not p:
+            continue
+        if (p.startswith("{") and p.endswith("}")) or (p.startswith('"') and p.endswith('"')):
+            s = p[1:-1].strip()
+            s = re.sub(r"(?<!\\)[{}]", "", s)
+            s = s.replace(r"\{", "{").replace(r"\}", "}")
+            out_chunks.append(s)
+        elif p.lower() in macros:
+            out_chunks.append(macros[p.lower()])
+        else:
+            s = re.sub(r"(?<!\\)[{}]", "", p)
+            out_chunks.append(s)
+    return normalize_ws(" ".join(out_chunks) if len(out_chunks) == 1 else "".join(out_chunks))
 
 
 def parse_bibtex_text(text: str, source_path: str) -> List[Dict[str, Any]]:
-    """Parse BibTeX/BibLaTeX entries with exact starting line numbers and brace/quote safety."""
+    """Parse BibTeX/BibLaTeX entries with @string macros, # concat, exact starting lines, and JabRef recovery."""
     entries: List[Dict[str, Any]] = []
+    string_macros: Dict[str, str] = {}
     lines = text.splitlines()
     n = len(lines)
     i = 0
     while i < n:
         line = lines[i]
-        m = re.match(r"^\s*@([a-zA-Z]+)\s*([{(])\s*([^,\s]+)\s*,?", line)
+        m = re.match(r"^\s*@([a-zA-Z]+)\s*([{(])\s*([^,\s=})]+)?\s*([,=])?", line)
         if not m:
             i += 1
             continue
         etype = m.group(1).lower()
         open_delim = m.group(2)
+        paren_mode = open_delim == "("
+
         if etype in ("comment", "preamble", "string"):
+            buf_meta = [line]
+            depth = (line.count("(") - line.count(")")) if paren_mode else (line.count("{") - line.count("}"))
+            i += 1
+            while i < n and depth > 0:
+                cur = lines[i]
+                if re.match(r"^@[a-zA-Z]+\s*[{(]", cur):
+                    break
+                buf_meta.append(cur)
+                depth += (cur.count("(") - cur.count(")")) if paren_mode else (cur.count("{") - cur.count("}"))
+                i += 1
+            if etype == "string":
+                block_str = "\n".join(buf_meta)
+                sm = re.search(r"@string\s*[{(]\s*([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*(.+)\s*[})]\s*$", block_str, re.I | re.S)
+                if sm:
+                    string_macros[sm.group(1).lower()] = _clean_bib_value(sm.group(2), string_macros)
+            continue
+
+        m_entry = re.match(r"^\s*@([a-zA-Z]+)\s*([{(])\s*([^,\s]+)\s*,?", line)
+        if not m_entry:
             i += 1
             continue
-        cite_key = m.group(3).strip()
+        cite_key = m_entry.group(3).strip()
         start_line = i + 1
         buf_lines = [line]
-        paren_mode = open_delim == "("
         depth = (line.count("(") - line.count(")")) if paren_mode else (line.count("{") - line.count("}"))
         i += 1
         while i < n and depth > 0:
             cur = lines[i]
             # Unclosed entry forward recovery (JabRef pattern): stop if a new @type{key starts at col 0
-            if re.match(r"^@[a-zA-Z]+\s*[{(]\s*[^,\s]+\s*,", cur) and depth == 1:
+            if re.match(r"^@[a-zA-Z]+\s*[{(]\s*[^,\s]+\s*,", cur):
                 break
             buf_lines.append(cur)
             if paren_mode:
@@ -696,42 +796,24 @@ def parse_bibtex_text(text: str, source_path: str) -> List[Dict[str, Any]]:
             idx += fm.end()
             if idx >= blen:
                 break
-            ch = body[idx]
-            if ch == "{":
-                d = 0
-                start_v = idx
-                while idx < blen:
-                    if body[idx] == "{" and (idx == 0 or body[idx - 1] != "\\"):
-                        d += 1
-                    elif body[idx] == "}" and (idx == 0 or body[idx - 1] != "\\"):
-                        d -= 1
-                        if d == 0:
-                            idx += 1
-                            break
-                    idx += 1
-                val = body[start_v:idx]
-            elif ch == '"':
-                start_v = idx
+            # Read potentially `#`-concatenated value parts until top-level `,` or EOF
+            start_v = idx
+            bdepth = 0
+            in_q = False
+            while idx < blen:
+                c_cur = body[idx]
+                prev_esc = idx > 0 and body[idx - 1] == "\\"
+                if c_cur == "{" and not prev_esc and not in_q:
+                    bdepth += 1
+                elif c_cur == "}" and not prev_esc and not in_q and bdepth > 0:
+                    bdepth -= 1
+                elif c_cur == '"' and not prev_esc and bdepth == 0:
+                    in_q = not in_q
+                elif c_cur == "," and bdepth == 0 and not in_q:
+                    break
                 idx += 1
-                brace_d = 0
-                while idx < blen:
-                    c_cur = body[idx]
-                    prev_esc = idx > 0 and body[idx - 1] == "\\"
-                    if c_cur == "{" and not prev_esc:
-                        brace_d += 1
-                    elif c_cur == "}" and not prev_esc and brace_d > 0:
-                        brace_d -= 1
-                    elif c_cur == '"' and not prev_esc and brace_d == 0:
-                        idx += 1
-                        break
-                    idx += 1
-                val = body[start_v:idx]
-            else:
-                start_v = idx
-                while idx < blen and body[idx] not in ",\n\r":
-                    idx += 1
-                val = body[start_v:idx]
-            fields[fname] = _clean_bib_value(val)
+            val = body[start_v:idx]
+            fields[fname] = _clean_bib_value(val, string_macros)
             while idx < blen and body[idx] in " ,\t\r\n":
                 idx += 1
 
@@ -761,6 +843,7 @@ def parse_bibtex_text(text: str, source_path: str) -> List[Dict[str, Any]]:
                 "venue": venue,
                 "doi_or_id": doi_or_id,
                 "volume": fields.get("volume", ""),
+                "issue": fields.get("number", "") or fields.get("issue", ""),
                 "pages": fields.get("pages", ""),
                 "abstract": fields.get("abstract", "") or fields.get("note", ""),
                 "source_locator": f"{source_path}:L{start_line}",
@@ -772,6 +855,7 @@ def parse_bibtex_text(text: str, source_path: str) -> List[Dict[str, Any]]:
 def parse_ris_text(text: str, source_path: str) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     cur: Dict[str, Any] = {"authors_list": [], "abstract_parts": [], "start_line": 1}
+    active_tag = ""
 
     def flush(end_lineno: int) -> None:
         if not (cur.get("title") or cur.get("authors_list") or cur.get("doi_or_id")):
@@ -780,15 +864,21 @@ def parse_ris_text(text: str, source_path: str) -> List[Dict[str, Any]]:
         year = cur.get("year", "")
         first_surname = extract_first_author_surname(authors) or "Ref"
         cite_key = cur.get("cite_key") or f"{first_surname}{year}"
+        sp = cur.get("sp", "")
+        ep = cur.get("ep", "")
+        pages = f"{sp}-{ep}" if (sp and ep) else sp
         entries.append(
             {
                 "cite_key": cite_key,
                 "entry_type": cur.get("entry_type", "article"),
                 "authors": authors,
                 "year": year,
-                "title": cur.get("title", ""),
-                "venue": cur.get("venue", ""),
+                "title": normalize_ws(cur.get("title", "")),
+                "venue": normalize_ws(cur.get("venue", "")),
                 "doi_or_id": cur.get("doi_or_id", ""),
+                "volume": cur.get("volume", ""),
+                "issue": cur.get("issue", ""),
+                "pages": pages,
                 "abstract": " ".join(cur.get("abstract_parts", [])).strip(),
                 "source_locator": f"{source_path}:L{cur.get('start_line', end_lineno)}",
             }
@@ -797,10 +887,22 @@ def parse_ris_text(text: str, source_path: str) -> List[Dict[str, Any]]:
     last_lineno = 1
     for lineno, line in enumerate(text.splitlines(), start=1):
         last_lineno = lineno
-        m = re.match(r"^([A-Z0-9]{2})\s{1,2}-\s*(.*)$", line.strip())
+        raw_s = line.strip()
+        if not raw_s:
+            active_tag = ""
+            continue
+        m = re.match(r"^([A-Z0-9]{2})\s{1,2}-\s*(.*)$", raw_s)
         if not m:
+            # Handle multi-line RIS continuation lines for TI/JO/AB/N2
+            if active_tag in ("AB", "N2"):
+                cur["abstract_parts"].append(raw_s)
+            elif active_tag in ("TI", "T1"):
+                cur["title"] = (cur.get("title", "") + " " + raw_s).strip()
+            elif active_tag in ("JO", "JF", "T2", "BT") and cur.get("venue"):
+                cur["venue"] = (cur["venue"] + " " + raw_s).strip()
             continue
         tag, val = m.group(1), m.group(2).strip()
+        active_tag = tag
         if tag == "TY":
             flush(lineno - 1)
             cur = {"authors_list": [], "abstract_parts": [], "start_line": lineno, "entry_type": val}
@@ -817,6 +919,14 @@ def parse_ris_text(text: str, source_path: str) -> List[Dict[str, Any]]:
                 cur["year"] = val
         elif tag in ("JO", "JF", "T2", "BT"):
             cur.setdefault("venue", val)
+        elif tag == "VL":
+            cur["volume"] = val
+        elif tag == "IS":
+            cur["issue"] = val
+        elif tag == "SP":
+            cur["sp"] = val
+        elif tag == "EP":
+            cur["ep"] = val
         elif tag in ("DO", "UR"):
             if tag == "DO" or not cur.get("doi_or_id"):
                 cur["doi_or_id"] = val
@@ -828,6 +938,7 @@ def parse_ris_text(text: str, source_path: str) -> List[Dict[str, Any]]:
         elif tag == "ER":
             flush(lineno)
             cur = {"authors_list": [], "abstract_parts": [], "start_line": lineno + 1}
+            active_tag = ""
     flush(last_lineno)
     return entries
 
@@ -862,14 +973,16 @@ def extract_author_surnames(authors: str) -> List[str]:
 
 
 def parse_markdown_or_text_refs(text: str, source_path: str) -> List[Dict[str, Any]]:
-    """Extract numbered or bulleted bibliographic lines from markdown/txt/paper ref lists."""
+    """Extract numbered, bulleted, or heading-tagged bibliographic lines cleanly."""
     entries: List[Dict[str, Any]] = []
     lines = text.splitlines()
+    stem = re.sub(r"[^A-Za-z0-9_]+", "_", Path(source_path).stem).strip("_") or "doc"
     for lineno, raw in enumerate(lines, start=1):
         line = raw.strip()
         if not line:
             continue
-        if line.startswith("- "):
+        line = re.sub(r"^#{1,4}\s+", "", line)
+        if line.startswith(("- ", "* ")):
             line_cand = line[2:].strip()
             if not re.search(r"\b(?:19|20)\d{2}\b", line_cand) and not re.search(r"10\.\d{4,9}/", line_cand):
                 continue
@@ -877,12 +990,21 @@ def parse_markdown_or_text_refs(text: str, source_path: str) -> List[Dict[str, A
         m = re.match(r"^(?:\[([A-Za-z0-9_-]{1,24})\]|(\d{1,3})\.)\s+(.+)$", line)
         if not m:
             continue
-        key = m.group(1) or f"ref_{m.group(2)}"
+        explicit_key = m.group(1)
+        num_idx = m.group(2)
         body = m.group(3).strip()
         ym = re.search(r"\b((?:19|20)\d{2})\b", body)
         doi_m = re.search(r"(10\.\d{4,9}/[^\s,;]+|arXiv:\d{4}\.\d{4,5})", body, re.I)
         if not ym and not doi_m:
             continue
+        # Guard against numbered narrative sentences like '1. In 2022, PINNs achieved 94%.'
+        if num_idx and not doi_m:
+            has_ay = bool(re.match(r"^[^.。]{2,60}[\(（]\s*(?:19|20)\d{2}[a-z]?\s*[\)）][.,:\s]", body))
+            period_segs = [p.strip() for p in re.split(r"\.\s+|。\s*", body) if p.strip()]
+            has_bib_segs = len(period_segs) >= 2 and not re.match(r"^(?:In|Since|During|For|After|Before|By|On|With|在|从|关于)\b", body, re.I)
+            if not (has_ay or has_bib_segs):
+                continue
+        key = explicit_key or f"{stem}_ref_{num_idx}"
         year = ym.group(1) if ym else ""
         doi_or_id = doi_m.group(1).rstrip(".") if doi_m else ""
         authors, title, venue = "", body, ""
@@ -924,7 +1046,35 @@ _UNIT_NORM = {
     "％": "%",
     "×": "x",
     "um": "μm",
+    "倍": "x",
+    "fold": "x",
+    "epochs": "epoch",
 }
+
+_UNIT_SCALE: Dict[str, Tuple[str, float]] = {
+    "nm": ("len_m", 1e-9), "μm": ("len_m", 1e-6), "mm": ("len_m", 1e-3), "cm": ("len_m", 1e-2), "m": ("len_m", 1.0), "km": ("len_m", 1e3),
+    "ms": ("time_s", 1e-3), "s": ("time_s", 1.0), "min": ("time_s", 60.0), "h": ("time_s", 3600.0),
+    "μg": ("mass_g", 1e-6), "ug": ("mass_g", 1e-6), "mg": ("mass_g", 1e-3), "g": ("mass_g", 1.0), "kg": ("mass_g", 1e3),
+    "Pa": ("press_pa", 1.0), "kPa": ("press_pa", 1e3), "MPa": ("press_pa", 1e6), "GPa": ("press_pa", 1e9),
+    "mV": ("volt_v", 1e-3), "V": ("volt_v", 1.0),
+    "mA": ("amp_a", 1e-3), "A": ("amp_a", 1.0),
+    "eV": ("energy_ev", 1.0), "keV": ("energy_ev", 1e3), "MeV": ("energy_ev", 1e6),
+    "W": ("power_w", 1.0), "kW": ("power_w", 1e3),
+    "Hz": ("freq_hz", 1.0), "kHz": ("freq_hz", 1e3), "MHz": ("freq_hz", 1e6), "GHz": ("freq_hz", 1e9),
+    "mmol": ("mol", 1e-3), "mol": ("mol", 1.0), "kmol": ("mol", 1e3),
+    "B": ("bytes", 1.0), "KB": ("bytes", 1024.0), "MB": ("bytes", 1024.0 ** 2), "GB": ("bytes", 1024.0 ** 3),
+}
+
+_MASK_RE_HEADING = re.compile(r"(?m)^\s*#{1,6}\s+\d+(?:\.\d+)*\.?\s*")
+_MASK_RE_DECADE = re.compile(r"\b(?:19|20)\d0s\b")
+_MASK_RE_CITE = re.compile(r"\[(?:R?\d+(?:\s*[-,–]\s*R?\d+)*)\]")
+_MASK_RE_TAG = re.compile(r"\b(?:GAP|CONF|CONTRIB|CLAIM|RG|CH|CL|G|C|R)-?\d{1,3}\b", re.I)
+_MASK_RE_FIG = re.compile(r"(?:Fig(?:ure)?|Table|Tab\.|Eq\.?|Section|Sec\.|图|表|式|第)\s*\.?\s*\(?\d+(?:\.\d+)?\)?", re.I)
+_MASK_RE_LOC = re.compile(r":[Lp]\d+(?:[_-][LpA-Za-z]?\d+)*")
+_MASK_RE_CHEM = re.compile(r"\b(?:FP16|BF16|FP32|INT8|INT4|[1-4]D|L[0-2]|CO2|H2O|O2|N2|CH4|NH3|SiO2|TiO2)\b")
+_NUM_UNIT_TAIL = r"(%|％|x|×|倍|fold|mol%|wt%|ppm|ppb|ms|s|min|h|Hz|kHz|MHz|GHz|nm|um|μm|mm|cm|m|km|ug|μg|mg|g|kg|K|°C|Pa|kPa|MPa|GPa|eV|keV|MeV|W/cm2|W|kW|V|mV|mA/cm2|A|mA|mmol|mol|kmol|kJ/mol|dB|GB|MB|KB|B|bar|fps|tokens|epochs?|K|M)"
+_NUM_PAT_STRUCT = re.compile(r"(?<![A-Za-z0-9_.-])([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s*" + _NUM_UNIT_TAIL + r"(?![A-Za-z]))?")
+_NUM_PAT_RAW = re.compile(r"(?<![0-9_.-])([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s*" + _NUM_UNIT_TAIL + r"(?![A-Za-z]))?")
 
 
 def _norm_unit(u: str) -> str:
@@ -937,27 +1087,16 @@ def extract_numeric_tokens(text: str, filter_structural: bool = True) -> List[Di
         return []
     cleaned = text
     if filter_structural:
-        # Mask Markdown section heading numbers (e.g., '## 1.', '### 2.1 ')
-        cleaned = re.sub(r"(?m)^\s*#{1,6}\s+\d+(?:\.\d+)*\.?\s*", " ", cleaned)
-        # Mask decades like 1990s / 2020s so they never parse as '2020 s'
-        cleaned = re.sub(r"\b(?:19|20)\d0s\b", " ", cleaned)
-        # Mask structural references: [1], [1, 2], [R01], GAP-01, CONF-01, Fig. 1, Table 2, Eq. (3)
-        cleaned = re.sub(r"\[(?:R?\d+(?:\s*[-,–]\s*R?\d+)*)\]", " ", cleaned)
-        cleaned = re.sub(r"\b(?:GAP|CONF|CONTRIB|CLAIM|RG|CH|CL|G|C|R)-?\d{1,3}\b", " ", cleaned, flags=re.I)
-        cleaned = re.sub(r"(?:Fig(?:ure)?|Table|Tab\.|Eq\.?|Section|Sec\.|图|表|式|第)\s*\.?\s*\(?\d+(?:\.\d+)?\)?", " ", cleaned, flags=re.I)
-        # Mask locators like :L2, :p1_L02, :L10-L20 without eating adjacent numbers
-        cleaned = re.sub(r":[Lp]\d+(?:[_-][LpA-Za-z]?\d+)*", " ", cleaned)
-        # Mask common precision/dimension/chemical tokens like FP16, BF16, INT8, 3D, 2D, CO2, H2O, L2
-        cleaned = re.sub(r"\b(?:FP16|BF16|FP32|INT8|INT4|[1-4]D|L[0-2]|CO2|H2O|O2|N2|CH4|NH3|SiO2|TiO2)\b", " ", cleaned)
+        cleaned = _MASK_RE_HEADING.sub(" ", cleaned)
+        cleaned = _MASK_RE_DECADE.sub(" ", cleaned)
+        cleaned = _MASK_RE_CITE.sub(" ", cleaned)
+        cleaned = _MASK_RE_TAG.sub(" ", cleaned)
+        cleaned = _MASK_RE_FIG.sub(" ", cleaned)
+        cleaned = _MASK_RE_LOC.sub(" ", cleaned)
+        cleaned = _MASK_RE_CHEM.sub(" ", cleaned)
 
     tokens: List[Dict[str, Any]] = []
-    left_boundary = r"(?<![A-Za-z0-9_.-])" if filter_structural else r"(?<![0-9_.-])"
-    # Trailing (?![A-Za-z]) prevents '5 studies' -> '5 s', '2 groups' -> '2 g', '4 methods' -> '4 m'
-    pat = re.compile(
-        left_boundary
-        + r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?)"
-        + r"(?:\s*(%|％|x|×|ms|s|min|h|Hz|kHz|MHz|GHz|nm|um|μm|mm|cm|m|km|mg|g|kg|K|°C|Pa|kPa|MPa|GPa|eV|keV|MeV|W|kW|V|mV|A|mA|mol|mmol|kmol|dB|GB|MB|KB|B|fps|tokens)(?![A-Za-z]))?"
-    )
+    pat = _NUM_PAT_STRUCT if filter_structural else _NUM_PAT_RAW
     for m in pat.finditer(cleaned):
         raw_num = m.group(1).replace(",", "")
         if m.start() > 0 and cleaned[m.start() - 1] in ".0123456789":
@@ -985,14 +1124,20 @@ def extract_numeric_tokens(text: str, filter_structural: bool = True) -> List[Di
 
 
 def numbers_match(tok_a: Dict[str, Any], tok_b: Dict[str, Any]) -> bool:
-    """Compare two numeric tokens allowing % <-> decimal equivalence, rounding tolerance, and unit safety."""
+    """Compare two numeric tokens allowing SI unit scale conversions, % <-> decimal equivalence, and rounding tolerance."""
     ua = _norm_unit(str(tok_a.get("unit") or ""))
     ub = _norm_unit(str(tok_b.get("unit") or ""))
+    va, vb = float(tok_a["value"]), float(tok_b["value"])
+
     if ua and ub and ua != ub:
-        # Both carry explicit units and they disagree (e.g. '92.4%' vs '92.4 s', or '50 ms' vs '50 s')
+        sa = _UNIT_SCALE.get(ua)
+        sb = _UNIT_SCALE.get(ub)
+        if sa and sb and sa[0] == sb[0]:
+            base_a = va * sa[1]
+            base_b = vb * sb[1]
+            return abs(base_a - base_b) <= max(0.005 * max(abs(base_a), abs(base_b), 1e-12), 1e-9)
         return False
 
-    va, vb = tok_a["value"], tok_b["value"]
     candidates_a = [va]
     candidates_b = [vb]
     if tok_a.get("has_percent") and not ub:
@@ -1031,8 +1176,61 @@ def format_apa_inline_item(ref: Dict[str, Any], language: str = "en") -> str:
     return f"{lead}, {year}"
 
 
+def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Order references by first citation occurrence in prose for numeric styles; return (ordered_refs, uncited_refs)."""
+    if not md_text or not refs:
+        return list(refs or []), []
+    valid_refs = [r for r in refs if isinstance(r, dict)]
+    by_tok: Dict[str, Dict[str, Any]] = {}
+    for r in valid_refs:
+        rid = str(r.get("ref_id") or "").strip().lower()
+        ck = str(r.get("cite_key") or "").strip().lower()
+        if rid:
+            by_tok[rid] = r
+        if ck:
+            by_tok[ck] = r
+
+    seen_ids: List[int] = []
+    seen_set = set()
+
+    def _mark(tok: str) -> None:
+        r = by_tok.get(tok.strip().lower())
+        if r is not None and id(r) not in seen_set:
+            seen_set.add(id(r))
+            seen_ids.append(id(r))
+
+    for m in re.finditer(r"\\cite[a-z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}|\[([^\[\]]+)\]", md_text):
+        if m.group(1) is not None:
+            for k in m.group(1).split(","):
+                _mark(k)
+        else:
+            inner = (m.group(2) or "").strip()
+            if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充", ":")):
+                continue
+            rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
+            if rm:
+                a, b = int(rm.group(1)), int(rm.group(2))
+                for k in range(a, min(b + 1, a + 21)):
+                    _mark(f"R{k:02d}")
+            else:
+                for p in re.split(r"[,;]", inner):
+                    if p.strip().lower() in by_tok:
+                        _mark(p)
+
+    if not seen_ids:
+        return valid_refs, []
+
+    id_to_ref = {id(r): r for r in valid_refs}
+    cited = [id_to_ref[i] for i in seen_ids]
+    uncited = [r for r in valid_refs if id(r) not in seen_set]
+    eff = style or "gbt7714"
+    if eff in ("gbt7714", "ieee_numeric", "nature_numeric", "unspecified"):
+        return cited + uncited, uncited
+    return valid_refs, uncited
+
+
 def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str, language: str = "zh") -> str:
-    """Convert internal [R01] / [R01, R02] markers to target-style citations consistently."""
+    """Convert [R01] / [cite_key] / \\cite{key} markers consistently to the target citation style."""
     if not md_text or not refs:
         return md_text or ""
     eff_style = style or "unspecified"
@@ -1041,6 +1239,7 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
 
     by_id: Dict[str, Tuple[int, Dict[str, Any]]] = {}
     by_key: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+    by_ay: Dict[str, Tuple[int, Dict[str, Any]]] = {}
     for idx, r in enumerate(refs, start=1):
         if not isinstance(r, dict):
             continue
@@ -1050,40 +1249,16 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
             by_id[rid] = (idx, r)
         if ck:
             by_key[ck] = (idx, r)
+        surn = extract_first_author_surname(str(r.get("authors") or "")).lower()
+        yr = str(r.get("year") or "").strip().lower()
+        if surn and yr:
+            by_ay.setdefault(f"{surn}{yr}", (idx, r))
 
     def _resolve_tok(tok: str) -> Optional[Tuple[int, Dict[str, Any]]]:
         tl = tok.strip().lower()
-        return by_id.get(tl) or by_key.get(tl)
+        return by_id.get(tl) or by_key.get(tl) or by_ay.get(tl)
 
-    def _replace_bracket(m: re.Match[str]) -> str:
-        inner = m.group(1).strip()
-        # Preserve confirmation/judgment tags and file locators
-        if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充", ":")):
-            return m.group(0)
-        # Support R-range like [R01-R03]
-        rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
-        if rm:
-            a, b = int(rm.group(1)), int(rm.group(2))
-            if 0 < a <= b <= a + 20:
-                resolved = [_resolve_tok(f"R{k:02d}") for k in range(a, b + 1)]
-                if all(x is not None for x in resolved):
-                    items = [x for x in resolved if x is not None]
-                else:
-                    return m.group(0)
-            else:
-                return m.group(0)
-        else:
-            parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
-            if not parts:
-                return m.group(0)
-            # Only convert when every part is an R-id or exact cite_key (never touch plain [1] or [CO2])
-            if not all(re.match(r"^R\d{1,3}$", p) or p.lower() in by_key for p in parts):
-                return m.group(0)
-            resolved = [_resolve_tok(p) for p in parts]
-            if not all(x is not None for x in resolved):
-                return m.group(0)
-            items = [x for x in resolved if x is not None]
-
+    def _format_items(items: List[Tuple[int, Dict[str, Any]]]) -> str:
         if eff_style == "bibtex_latex":
             keys = [str(r.get("cite_key") or r.get("ref_id") or f"ref{idx}") for idx, r in items]
             return f"\\cite{{{', '.join(keys)}}}"
@@ -1092,10 +1267,78 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
             return f"({'; '.join(apa_parts)})"
         if eff_style == "ieee_numeric":
             return ", ".join(f"[{idx}]" for idx, _ in items)
-        # gbt7714 / nature_numeric
         return f"[{', '.join(str(idx) for idx, _ in items)}]"
 
-    return re.sub(r"\[([^\[\]]+)\]", _replace_bracket, md_text)
+    def _replace_bracket(m: re.Match[str]) -> str:
+        inner = m.group(1).strip()
+        if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充", ":")):
+            return m.group(0)
+        rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
+        if rm:
+            a, b = int(rm.group(1)), int(rm.group(2))
+            if 0 < a <= b <= a + 20:
+                resolved = [_resolve_tok(f"R{k:02d}") for k in range(a, b + 1)]
+                if all(x is not None for x in resolved):
+                    items = [x for x in resolved if x is not None]
+                    return _format_items(items)
+            return m.group(0)
+        parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
+        if not parts:
+            return m.group(0)
+        if not all(re.match(r"^R\d{1,3}$", p) or p.lower() in by_key for p in parts):
+            return m.group(0)
+        resolved = [_resolve_tok(p) for p in parts]
+        if not all(x is not None for x in resolved):
+            return m.group(0)
+        return _format_items([x for x in resolved if x is not None])
+
+    out = re.sub(r"\[([^\[\]]+)\]", _replace_bracket, md_text)
+
+    if eff_style != "bibtex_latex":
+        def _replace_cite(m: re.Match[str]) -> str:
+            keys = [k.strip() for k in m.group(1).split(",") if k.strip()]
+            resolved = [_resolve_tok(k) for k in keys]
+            if keys and all(x is not None for x in resolved):
+                return _format_items([x for x in resolved if x is not None])
+            return m.group(0)
+
+        out = re.sub(r"\\cite[a-z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}", _replace_cite, out)
+
+    if eff_style != "apa_author_year":
+        def _replace_paren_ay(m: re.Match[str]) -> str:
+            inside = m.group(1).strip()
+            segs = [s.strip() for s in re.split(r"[;；]", inside) if s.strip()]
+            items: List[Tuple[int, Dict[str, Any]]] = []
+            for seg in segs:
+                em = re.match(r"^([A-Z][A-Za-z-]+)(?:\s+et\s+al\.?|\s*(?:&|and)\s+[A-Z][A-Za-z-]+)?\s*,?\s*((?:19|20)\d{2})[a-z]?$", seg)
+                if not em:
+                    return m.group(0)
+                hit = _resolve_tok(f"{em.group(1)}{em.group(2)}")
+                if hit is None:
+                    return m.group(0)
+                items.append(hit)
+            return _format_items(items) if items else m.group(0)
+
+        out = re.sub(r"[（(]([^()（）]{4,120})[)）]", _replace_paren_ay, out)
+
+    return out
+
+
+def _infer_gbt_doc_code(ref: Dict[str, Any]) -> str:
+    et = str(ref.get("entry_type") or "").strip().lower()
+    venue = str(ref.get("venue") or "").lower()
+    doi = str(ref.get("doi_or_id") or "").lower()
+    if et in ("inproceedings", "conference", "proceedings", "conf") or any(
+        w in venue for w in ("proceedings", "conference", "workshop", "symposium", "neurips", "icml", "iclr", "cvpr", "acl", "emnlp", "aaai", "会议", "论文集")
+    ):
+        return "[C]"
+    if et in ("phdthesis", "mastersthesis", "thesis"):
+        return "[D]"
+    if et in ("book", "inbook", "incollection"):
+        return "[M]"
+    if not venue and (doi.startswith("http") or doi.startswith("arxiv:") or et == "misc"):
+        return "[EB/OL]"
+    return "[J]"
 
 
 def format_citation_entry(ref: Dict[str, Any], style: str, idx: int) -> str:
@@ -1103,17 +1346,182 @@ def format_citation_entry(ref: Dict[str, Any], style: str, idx: int) -> str:
     year = str(ref.get("year") or "[待补充年份]").strip()
     title = str(ref.get("title") or "[待补充标题]").strip().rstrip(".")
     venue = str(ref.get("venue") or "[待补充来源]").strip().rstrip(".")
+    vol = str(ref.get("volume") or "").strip()
+    issue = str(ref.get("issue") or "").strip()
+    pages = str(ref.get("pages") or "").strip()
     doi = str(ref.get("doi_or_id") or "").strip()
     extra = f" DOI: {doi}." if doi else ""
 
     if style == "apa_author_year":
-        return f"{authors} ({year}). {title}. {venue}.{extra}".strip()
+        vp = f", {vol}" if vol else ""
+        if issue:
+            vp += f"({issue})"
+        if pages:
+            vp += f", {pages}"
+        return f"{authors} ({year}). {title}. {venue}{vp}.{extra}".strip()
     if style == "ieee_numeric":
-        return f"[{idx}] {authors}, \"{title},\" {venue}, {year}.{extra}".strip()
+        parts = [venue]
+        if vol:
+            parts.append(f"vol. {vol}")
+        if issue:
+            parts.append(f"no. {issue}")
+        if pages:
+            parts.append(f"pp. {pages}")
+        parts.append(year)
+        return f"[{idx}] {authors}, \"{title},\" {', '.join(parts)}.{extra}".strip()
     if style == "nature_numeric":
-        return f"{idx}. {authors} {title}. {venue} ({year}).{extra}".strip()
+        vp = f" {vol}," if vol else ""
+        pg = f" {pages}" if pages else ""
+        return f"{idx}. {authors} {title}. {venue}{vp}{pg} ({year}).{extra}".strip()
     if style == "bibtex_latex":
         key = ref.get("cite_key") or f"ref{idx}"
-        return f"@article{{{key}, author={{{authors}}}, title={{{title}}}, journal={{{venue}}}, year={{{year}}}}}"
-    # Default: GB/T 7714-2015
-    return f"[{idx}] {authors}. {title}[J/C]. {venue}, {year}.{extra}".strip()
+        doi_part = f", doi={{{doi}}}" if doi.startswith("10.") else ""
+        return f"@article{{{key}, author={{{authors}}}, title={{{title}}}, journal={{{venue}}}, year={{{year}}}{doi_part}}}"
+    # Default: GB/T 7714-2015 with inferred document code & CJK-friendly author separator
+    gbt_auth = re.sub(r"\s+and\s+|;\s*", ", ", authors)
+    code = _infer_gbt_doc_code(ref)
+    vp = f", {year}"
+    if vol:
+        vp += f", {vol}"
+    if issue:
+        vp += f"({issue})"
+    if pages:
+        vp += f": {pages}"
+    return f"[{idx}] {gbt_auth}. {title}{code}. {venue}{vp}.{extra}".strip()
+
+
+def resolve_manuscript_text(
+    payload: Dict[str, Any],
+    payload_path: Optional[Path],
+    manuscript_arg: Optional[str],
+) -> Tuple[str, List[str], Optional[str]]:
+    """Resolve manuscript text consistently across verifier & assembler with explicit missing-file errors."""
+    warns: List[str] = []
+    if manuscript_arg:
+        mp = Path(manuscript_arg)
+        if not mp.exists():
+            return "", warns, f"manuscript_arg_not_found:{manuscript_arg}"
+        txt, err = read_text_safe(mp)
+        if err or txt is None:
+            return "", warns, f"manuscript_arg_read_error:{err}"
+        return txt, warns, None
+
+    inline = str(payload.get("manuscript_markdown") or "")
+    mf = str(payload.get("manuscript_file") or "").strip()
+    if mf:
+        cand = Path(mf)
+        if not cand.is_absolute() and payload_path is not None:
+            cand = payload_path.parent / cand
+        if not cand.exists():
+            if inline.strip():
+                warns.append(f"manuscript_file_missing_fell_back_to_inline:{mf}")
+                return inline, warns, None
+            return "", warns, f"manuscript_file_not_found:{mf}"
+        txt, err = read_text_safe(cand)
+        if err or txt is None:
+            return "", warns, f"manuscript_file_read_error:{err}"
+        if inline.strip() and txt.strip() and txt.strip() != inline.strip():
+            warns.append("both_manuscript_file_and_inline_populated:preferred_manuscript_file")
+        return txt, warns, None
+    return inline, warns, None
+
+
+def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[str, Any]:
+    """Deterministically cross-fill missing comparison_matrix or claim_citation_map to cut redundant LLM tokens."""
+    synced = dict(payload)
+    refs_by_id = {
+        str(r.get("ref_id") or "").strip().lower(): r
+        for r in (synced.get("references") or [])
+        if isinstance(r, dict) and r.get("ref_id")
+    }
+    refs_by_key = {
+        str(r.get("cite_key") or "").strip().lower(): r
+        for r in (synced.get("references") or [])
+        if isinstance(r, dict) and r.get("cite_key")
+    }
+
+    # 1. Derive comparison_matrix from related_work_groups if matrix is empty
+    rw_groups = [g for g in (synced.get("related_work_groups") or []) if isinstance(g, dict)]
+    if not (synced.get("comparison_matrix") or []) and rw_groups:
+        derived_rows: List[Dict[str, Any]] = []
+        seen_rids = set()
+        for g in rw_groups:
+            route = str(g.get("route_name") or g.get("group_id") or "")
+            axis = str(g.get("grouping_axis") or "")
+            for w in g.get("works_covered") or []:
+                if not isinstance(w, dict):
+                    continue
+                rid = str(w.get("ref_id") or "").strip()
+                if not rid or rid.lower() in seen_rids:
+                    continue
+                seen_rids.add(rid.lower())
+                rinfo = refs_by_id.get(rid.lower(), {})
+                derived_rows.append(
+                    {
+                        "ref_id": rid,
+                        "title": str(rinfo.get("title") or ""),
+                        "route": route,
+                        "problem_setting": axis or route,
+                        "method_route": route,
+                        "dataset_and_eval": "-",
+                        "key_result": str(w.get("core_conclusion") or "-"),
+                        "applicability_conditions": str(w.get("applicability_conditions") or "-"),
+                        "limitations": str(w.get("limitations") or "-"),
+                        "source_locator": str(w.get("source_locator") or rinfo.get("source_locator") or "-"),
+                    }
+                )
+        if derived_rows:
+            synced["comparison_matrix"] = derived_rows
+
+    # 2. Extract candidate claim_citation_map from cited sentences in manuscript if empty
+    if not (synced.get("claim_citation_map") or []) and manuscript.strip():
+        cur_sec = "Introduction"
+        claims: List[Dict[str, Any]] = []
+        for raw in re.split(r"(?:(?<=[。！？!?])\s+|\n+)", manuscript):
+            s = raw.strip()
+            if not s:
+                continue
+            if re.match(r"^#{1,4}\s+", s):
+                hdr = s.lstrip("# ").strip()
+                if hdr:
+                    cur_sec = hdr[:60]
+                continue
+            cids: List[str] = []
+            locs: List[str] = []
+            for bm in re.finditer(r"\[([^\[\]]+)\]", s):
+                inner = bm.group(1).strip()
+                if any(t in inner for t in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", ":")):
+                    continue
+                for tok in re.split(r"[,;]", inner):
+                    t = tok.strip().lower()
+                    robj = refs_by_id.get(t) or refs_by_key.get(t)
+                    if robj and robj.get("ref_id") and robj["ref_id"] not in cids:
+                        cids.append(str(robj["ref_id"]))
+                        sloc = str(robj.get("source_locator") or "").strip()
+                        if sloc and sloc not in locs:
+                            locs.append(sloc)
+            for cm in re.finditer(r"\\cite[a-z]*\{([^}]+)\}", s):
+                for tok in cm.group(1).split(","):
+                    robj = refs_by_key.get(tok.strip().lower())
+                    if robj and robj.get("ref_id") and robj["ref_id"] not in cids:
+                        cids.append(str(robj["ref_id"]))
+                        sloc = str(robj.get("source_locator") or "").strip()
+                        if sloc and sloc not in locs:
+                            locs.append(sloc)
+            if cids:
+                attr = "author_judgment" if ("[作者判断]" in s or "[AUTHOR_JUDGMENT]" in s) else "cited_fact"
+                claims.append(
+                    {
+                        "claim_id": f"CL{len(claims) + 1:02d}",
+                        "section": cur_sec,
+                        "claim_excerpt": s[:180],
+                        "citation_ids": cids,
+                        "source_locators": locs,
+                        "attribution_type": attr,
+                    }
+                )
+                if len(claims) >= 24:
+                    break
+        if claims:
+            synced["claim_citation_map"] = claims
+    return synced

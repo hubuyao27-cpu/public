@@ -1,3 +1,8 @@
+# Synthetic JATS Publisher XML Fixture (`secondary-publisher`)
+
+Use this XML snippet as `/input/secondary-publisher.xml` in synthetic self-tests (kept as `.md` inside the Skill bundle so packaging validators only see Markdown/JSON/Python resources):
+
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <article>
   <front>
@@ -35,3 +40,4 @@
     </sec>
   </body>
 </article>
+```

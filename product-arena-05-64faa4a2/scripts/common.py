@@ -25,7 +25,7 @@ def load_resource_json(rel_path: str) -> Dict[str, Any]:
     p = RESOURCES_DIR / rel_path
     if not p.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
 def load_json_safe(path: Path) -> Tuple[Optional[Any], Optional[str]]:

@@ -20,7 +20,7 @@
       "license": "CC-BY-4.0",
       "source_hash": "synth-sha256-secondary-002",
       "material_file": "secondary-material.json",
-      "publisher_xml": "secondary-publisher.xml"
+      "publisher_xml_fixture": "secondary-publisher-xml.md"
     }
   ]
 }

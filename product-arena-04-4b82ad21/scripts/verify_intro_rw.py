@@ -29,8 +29,9 @@ from common import (
     load_json_safe,
     load_rubric_rules,
     numbers_match,
-    read_text_safe,
+    resolve_manuscript_text,
     save_json,
+    sync_payload_structures,
 )
 
 _NON_CITE_BRACKET_RE = re.compile(
@@ -44,7 +45,18 @@ _NARRATIVE_STOP_WORDS = {
     "until", "between", "from", "year", "years", "circa", "around", "about", "april",
     "may", "june", "july", "march", "january", "february", "august", "september",
     "october", "november", "december", "ieee", "acm", "nature", "science", "arxiv",
+    "transformer", "bert", "gpt", "resnet", "vit", "clip", "alphafold", "imagenet",
+    "coco", "mmlu", "chatgpt", "claude", "deepseek", "llama", "lora", "rag", "pinn",
+    "cnki", "neurips", "icml", "iclr", "cvpr", "iccv", "acl", "emnlp", "aaai",
+    "springer", "elsevier", "wiley", "china", "usa", "europe", "benchmark", "baseline",
+    "standard", "policy", "guideline", "system", "framework", "corpus",
+    "国家标准", "国标", "行业标准", "标准", "指南", "政策", "版本", "模型", "系统",
+    "框架", "数据集", "数据", "基准", "工业界", "学术界", "截至目前", "目前",
 }
+_HYPERPARAM_CTX_RE = re.compile(
+    r"(?:size|sizes|dim|dims|shape|kernel|kernels|layer|layers|channel|channels|hidden|head|heads|step|steps|epoch|epochs|batch|batches|range|interval|index|indices|array|tensor|matrix|vector|classes|values|维度|卷积核|步长|通道|批大小)\s*(?:of|=|:|is|are|in|为|包含)?\s*$",
+    re.I,
+)
 
 
 def _split_locator_file(loc: str) -> str:
@@ -58,31 +70,14 @@ def _split_locator_file(loc: str) -> str:
     return s.split(":", 1)[0].split("#", 1)[0].strip()
 
 
-def _resolve_manuscript_text(payload: Dict[str, Any], payload_path: Path, manuscript_arg: Optional[str]) -> str:
-    if manuscript_arg:
-        mp = Path(manuscript_arg)
-        if mp.exists():
-            txt, err = read_text_safe(mp)
-            if not err and txt is not None:
-                return txt
-    inline = str(payload.get("manuscript_markdown") or "")
-    if inline.strip():
-        return inline
-    mf = str(payload.get("manuscript_file") or "").strip()
-    if mf:
-        cand = Path(mf)
-        if not cand.is_absolute():
-            cand = payload_path.parent / cand
-        if cand.exists():
-            txt, err = read_text_safe(cand)
-            if not err and txt is not None:
-                return txt
-    return inline
-
-
-def _extract_prose_citations(text: str, known_keys: Optional[Set[str]] = None) -> List[str]:
+def _extract_prose_citations(
+    text: str,
+    known_keys: Optional[Set[str]] = None,
+    known_surnames: Optional[Set[str]] = None,
+) -> List[str]:
     found: List[str] = []
     known = {k.lower() for k in (known_keys or set())}
+    surnames_set = {s.lower() for s in (known_surnames or set()) if len(s) >= 2}
     # Mask file/line locators like [lit_notes.md:L2] and markdown links [text](url)
     cleaned = re.sub(r"\[[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,5}:[^\]]+\]", " ", text or "")
     cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
@@ -95,6 +90,9 @@ def _extract_prose_citations(text: str, known_keys: Optional[Set[str]] = None) -
         if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充")):
             continue
         if _NON_CITE_BRACKET_RE.match(inner):
+            continue
+        prefix_ctx = cleaned[max(0, m.start() - 45) : m.start()]
+        if _HYPERPARAM_CTX_RE.search(prefix_ctx) and not re.search(r"\bR\d{1,3}\b", inner):
             continue
         # Skip intervals like [0, 1], [-1, 1], [0-1]
         if re.match(r"^-?0(?:\.\d+)?\s*[,;\-–]\s*", inner) or re.search(r"(?:^|[,;\s])-\d", inner):
@@ -110,8 +108,10 @@ def _extract_prose_citations(text: str, known_keys: Optional[Set[str]] = None) -
         parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
         if not parts:
             continue
-        # If any part is '0', treat whole bracket as numeric vector/interval like [0, 1, 2]
         if any(p == "0" for p in parts):
+            continue
+        # Skip multi-element numeric hyperparameter lists like [3, 5, 7] or [64, 128]
+        if len(parts) >= 2 and all(re.match(r"^[1-9]\d{0,3}$", p) for p in parts) and (len(parts) >= 3 or all(int(p) >= 32 for p in parts)):
             continue
         for p in parts:
             if _NON_CITE_BRACKET_RE.match(p):
@@ -136,7 +136,6 @@ def _extract_prose_citations(text: str, known_keys: Optional[Set[str]] = None) -
             continue
         for seg in re.split(r"[;；]", inside):
             seg_c = re.sub(r"^(?:e\.g\.|i\.e\.|cf\.|see|also|见|如|参见)\s*,?\s*", "", seg.strip(), flags=re.I)
-            # Match English author(s), year
             em = re.match(
                 r"^([A-Z][A-Za-z-]+(?:\s+(?:&|and)\s+[A-Z][A-Za-z-]+|\s+et\s+al\.?)?)\s*,?\s*((?:19|20)\d{2}[a-z]?)(?:\s*,.*)?$",
                 seg_c,
@@ -146,21 +145,31 @@ def _extract_prose_citations(text: str, known_keys: Optional[Set[str]] = None) -
                 if surname.lower() not in _NARRATIVE_STOP_WORDS:
                     found.append(f"{surname}{em.group(2)}")
                 continue
-            # Match CJK author(s), year
             cm = re.match(r"^([\u4e00-\u9fff]{2,4})(?:等|、[\u4e00-\u9fff]{2,4}|和[\u4e00-\u9fff]{2,4})?\s*[,，]?\s*((?:19|20)\d{2}[a-z]?)$", seg_c)
-            if cm:
+            if cm and cm.group(1) not in _NARRATIVE_STOP_WORDS:
                 found.append(f"{cm.group(1)}{cm.group(2)}")
 
-    # 4. Narrative Author-Year: Smith et al. (2023), Smith & Jones (2023), Alpha (2022), 张伟等 (2022)
+    # 4. Narrative Author-Year: require explicit citation cue OR match against known surnames / exclude model/acronym tokens
     for nm in re.finditer(
-        r"\b([A-Z][A-Za-z-]{2,})(?:\s+(?:&|and)\s+[A-Z][A-Za-z-]+|\s+et\s+al\.?)?\s*\(((?:19|20)\d{2}[a-z]?)\)",
+        r"\b([A-Z][A-Za-z-]{2,})(\s+(?:&|and)\s+[A-Z][A-Za-z-]+|\s+et\s+al\.?)?\s*\(((?:19|20)\d{2}[a-z]?)\)",
         cleaned,
     ):
         surname = nm.group(1)
-        if surname.lower() not in _NARRATIVE_STOP_WORDS:
-            found.append(f"{surname}{nm.group(2)}")
-    for cnm in re.finditer(r"([\u4e00-\u9fff]{2,4})(?:等)?\s*[（(]((?:19|20)\d{2}[a-z]?)[)）]", cleaned):
-        found.append(f"{cnm.group(1)}{cnm.group(2)}")
+        has_cue = bool(nm.group(2))
+        sl = surname.lower()
+        if sl in _NARRATIVE_STOP_WORDS:
+            continue
+        # Guard against named architectures/acronyms (BERT (2018), ResNet (2015), AlphaFold (2021)) unless in library or accompanied by et al./&/and
+        is_camel_or_acronym = surname.isupper() or bool(re.search(r"[a-z][A-Z]", surname))
+        if has_cue or sl in surnames_set or (not is_camel_or_acronym and len(surname) <= 14):
+            found.append(f"{surname}{nm.group(3)}")
+    for cnm in re.finditer(r"([\u4e00-\u9fff]{2,4})(等)?\s*[（(]((?:19|20)\d{2}[a-z]?)[)）]", cleaned):
+        cname = cnm.group(1)
+        has_cue = bool(cnm.group(2))
+        if cname in _NARRATIVE_STOP_WORDS:
+            continue
+        if has_cue or cname.lower() in surnames_set:
+            found.append(f"{cname}{cnm.group(3)}")
 
     return found
 
@@ -210,7 +219,13 @@ def main() -> None:
     if plan.get("task_md_path"):
         known_files.add("task.md")
 
-    manuscript = _resolve_manuscript_text(payload, payload_path, args.manuscript)
+    manuscript, ms_warns, ms_err = resolve_manuscript_text(payload, payload_path, args.manuscript)
+    for mw in ms_warns:
+        add_warn("MANUSCRIPT_SOURCE_NOTICE", mw, "Prefer either manuscript_file or manuscript_markdown cleanly.")
+    if ms_err:
+        add_err("MANUSCRIPT_FILE_NOT_FOUND", ms_err, "Ensure manuscript_file exists or clear it and populate manuscript_markdown.")
+
+    payload = sync_payload_structures(payload, manuscript)
 
     # Axis 1: case_id & output_contract check
     expected_cid = plan.get("case_id", "")
@@ -218,11 +233,16 @@ def main() -> None:
         add_err("CASE_ID_MISMATCH", f"payload.case_id={payload.get('case_id')!r} != {expected_cid!r}", "Set payload.case_id to exact case_id from case_plan.json.")
 
     req_keys = (plan.get("output_contract") or {}).get("required_keys") or []
+    req_roles = {
+        fspec.get("semantic_role", "custom")
+        for fspec in ((plan.get("output_contract") or {}).get("fields") or [])
+        if fspec["name"] in req_keys
+    }
     overrides = payload.get("contract_overrides") or {}
     payload_roles = {
         "case_id": payload.get("case_id"),
         "status": payload.get("status"),
-        "manuscript_markdown": manuscript,
+        "manuscript_markdown": manuscript.strip() or None,
         "research_background": payload.get("research_background"),
         "related_work_groups": payload.get("related_work_groups"),
         "comparison_matrix": payload.get("comparison_matrix"),
@@ -244,7 +264,7 @@ def main() -> None:
         fname = fspec["name"]
         if fname in req_keys:
             role = fspec.get("semantic_role", "custom")
-            if fname in overrides or fname in payload:
+            if fname in overrides or (fname in payload and payload[fname] not in ("", None)):
                 continue
             if role in payload_roles and payload_roles[role] is not None:
                 continue
@@ -254,7 +274,7 @@ def main() -> None:
     if status == "completed" and not catalog and not own_ev and not fig_mentions:
         add_err("DISHONEST_STATUS", "status='completed' but both literature catalog and own-paper evidence are empty.", "Change status to 'insufficient_material' or 'partial' and list missing items in uncertainty[].")
 
-    # Axis 2: Core completeness when completed (mode-aware for targeted subtasks)
+    # Axis 2: Core completeness when completed (mode-aware + manuscript-heading-aware when contract doesn't mandate internal JSON sub-objects)
     task_mode = str((plan.get("signals") or {}).get("task_mode") or "draft_intro_rw")
     bg = payload.get("research_background") or {}
     rw_groups = payload.get("related_work_groups") or []
@@ -264,8 +284,13 @@ def main() -> None:
     refs = payload.get("references") or []
     claim_map = payload.get("claim_citation_map") or []
 
+    has_intro_hdr = bool(re.search(r"(?m)^#{1,4}\s+.*(?:introduction|引言)", manuscript, re.I))
+    has_rw_hdr = bool(re.search(r"(?m)^#{1,4}\s+.*(?:related\s+work|相关工作)", manuscript, re.I))
+    has_gap_hdr = bool(re.search(r"(?m)^#{1,4}\s+.*(?:gap|空白|不足|贡献|contribution)", manuscript, re.I))
+
     if status == "completed":
-        if not manuscript.strip() and not (task_mode == "organize_related_work" and rw_groups and matrix):
+        subtask_no_prose = (task_mode == "organize_related_work" and rw_groups and matrix) or (task_mode == "fill_and_audit_citations" and refs) or (task_mode == "align_contributions" and contribs)
+        if not manuscript.strip() and not (subtask_no_prose and "manuscript_markdown" not in req_roles):
             add_err("EMPTY_MANUSCRIPT", "manuscript_markdown is empty while status=='completed'.", "Write publication-ready prose (or point manuscript_file to /app/work/manuscript.md).")
         if task_mode == "organize_related_work":
             if not rw_groups:
@@ -282,16 +307,43 @@ def main() -> None:
                 add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty in align_contributions mode.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
         else:
             if not isinstance(bg, dict) or not bg.get("concrete_problem"):
-                add_err("MISSING_BACKGROUND", "research_background.concrete_problem missing.", "Populate research_background with domain_lineage, concrete_problem, technical_constraints, why_now.")
+                if has_intro_hdr and "research_background" not in req_roles:
+                    add_warn("MISSING_BACKGROUND", "research_background.concrete_problem omitted (covered via manuscript Introduction).", "Optionally populate research_background for machine readability.")
+                else:
+                    add_err("MISSING_BACKGROUND", "research_background.concrete_problem missing.", "Populate research_background with domain_lineage, concrete_problem, technical_constraints, why_now.")
             if not rw_groups:
-                add_err("MISSING_RELATED_WORK", "related_work_groups[] is empty.", "Group literature into at least 2 methodological/problem routes (or 1 explicit route if tiny corpus).")
+                if has_rw_hdr and "related_work_groups" not in req_roles:
+                    add_warn("MISSING_RELATED_WORK", "related_work_groups[] omitted (covered via manuscript Related Work).", "Populate related_work_groups[] for comparative route verification.")
+                else:
+                    add_err("MISSING_RELATED_WORK", "related_work_groups[] is empty.", "Group literature into at least 2 methodological/problem routes (or 1 explicit route if tiny corpus).")
             if not gaps:
-                add_err("MISSING_RESEARCH_GAPS", "research_gaps[] is empty.", "Derive gaps from cited work limitations/conflicts or mark [作者判断]/[AUTHOR_JUDGMENT].")
+                if has_gap_hdr and "research_gaps" not in req_roles:
+                    add_warn("MISSING_RESEARCH_GAPS", "research_gaps[] omitted (covered in prose).", "Populate research_gaps[] for machine traceability.")
+                else:
+                    add_err("MISSING_RESEARCH_GAPS", "research_gaps[] is empty.", "Derive gaps from cited work limitations/conflicts or mark [作者判断]/[AUTHOR_JUDGMENT].")
             if not contribs:
                 if own_ev or fig_mentions:
-                    add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
+                    if has_gap_hdr and "contributions" not in req_roles and not own_ev:
+                        add_warn("MISSING_CONTRIBUTIONS", "contributions[] omitted.", "Populate contributions[] with own_evidence_locators.")
+                    else:
+                        add_err("MISSING_CONTRIBUTIONS", "contributions[] is empty.", "Provide evidence-bound contributions linked to methods/figures/tables/metrics.")
                 else:
                     add_warn("NO_OWN_EVIDENCE_FOR_CONTRIBUTIONS", "No own-paper evidence in input; contributions[] left empty or pending author confirmation.", "Confirm with author or provide own-paper experimental evidence.")
+
+        # Validate nested subkeys on populated objects so blank rows ('- | - | -') fail cleanly
+        for g in rw_groups:
+            if isinstance(g, dict) and not str(g.get("route_name") or "").strip():
+                add_err("MALFORMED_RELATED_WORK_GROUP", f"Group '{g.get('group_id', '?')}' lacks route_name.", "Specify non-empty route_name and works_covered[].")
+        for g in gaps:
+            if isinstance(g, dict):
+                if not str(g.get("gap_statement") or "").strip():
+                    add_err("MALFORMED_RESEARCH_GAP", f"Gap '{g.get('gap_id', '?')}' lacks gap_statement.", "Provide non-empty gap_statement and supporting_ref_ids[].")
+                dt = str(g.get("derivation_type") or "")
+                if dt and dt not in ("shared_limitation", "uncovered_scenario", "inter_study_conflict", "author_judgment"):
+                    add_warn("INVALID_GAP_DERIVATION_ENUM", f"Gap '{g.get('gap_id', '?')}' derivation_type={dt!r} is non-standard.", "Use shared_limitation | uncovered_scenario | inter_study_conflict | author_judgment.")
+        for c in contribs:
+            if isinstance(c, dict) and not str(c.get("claim_text") or "").strip():
+                add_err("MALFORMED_CONTRIBUTION", f"Contribution '{c.get('contrib_id', '?')}' lacks claim_text.", "Provide non-empty claim_text.")
 
         # Structural quality warnings for completed drafts
         if catalog and task_mode not in ("fill_and_audit_citations", "align_contributions"):
@@ -403,7 +455,13 @@ def main() -> None:
 
     # Axis 3: Prose inline citations & structured section ref_ids resolution
     all_known_keys = set(ledger_by_key.keys()) | set(payload_refs_by_key.keys())
-    prose_cites = _extract_prose_citations(manuscript, known_keys=all_known_keys)
+    all_known_surnames = {str(r.get("first_author_surname") or "").strip().lower() for r in catalog if r.get("first_author_surname")}
+    for pr in refs:
+        if isinstance(pr, dict) and pr.get("authors"):
+            s = extract_first_author_surname(str(pr.get("authors")))
+            if s:
+                all_known_surnames.add(s.lower())
+    prose_cites = _extract_prose_citations(manuscript, known_keys=all_known_keys, known_surnames=all_known_surnames)
     for tok in prose_cites:
         lref = find_ledger_ref(tok)
         pref = find_payload_ref(tok)
@@ -511,13 +569,41 @@ def main() -> None:
     grounded_tokens = ledger.get("grounded_numbers_index") or []
     ungrounded_hits: List[str] = []
 
+    def _matches_grounded_or_delta(tok: Dict[str, Any]) -> bool:
+        if any(numbers_match(tok, gt) for gt in grounded_tokens):
+            return True
+        # Allow honest arithmetic difference / relative improvement derived from two grounded numbers
+        tv = float(tok["value"])
+        tu = str(tok.get("unit") or "").lower()
+        t_pct = bool(tok.get("has_percent"))
+        same_unit_vals: List[float] = []
+        for gt in grounded_tokens:
+            gu = str(gt.get("unit") or "").lower()
+            if (tu == gu) or (t_pct and gt.get("has_percent")):
+                same_unit_vals.append(float(gt["value"]))
+        if len(same_unit_vals) >= 2:
+            # Cap candidate pair check to keep verification O(1) bounded
+            pool = same_unit_vals[:60]
+            tol = max(0.06, 0.01 * max(abs(tv), 1.0))
+            for idx_a in range(len(pool)):
+                va = pool[idx_a]
+                for idx_b in range(idx_a + 1, len(pool)):
+                    vb = pool[idx_b]
+                    if abs(abs(va - vb) - abs(tv)) <= tol or abs((va + vb) - tv) <= tol:
+                        return True
+                    if t_pct and vb != 0 and abs(100.0 * abs(va - vb) / abs(vb) - abs(tv)) <= tol:
+                        return True
+                    if t_pct and va != 0 and abs(100.0 * abs(va - vb) / abs(va) - abs(tv)) <= tol:
+                        return True
+        return False
+
     def check_text_numbers(txt: str, context_label: str) -> None:
         if "[待作者确认" in txt or "[AUTHOR_CONFIRM" in txt:
             return
         for tok in extract_numeric_tokens(txt, filter_structural=True):
             if not (tok["has_percent"] or tok["unit"] or tok["decimals"] > 0 or abs(tok["value"]) >= 100):
                 continue
-            if not any(numbers_match(tok, gt) for gt in grounded_tokens):
+            if not _matches_grounded_or_delta(tok):
                 ungrounded_hits.append(f"{context_label}: '{tok['raw']}'")
 
     for c in contribs:
@@ -528,11 +614,17 @@ def main() -> None:
     for row in matrix:
         if isinstance(row, dict):
             check_text_numbers(str(row.get("key_result") or ""), f"matrix[{row.get('ref_id')}]")
-    for s_idx, sent in enumerate(re.split(r"(?:(?<=[。！？!?])\s*|(?<!\d)\.(?:\s+|$)|\n+)", manuscript), start=1):
+    # Protect abbreviations (et al., Fig., Sec., e.g., i.e., vs.) from breaking sentences prematurely
+    safe_ms = re.sub(r"\b(et\s+al|Fig|Tab|Sec|Eq|e\.g|i\.e|vs|Vol|No|Dr|Prof)\.", r"\1<DOT>", manuscript, flags=re.I)
+    for s_idx, sent in enumerate(re.split(r"(?:(?<=[。！？!?])\s*|(?<!\d)\.(?:\s+|$)|\n+)", safe_ms), start=1):
+        sent = sent.replace("<DOT>", ".")
         if re.match(r"^\s*#{1,6}\s+", sent):
             continue
-        if any(w in sent.lower() for w in ("%", "％", "accuracy", "f1", "rmse", "mae", "auc", "speedup", "提升", "降低", "达到", "准确率", "误差", "效率")):
-            check_text_numbers(sent, f"prose_S{s_idx}")
+        if any(w in sent.lower() for w in ("%", "％", "accuracy", "f1", "rmse", "mae", "auc", "speedup", "precision", "recall", "latency", "loss", "bleu", "提升", "降低", "达到", "准确率", "误差", "效率")):
+            # Mask qualifying regime/threshold bounds (e.g., '> 300 W/cm2', '400 mA/cm2 以上', 'below 50 mA/cm2') in narrative prose
+            sent_check = re.sub(r"(?:[<>≤≥]\s*|above\s+|below\s+|under\s+|over\s+|不足\s*)?\d+(?:\.\d+)?(?:\s*[A-Za-zμ%％/0-9]+)?\s*(?:以上|以下|以内)", " ", sent, flags=re.I)
+            sent_check = re.sub(r"(?:[<>≤≥]|above|below|under|over|不足)\s*\d+(?:\.\d+)?(?:\s*[A-Za-zμ%％/0-9]+)?", " ", sent_check, flags=re.I)
+            check_text_numbers(sent_check, f"prose_S{s_idx}")
 
     if ungrounded_hits:
         add_err(
@@ -553,8 +645,8 @@ def main() -> None:
                 f"Include {cid} in payload.conflicts[] with both source values and author confirmation flag.",
             )
 
-    # Axis 9: Bidirectional GAP-XX alignment
-    inline_gaps = set(re.findall(r"\[(?:待作者确认|AUTHOR_CONFIRM)\s*:\s*(GAP-\d+)\]", manuscript))
+    # Axis 9: Bidirectional GAP-XX alignment (allow notes after GAP-XX inside brackets + skeleton items)
+    inline_gaps = set(re.findall(r"\[(?:待作者确认|AUTHOR_CONFIRM)\s*:\s*(GAP-\d+)\b[^\]]*\]", manuscript))
     item_gaps = {str(it.get("gap_id") or "").strip() for it in (payload.get("author_confirmation_items") or []) if isinstance(it, dict)}
     for ig in sorted(inline_gaps - item_gaps):
         add_err(
@@ -562,26 +654,29 @@ def main() -> None:
             f"Inline marker '{ig}' in manuscript_markdown has no entry in author_confirmation_items[].",
             f"Add {ig} to author_confirmation_items[] with a closed-ended question.",
         )
-    for itg in sorted(item_gaps):
-        if itg and itg not in inline_gaps and itg not in payload_unc_blob:
-            item_obj = next((x for x in (payload.get("author_confirmation_items") or []) if isinstance(x, dict) and x.get("gap_id") == itg), {})
-            loc_str = str(item_obj.get("location_in_draft") or "").lower()
-            issue_str = str(item_obj.get("issue_type") or "").lower()
-            if (
-                "global" not in loc_str
-                and "references" not in loc_str
-                and "format" not in loc_str
-                and issue_str not in (
-                    "missing_metadata", "missing_venue", "missing_year", "missing_doi",
-                    "incomplete_reference_metadata", "unspecified_citation_style",
-                    "missing_own_paper_evidence", "missing_referenced_file",
-                )
-            ):
-                add_err(
-                    "MISSING_INLINE_GAP_TAG",
-                    f"Confirmation item '{itg}' (location='{loc_str}') is not tagged inline in manuscript_markdown.",
-                    f"Add [待作者确认: {itg}] or [AUTHOR_CONFIRM: {itg}] at '{loc_str}' in manuscript_markdown.",
-                )
+    if status == "completed":
+        for itg in sorted(item_gaps):
+            if itg and itg not in inline_gaps and itg not in payload_unc_blob:
+                item_obj = next((x for x in (payload.get("author_confirmation_items") or []) if isinstance(x, dict) and x.get("gap_id") == itg), {})
+                loc_str = str(item_obj.get("location_in_draft") or "").lower()
+                issue_str = str(item_obj.get("issue_type") or "").lower()
+                if (
+                    "global" not in loc_str
+                    and "references" not in loc_str
+                    and "format" not in loc_str
+                    and "manuscript_draft" not in loc_str
+                    and issue_str not in (
+                        "missing_metadata", "missing_venue", "missing_year", "missing_doi",
+                        "incomplete_reference_metadata", "unspecified_citation_style",
+                        "missing_own_paper_evidence", "missing_referenced_file",
+                        "unresolved_draft_citation", "empty_literature_library",
+                    )
+                ):
+                    add_err(
+                        "MISSING_INLINE_GAP_TAG",
+                        f"Confirmation item '{itg}' (location='{loc_str}') is not tagged inline in manuscript_markdown.",
+                        f"Add [待作者确认: {itg}] or [AUTHOR_CONFIRM: {itg}] at '{loc_str}' in manuscript_markdown.",
+                    )
 
     # Advisory Warnings (Quality & Style Rubric from rubric_rules.json)
     for pat in cliche_patterns:
@@ -603,12 +698,12 @@ def main() -> None:
         elif len([p for p in inner.split(",") if p.strip()]) >= 4 and not any(t in inner for t in ("待作者确认", "AUTHOR_CONFIRM")):
             add_warn("CITATION_DUMP", f"Multi-citation cluster '[{inner}]' detected.", "Ensure each cited work carries its specific finding or limitation.")
 
-    # Sequential chronological stitching heuristic in Related Work
+    # Sequential chronological stitching heuristic in Related Work (both line-start & mid-paragraph sequences)
     rw_m = re.search(r"(?:相关工作|Related\s+Work)(.*)", manuscript, re.I | re.S)
     if rw_m:
         rw_chunk = rw_m.group(1)
-        seq_hits = re.findall(r"(?:^|\n)\s*(?:In\s+(?:19|20)\d{2}|20\d{2}年|[A-Z][a-z]+\s+et\s+al\.\s*\(\d{4}\))", rw_chunk)
-        if len(seq_hits) >= 3 and len(rw_groups) < 2:
+        seq_hits = re.findall(r"(?:\bIn\s+(?:19|20)\d{2}\b|(?:19|20)\d{2}年|\b[A-Z][a-z]+\s+et\s+al\.\s*\(\d{4}\))", rw_chunk)
+        if len(seq_hits) >= 4 and len(rw_groups) < 2:
             add_warn("CHRONOLOGICAL_RELATED_WORK", "Related Work appears organized sequentially by year/author rather than grouped by route.", "Organize into >=2 technical route subsections comparing trade-offs.")
 
     # Overclaiming checks in contributions
@@ -631,12 +726,26 @@ def main() -> None:
             if isinstance(w, dict) and (not str(w.get("applicability_conditions") or "").strip() or not str(w.get("limitations") or "").strip()):
                 add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
 
-    # Coverage ratio check
+    # Coverage ratio check (real cited references vs skeleton padding)
     excluded = {str(e.get("ref_id") or "").lower() for e in (payload.get("excluded_references") or []) if isinstance(e, dict)}
-    covered_ids = {str(r.get("ref_id") or "").lower() for r in refs if isinstance(r, dict)} | excluded
-    cov_ratio = (len(covered_ids) / len(catalog)) if catalog else 1.0
+    cited_in_prose_rids: Set[str] = set()
+    for tok in prose_cites:
+        lr = find_ledger_ref(tok)
+        if lr and lr.get("ref_id"):
+            cited_in_prose_rids.add(str(lr["ref_id"]).lower())
+    for cm in claim_map:
+        if isinstance(cm, dict):
+            for cid in cm.get("citation_ids") or []:
+                lr = find_ledger_ref(str(cid))
+                if lr and lr.get("ref_id"):
+                    cited_in_prose_rids.add(str(lr["ref_id"]).lower())
+    payload_rids = {str(r.get("ref_id") or "").lower() for r in refs if isinstance(r, dict)}
+    effective_ids = (cited_in_prose_rids | excluded) if (manuscript.strip() and task_mode != "fill_and_audit_citations") else (payload_rids | excluded)
+    cov_ratio = (len(effective_ids) / len(catalog)) if catalog else 1.0
     if catalog and cov_ratio < 0.8:
-        add_warn("LOW_CITATION_COVERAGE", f"Reference coverage is {cov_ratio:.0%} ({len(covered_ids)}/{len(catalog)}).", "Include remaining relevant references or document exclusions in excluded_references[].")
+        add_warn("LOW_CITATION_COVERAGE", f"Cited/excluded reference coverage is {cov_ratio:.0%} ({len(effective_ids)}/{len(catalog)}).", "Cite remaining relevant references in prose or document exclusions in excluded_references[].")
+    if status == "completed" and len(payload_rids) >= 3 and manuscript.strip() and len(cited_in_prose_rids) / len(payload_rids) < 0.6:
+        add_warn("UNCITED_PAYLOAD_REFERENCES", f"Only {len(cited_in_prose_rids)}/{len(payload_rids)} payload.references[] entries are cited in prose/claim_map.", "Cite active references in prose or move unused ones to excluded_references[].")
 
     if args.strict and warnings:
         errors.extend(warnings)

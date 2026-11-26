@@ -16,9 +16,12 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,9 +29,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from common import (
     format_citation_entry,
     load_json_safe,
-    read_text_safe,
+    order_refs_by_appearance,
     render_inline_citations,
+    resolve_manuscript_text,
     save_json,
+    sync_payload_structures,
 )
 
 
@@ -37,28 +42,6 @@ def _effective_style(payload: Dict[str, Any]) -> str:
     if style == "unspecified" or not style:
         return "gbt7714" if payload.get("language") == "zh" else "ieee_numeric"
     return style
-
-
-def _resolve_manuscript_text(payload: Dict[str, Any], payload_path: Optional[Path], manuscript_arg: Optional[str]) -> str:
-    if manuscript_arg:
-        mp = Path(manuscript_arg)
-        if mp.exists():
-            txt, err = read_text_safe(mp)
-            if not err and txt is not None:
-                return txt
-    inline = str(payload.get("manuscript_markdown") or "")
-    if inline.strip():
-        return inline
-    mf = str(payload.get("manuscript_file") or "").strip()
-    if mf:
-        cand = Path(mf)
-        if not cand.is_absolute() and payload_path is not None:
-            cand = payload_path.parent / cand
-        if cand.exists():
-            txt, err = read_text_safe(cand)
-            if not err and txt is not None:
-                return txt
-    return inline
 
 
 def _enrich_matrix_with_titles(matrix: List[Dict[str, Any]], refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -141,28 +124,36 @@ def _fill_reference_citations(refs: List[Dict[str, Any]], style: str) -> List[Di
     return out
 
 
-def _render_manuscript_md(payload: Dict[str, Any], rendered_md: str, refs: List[Dict[str, Any]]) -> str:
+def _render_manuscript_md(payload: Dict[str, Any], rendered_md: str, refs: List[Dict[str, Any]], uncited_ids: Optional[set] = None) -> str:
     lines: List[str] = []
     if payload.get("title"):
         lines.extend([f"# {payload['title']}", ""])
     lines.append(rendered_md.rstrip())
+    unc = uncited_ids or set()
+    body_refs = [r for r in refs if str(r.get("ref_id") or "").lower() not in unc] if unc and len(unc) < len(refs) else refs
     lines.extend(["", "## References (参考文献)", ""])
-    for r in refs:
+    for r in body_refs:
         fmt = str(r.get("formatted_citation") or "").strip()
-        tag = f" *(Status: `{r.get('verification_status', 'verified')}` | Source: `{r.get('source_locator', '-')}`)*"
-        lines.append(f"- {fmt}{tag}")
-    if not refs:
+        lines.append(f"- {fmt}")
+    if not body_refs:
         lines.append("- *No verified references supplied in input materials.*")
     return "\n".join(lines) + "\n"
 
 
-def _render_audit_md(payload: Dict[str, Any], refs: List[Dict[str, Any]], ledger: Dict[str, Any], verification: Dict[str, Any]) -> str:
+def _render_audit_md(
+    payload: Dict[str, Any],
+    refs: List[Dict[str, Any]],
+    ledger: Dict[str, Any],
+    verification: Dict[str, Any],
+    uncited_ids: Optional[set] = None,
+) -> str:
     catalog_count = len(ledger.get("references_catalog") or [])
     excluded = [e for e in (payload.get("excluded_references") or []) if isinstance(e, dict)]
     recency_counts: Dict[str, int] = {"foundational": 0, "representative": 0, "recent": 0}
     for r in refs:
         rr = str(r.get("recency_role") or "representative")
         recency_counts[rr] = recency_counts.get(rr, 0) + 1
+    unc = uncited_ids or set()
 
     lines = [
         f"# Evidence, Citation & Provenance Audit Report (`{payload.get('case_id', '')}`)",
@@ -172,24 +163,27 @@ def _render_audit_md(payload: Dict[str, Any], refs: List[Dict[str, Any]], ledger
         f"**Recency Breakdown**: foundational=`{recency_counts.get('foundational', 0)}`, "
         f"representative=`{recency_counts.get('representative', 0)}`, recent=`{recency_counts.get('recent', 0)}`",
         "",
-        "| Ref ID | Cite Key | Authors | Year | Venue | DOI/ID | Recency | Status | Source |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Ref ID | Cite Key | Title | Authors | Year | Venue | DOI/ID | Cited? | Status | Source |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in refs:
+        rid_l = str(r.get("ref_id") or "").lower()
+        cited_flag = "no (audit only)" if rid_l in unc else "yes"
         cells = [
             str(r.get("ref_id") or "-"),
             f"`{r.get('cite_key') or '-'}`",
+            str(r.get("title") or "-")[:70],
             str(r.get("authors") or "-"),
             str(r.get("year") or "-"),
             str(r.get("venue") or "-"),
             str(r.get("doi_or_id") or "-"),
-            str(r.get("recency_role") or "-"),
+            cited_flag,
             f"`{r.get('verification_status') or '-'}`",
             f"`{r.get('source_locator') or '-'}`",
         ]
         lines.append("| " + " | ".join(c.replace("|", "\\|").replace("\n", " ") for c in cells) + " |")
     if not refs:
-        lines.append("| - | - | *Empty literature catalog* | - | - | - | - | `unverified_source` | - |")
+        lines.append("| - | - | *Empty literature catalog* | - | - | - | - | - | `unverified_source` | - |")
 
     if excluded:
         lines.extend(["", "### Excluded References"])
@@ -255,12 +249,32 @@ def _render_audit_md(payload: Dict[str, Any], refs: List[Dict[str, Any]], ledger
     return "\n".join(lines) + "\n"
 
 
-def _latex_escape(txt: str) -> str:
+_UNICODE_MATH_TEX = {
+    "α": r"$\alpha$", "β": r"$\beta$", "γ": r"$\gamma$", "δ": r"$\delta$", "ε": r"$\epsilon$",
+    "λ": r"$\lambda$", "μ": r"$\mu$", "σ": r"$\sigma$", "Δ": r"$\Delta$", "Ω": r"$\Omega$",
+    "≤": r"$\le$", "≥": r"$\ge$", "±": r"$\pm$", "×": r"$\times$", "→": r"$\to$", "−": "-",
+    "°": r"$^\circ$", "≈": r"$\approx$", "≠": r"$\neq$",
+}
+
+
+def _latex_escape(txt: str, ascii_unicode_safe: bool = False) -> str:
     bs_tok = "ZZZBACKSLASHZZZ"
     out = txt.replace("\\", bs_tok)
+    if ascii_unicode_safe:
+        uni_holds: Dict[str, str] = {}
+        for uch, tex_rep in _UNICODE_MATH_TEX.items():
+            if uch in out:
+                hk = f"ZZZUNIMATH{len(uni_holds)}ZZZ"
+                uni_holds[hk] = tex_rep
+                out = out.replace(uch, hk)
+    else:
+        uni_holds = {}
     for k, v in (("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"), ("_", r"\_"), ("{", r"\{"), ("}", r"\}"), ("~", r"\textasciitilde{}"), ("^", r"\textasciicircum{}")):
         out = out.replace(k, v)
-    return out.replace(bs_tok, r"\textbackslash{}")
+    out = out.replace(bs_tok, r"\textbackslash{}")
+    for hk, tex_rep in uni_holds.items():
+        out = out.replace(hk, tex_rep)
+    return out
 
 
 def _bibtex_escape(txt: str) -> str:
@@ -286,13 +300,26 @@ def _infer_bib_type(ref: Dict[str, Any]) -> Tuple[str, str]:
     return "article", "journal"
 
 
-def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: Dict[str, int], use_cite_cmd: bool) -> str:
-    """Convert structured Markdown prose into clean standalone LaTeX body preserving \\cite{} and inline $...$ math."""
+def _markdown_to_latex_body(
+    md: str,
+    ref_by_id: Dict[str, str],
+    ref_idx_by_id: Dict[str, int],
+    use_cite_cmd: bool,
+    ascii_unicode_safe: bool = False,
+) -> str:
+    """Convert structured Markdown prose into Python 3.9+ safe LaTeX body preserving citations, math, lists, and tables."""
     lines_out: List[str] = []
-    in_list = False
-    cite_cmd_re = re.compile(r"\\cite[a-z]*\{[^}]+\}")
-    ref_bracket_re = re.compile(r"\[(R\d{2,3}(?:\s*[,;]\s*R\d{2,3})*)\]")
-    math_inline_re = re.compile(r"(?<!\\)\$([^$\n]{1,120})(?<!\\)\$")
+    list_env: Optional[str] = None
+    in_disp_math = False
+    cite_cmd_re = re.compile(r"\\cite[a-z]*\*?(?:\[[^\]]*\])*\{[^}]+\}")
+    math_inline_re = re.compile(r"(?<!\\)\$([^$\n]{1,400})(?<!\\)\$")
+    valid_toks = set(ref_by_id.keys()) | set(ref_idx_by_id.keys())
+
+    def close_list() -> None:
+        nonlocal list_env
+        if list_env:
+            lines_out.append(f"\\end{{{list_env}}}")
+            list_env = None
 
     def convert_inline(s: str) -> str:
         saved: Dict[str, str] = {}
@@ -303,70 +330,120 @@ def _markdown_to_latex_body(md: str, ref_by_id: Dict[str, str], ref_idx_by_id: D
             return key
 
         tmp = cite_cmd_re.sub(lambda m: hold(m.group(0)), s)
-        # Protect inline math spans $...$ from escaping
         tmp = math_inline_re.sub(lambda m: hold(m.group(0)), tmp)
 
-        def sub_rids(m: re.Match[str]) -> str:
-            rids = [x.strip() for x in re.split(r"[,;]", m.group(1)) if x.strip()]
+        def sub_bracket_cites(m: re.Match[str]) -> str:
+            inner = m.group(1).strip()
+            if any(t in inner for t in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", ":")):
+                return m.group(0)
+            rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
+            if rm:
+                a, b = int(rm.group(1)), int(rm.group(2))
+                rids = [f"R{k:02d}" for k in range(a, min(b + 1, a + 21))]
+            else:
+                parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
+                if not parts or not all(re.match(r"^R\d{1,3}$", p) or p.lower() in valid_toks for p in parts):
+                    return m.group(0)
+                rids = parts
             if use_cite_cmd:
                 keys = [ref_by_id.get(r.lower(), r) for r in rids]
                 return hold(f"\\cite{{{', '.join(keys)}}}")
             nums = [str(ref_idx_by_id.get(r.lower(), r)) for r in rids]
             return f"[{', '.join(nums)}]"
 
-        tmp = ref_bracket_re.sub(sub_rids, tmp)
+        tmp = re.sub(r"\[([^\[\]]+)\]", sub_bracket_cites, tmp)
         spans: Dict[str, str] = {}
 
         def hold_fmt(tex_cmd: str, inner: str) -> str:
             key = f"@@FMTHOLD{len(spans)}@@"
-            spans[key] = f"\\{tex_cmd}{{{_latex_escape(inner)}}}"
+            spans[key] = f"\\{tex_cmd}{{{_latex_escape(inner, ascii_unicode_safe=ascii_unicode_safe)}}}"
             return key
 
         tmp = re.sub(r"\*\*(.+?)\*\*", lambda m: hold_fmt("textbf", m.group(1)), tmp)
         tmp = re.sub(r"\*(.+?)\*", lambda m: hold_fmt("emph", m.group(1)), tmp)
         tmp = re.sub(r"`([^`]+)`", lambda m: hold_fmt("texttt", m.group(1)), tmp)
-        esc = _latex_escape(tmp)
+        esc = _latex_escape(tmp, ascii_unicode_safe=ascii_unicode_safe)
         for k, v in spans.items():
             esc = esc.replace(k, v)
         for k, v in saved.items():
             esc = esc.replace(k, v)
         return esc
 
-    for raw in (md or "").splitlines():
-        s = raw.strip()
-        if not s:
-            if in_list:
-                lines_out.append(r"\end{itemize}")
-                in_list = False
-            lines_out.append("")
+    raw_lines = (md or "").splitlines()
+    idx_ln = 0
+    num_re = re.compile(r"^\d+(?:\.\d+)*\.?\s*")
+    bullet_re = re.compile(r"^[-*]\s+")
+    enum_re = re.compile(r"^\d+\.\s+")
+    while idx_ln < len(raw_lines):
+        s = raw_lines[idx_ln].strip()
+        if s == "$$" or (s.startswith("$$") and s.endswith("$$") and len(s) > 4):
+            close_list()
+            if s.startswith("$$") and s.endswith("$$") and len(s) > 4:
+                lines_out.append(r"\[" + s[2:-2].strip() + r"\]")
+            else:
+                lines_out.append(r"\[" if not in_disp_math else r"\]")
+                in_disp_math = not in_disp_math
+            idx_ln += 1
             continue
-        if s.startswith("### "):
-            if in_list:
-                lines_out.append(r"\end{itemize}")
-                in_list = False
-            lines_out.append(f"\\subsection{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\.?\\s*', '', s[4:].strip()))}}}")
+        if in_disp_math:
+            lines_out.append(s)
+            idx_ln += 1
+            continue
+        if not s:
+            close_list()
+            lines_out.append("")
+            idx_ln += 1
+            continue
+        if s.startswith("#### "):
+            close_list()
+            hdr = num_re.sub("", s[5:].strip())
+            lines_out.append("\\paragraph{" + convert_inline(hdr) + "}")
+        elif s.startswith("### "):
+            close_list()
+            hdr = num_re.sub("", s[4:].strip())
+            lines_out.append("\\subsection{" + convert_inline(hdr) + "}")
         elif s.startswith("## "):
-            if in_list:
-                lines_out.append(r"\end{itemize}")
-                in_list = False
-            lines_out.append(f"\\section{{{convert_inline(re.sub(r'^\\d+(?:\\.\\d+)*\\.?\\s*', '', s[3:].strip()))}}}")
+            close_list()
+            hdr = num_re.sub("", s[3:].strip())
+            lines_out.append("\\section{" + convert_inline(hdr) + "}")
         elif s.startswith("# "):
-            if in_list:
-                lines_out.append(r"\end{itemize}")
-                in_list = False
-            lines_out.append(f"\\section*{{{convert_inline(s[2:].strip())}}}")
-        elif re.match(r"^[-*]\s+", s):
-            if not in_list:
+            close_list()
+            lines_out.append("\\section*{" + convert_inline(s[2:].strip()) + "}")
+        elif bullet_re.match(s):
+            if list_env != "itemize":
+                close_list()
                 lines_out.append(r"\begin{itemize}")
-                in_list = True
-            lines_out.append(f"  \\item {convert_inline(re.sub(r'^[-*]\\s+', '', s))}")
+                list_env = "itemize"
+            lines_out.append("  \\item " + convert_inline(bullet_re.sub("", s)))
+        elif enum_re.match(s):
+            if list_env != "enumerate":
+                close_list()
+                lines_out.append(r"\begin{enumerate}")
+                list_env = "enumerate"
+            lines_out.append("  \\item " + convert_inline(enum_re.sub("", s)))
+        elif s.startswith("|") and s.endswith("|") and idx_ln + 1 < len(raw_lines) and re.match(r"^\|[\s:|-]+\|$", raw_lines[idx_ln + 1].strip()):
+            close_list()
+            tbl_rows: List[List[str]] = []
+            while idx_ln < len(raw_lines) and raw_lines[idx_ln].strip().startswith("|"):
+                row_s = raw_lines[idx_ln].strip()
+                if not re.match(r"^\|[\s:|-]+\|$", row_s):
+                    tbl_rows.append([c.strip() for c in row_s.strip("|").split("|")])
+                idx_ln += 1
+            if tbl_rows:
+                ncols = max(len(r) for r in tbl_rows)
+                lines_out.append("\\begin{center}\n\\begin{tabular}{" + ("l" * ncols) + "}\n\\toprule")
+                for ri, row in enumerate(tbl_rows):
+                    padded = row + [""] * (ncols - len(row))
+                    lines_out.append(" & ".join(convert_inline(c) for c in padded) + r" \\")
+                    if ri == 0:
+                        lines_out.append(r"\midrule")
+                lines_out.append("\\bottomrule\n\\end{tabular}\n\\end{center}")
+            continue
         else:
-            if in_list:
-                lines_out.append(r"\end{itemize}")
-                in_list = False
+            close_list()
             lines_out.append(convert_inline(s))
-    if in_list:
-        lines_out.append(r"\end{itemize}")
+        idx_ln += 1
+    close_list()
     return "\n".join(lines_out)
 
 
@@ -414,8 +491,18 @@ def _maybe_export_requested(
 ) -> Tuple[List[str], List[str]]:
     extra_files: List[str] = []
     notes: List[str] = []
-    ref_by_id = {str(r.get("ref_id") or "").lower(): str(r.get("cite_key") or r.get("ref_id") or f"ref{i}") for i, r in enumerate(refs_list, start=1)}
-    ref_idx_by_id = {str(r.get("ref_id") or "").lower(): i for i, r in enumerate(refs_list, start=1)}
+    ref_by_id: Dict[str, str] = {}
+    ref_idx_by_id: Dict[str, int] = {}
+    for i, r in enumerate(refs_list, start=1):
+        ck_v = str(r.get("cite_key") or r.get("ref_id") or f"ref{i}")
+        rid_l = str(r.get("ref_id") or "").lower()
+        ck_l = str(r.get("cite_key") or "").lower()
+        if rid_l:
+            ref_by_id[rid_l] = ck_v
+            ref_idx_by_id[rid_l] = i
+        if ck_l:
+            ref_by_id[ck_l] = ck_v
+            ref_idx_by_id[ck_l] = i
     both_tex_and_docx = ("tex" in requested_formats) and ("docx" in requested_formats)
 
     if "bib" in requested_formats or "tex" in requested_formats:
@@ -434,6 +521,10 @@ def _maybe_export_requested(
             yr = str(r.get("year") or "").strip()
             if yr and re.match(r"^(19|20)\d{2}$", yr):
                 field_lines.append(f"  year = {{{yr}}}")
+            if r.get("volume"):
+                field_lines.append(f"  volume = {{{_bibtex_escape(r['volume'])}}}")
+            if r.get("pages"):
+                field_lines.append(f"  pages = {{{_bibtex_escape(r['pages'])}}}")
             doi_val = str(r.get("doi_or_id") or "").strip()
             if doi_val.startswith("10."):
                 field_lines.append(f"  doi = {{{doi_val}}}")
@@ -448,18 +539,21 @@ def _maybe_export_requested(
     if "tex" in requested_formats:
         tex_path = out_dir / "introduction_and_related_work.tex"
         title_raw = str(payload.get("title") or "Introduction and Related Work")
-        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", manuscript_raw + title_raw))
-        use_cite_cmd = str(payload.get("citation_style") or "") == "bibtex_latex" or "\\cite" in manuscript_raw
-        body_tex = _markdown_to_latex_body(manuscript_raw, ref_by_id, ref_idx_by_id, use_cite_cmd=use_cite_cmd)
-
         matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
+        full_tex_blob = manuscript_raw + title_raw + json.dumps(matrix, ensure_ascii=False) + json.dumps(refs_list, ensure_ascii=False)
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", full_tex_blob))
+        compiler = (shutil.which("xelatex") or shutil.which("pdflatex")) if has_cjk else (shutil.which("pdflatex") or shutil.which("xelatex"))
+        ascii_safe = (compiler is not None and Path(compiler).name.lower().startswith("pdflatex")) or (not has_cjk and compiler is None)
+        use_cite_cmd = str(payload.get("citation_style") or "") == "bibtex_latex" or "\\cite" in manuscript_raw
+        body_tex = _markdown_to_latex_body(manuscript_raw, ref_by_id, ref_idx_by_id, use_cite_cmd=use_cite_cmd, ascii_unicode_safe=ascii_safe)
+
         table_tex = ""
         if matrix:
             trows = []
             for m in matrix:
                 trows.append(
                     " & ".join(
-                        _latex_escape(str(m.get(col) or "")[:90])
+                        _latex_escape(str(m.get(col) or "")[:90], ascii_unicode_safe=ascii_safe)
                         for col in ("ref_id", "route", "method_route", "key_result", "limitations")
                     )
                     + r" \\"
@@ -477,14 +571,15 @@ def _maybe_export_requested(
         for idx, r in enumerate(refs_list, start=1):
             ck = str(r.get("cite_key") or f"ref{idx}")
             fmt = str(r.get("formatted_citation") or f"{r.get('authors', '')} ({r.get('year', '')}). {r.get('title', '')}. {r.get('venue', '')}.").strip()
-            bibitems.append(f"\\bibitem{{{ck}}} {_latex_escape(fmt)}")
+            # Avoid duplicate [1] [1] in LaTeX numeric bibliography (\bibitem already renders [idx])
+            fmt_clean = re.sub(r"^\s*(?:\[\d+\]|\d+\.)\s+", "", fmt)
+            bibitems.append(f"\\bibitem{{{ck}}} {_latex_escape(fmt_clean, ascii_unicode_safe=ascii_safe)}")
         bib_block = (
             "\n\\begin{thebibliography}{99}\n" + "\n".join(bibitems) + "\n\\end{thebibliography}\n"
             if bibitems
             else ""
         )
 
-        # Do NOT emit \usepackage[T1]{fontenc} under ctexart/xelatex!
         if has_cjk:
             doc_cls = "\\documentclass[UTF8]{ctexart}\n"
         else:
@@ -493,7 +588,7 @@ def _maybe_export_requested(
             doc_cls
             + "\\usepackage[margin=1in]{geometry}\n"
             + "\\usepackage{booktabs}\n"
-            + f"\\title{{{_latex_escape(title_raw)}}}\n"
+            + f"\\title{{{_latex_escape(title_raw, ascii_unicode_safe=ascii_safe)}}}\n"
             + "\\date{}\n"
             + "\\begin{document}\n"
             + "\\maketitle\n\n"
@@ -505,37 +600,37 @@ def _maybe_export_requested(
         )
         tex_path.write_text(tex_src, encoding="utf-8", newline="\n")
         extra_files.append("introduction_and_related_work.tex")
-        compiler = (shutil.which("xelatex") or shutil.which("pdflatex")) if has_cjk else (shutil.which("pdflatex") or shutil.which("xelatex"))
         if compiler:
             compile_ok = False
             last_rc = -1
-            try:
-                # Run 2 passes so \cite{...} / \ref{...} converge cleanly
-                for _pass in range(2):
-                    proc = subprocess.run(
-                        [compiler, "-no-shell-escape", "-interaction=nonstopmode", "-output-directory", str(out_dir), str(tex_path)],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        stdin=subprocess.DEVNULL,
-                        timeout=45,
-                    )
-                    last_rc = proc.returncode
-                    if proc.returncode != 0:
-                        break
-                pdf_raw = out_dir / "introduction_and_related_work.pdf"
-                if last_rc == 0 and pdf_raw.exists() and pdf_raw.stat().st_size > 0:
-                    compile_ok = True
-                    final_tex_pdf = (out_dir / "introduction_and_related_work_tex.pdf") if both_tex_and_docx else pdf_raw
-                    if both_tex_and_docx:
-                        shutil.move(str(pdf_raw), str(final_tex_pdf))
-                    extra_files.append(final_tex_pdf.name)
-                    extra_files.extend(_render_pdf_png_previews(final_tex_pdf, out_dir, "tex"))
-            except subprocess.TimeoutExpired:
-                notes.append("latex_compile_timeout:45s")
-            except OSError as exc:
-                notes.append(f"latex_compile_oserror:{exc}")
+            # Compile inside isolated temp build dir so .aux/.log/.out never pollute /app/output/
+            with tempfile.TemporaryDirectory() as tex_tmp:
+                tmp_dir = Path(tex_tmp)
+                try:
+                    for _pass in range(2):
+                        proc = subprocess.run(
+                            [compiler, "-no-shell-escape", "-interaction=nonstopmode", "-output-directory", str(tmp_dir), str(tex_path)],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            stdin=subprocess.DEVNULL,
+                            timeout=45,
+                        )
+                        last_rc = proc.returncode
+                        if proc.returncode != 0:
+                            break
+                    pdf_raw = tmp_dir / "introduction_and_related_work.pdf"
+                    if last_rc == 0 and pdf_raw.exists() and pdf_raw.stat().st_size > 0:
+                        compile_ok = True
+                        final_tex_pdf = out_dir / ("introduction_and_related_work_tex.pdf" if both_tex_and_docx else "introduction_and_related_work.pdf")
+                        shutil.copy2(str(pdf_raw), str(final_tex_pdf))
+                        extra_files.append(final_tex_pdf.name)
+                        extra_files.extend(_render_pdf_png_previews(final_tex_pdf, out_dir, "tex"))
+                except subprocess.TimeoutExpired:
+                    notes.append("latex_compile_timeout:45s")
+                except OSError as exc:
+                    notes.append(f"latex_compile_oserror:{exc}")
             if not compile_ok and not any(n.startswith("latex_compile_") for n in notes):
                 notes.append(f"latex_compile_failed:{last_rc}")
         else:
@@ -548,10 +643,28 @@ def _maybe_export_requested(
 
             doc = docx.Document()
             doc.add_heading(payload.get("title") or "Introduction and Related Work", level=1)
-            fmt_split = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*)")
-            for ln in rendered_md.splitlines():
-                s = ln.strip()
+            fmt_split = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)")
+
+            def _add_inline_runs(par: Any, txt: str) -> None:
+                for part in fmt_split.split(txt):
+                    if part.startswith("**") and part.endswith("**"):
+                        r = par.add_run(part[2:-2])
+                        r.bold = True
+                    elif part.startswith("*") and part.endswith("*"):
+                        r = par.add_run(part[1:-1])
+                        r.italic = True
+                    elif part.startswith("`") and part.endswith("`"):
+                        r = par.add_run(part[1:-1])
+                        r.font.name = "Consolas"
+                    elif part:
+                        par.add_run(part)
+
+            md_lns = rendered_md.splitlines()
+            li = 0
+            while li < len(md_lns):
+                s = md_lns[li].strip()
                 if not s:
+                    li += 1
                     continue
                 if s.startswith("### "):
                     doc.add_heading(s[4:], level=3)
@@ -559,17 +672,27 @@ def _maybe_export_requested(
                     doc.add_heading(s[3:], level=2)
                 elif s.startswith("# "):
                     doc.add_heading(s[2:], level=1)
+                elif re.match(r"^[-*]\s+", s):
+                    p = doc.add_paragraph(style="List Bullet")
+                    _add_inline_runs(p, re.sub(r"^[-*]\s+", "", s))
+                elif s.startswith("|") and s.endswith("|") and li + 1 < len(md_lns) and re.match(r"^\|[\s:|-]+\|$", md_lns[li + 1].strip()):
+                    trows_md: List[List[str]] = []
+                    while li < len(md_lns) and md_lns[li].strip().startswith("|"):
+                        rs = md_lns[li].strip()
+                        if not re.match(r"^\|[\s:|-]+\|$", rs):
+                            trows_md.append([c.strip() for c in rs.strip("|").split("|")])
+                        li += 1
+                    if trows_md:
+                        nc = max(len(r) for r in trows_md)
+                        dtbl = doc.add_table(rows=len(trows_md), cols=nc)
+                        for r_i, row_vals in enumerate(trows_md):
+                            for c_i, val in enumerate(row_vals):
+                                dtbl.rows[r_i].cells[c_i].text = val
+                    continue
                 else:
                     p = doc.add_paragraph()
-                    for part in fmt_split.split(s):
-                        if part.startswith("**") and part.endswith("**"):
-                            r = p.add_run(part[2:-2])
-                            r.bold = True
-                        elif part.startswith("*") and part.endswith("*"):
-                            r = p.add_run(part[1:-1])
-                            r.italic = True
-                        elif part:
-                            p.add_run(part)
+                    _add_inline_runs(p, s)
+                li += 1
             matrix = [m for m in (payload.get("comparison_matrix") or []) if isinstance(m, dict)]
             if matrix:
                 doc.add_heading("Related Work Comparison Matrix", level=2)
@@ -590,24 +713,25 @@ def _maybe_export_requested(
             extra_files.append("introduction_and_related_work.docx")
             soffice = shutil.which("soffice") or shutil.which("libreoffice")
             if soffice:
-                try:
-                    subprocess.run(
-                        [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
-                        capture_output=True,
-                        stdin=subprocess.DEVNULL,
-                        timeout=45,
-                    )
-                    pdf_p = out_dir / "introduction_and_related_work.pdf"
-                    if pdf_p.exists() and pdf_p.stat().st_size > 0:
-                        final_docx_pdf = (out_dir / "introduction_and_related_work_docx.pdf") if both_tex_and_docx else pdf_p
-                        if both_tex_and_docx:
-                            shutil.move(str(pdf_p), str(final_docx_pdf))
-                        extra_files.append(final_docx_pdf.name)
-                        extra_files.extend(_render_pdf_png_previews(final_docx_pdf, out_dir, "docx"))
-                except subprocess.TimeoutExpired:
-                    notes.append("soffice_convert_timeout:45s")
-                except OSError as exc:
-                    notes.append(f"soffice_convert_error:{exc}")
+                with tempfile.TemporaryDirectory() as lo_tmp:
+                    lo_profile = Path(lo_tmp).as_uri()
+                    try:
+                        subprocess.run(
+                            [soffice, f"-env:UserInstallation={lo_profile}", "--headless", "--convert-to", "pdf", "--outdir", str(lo_tmp), str(docx_path)],
+                            capture_output=True,
+                            stdin=subprocess.DEVNULL,
+                            timeout=45,
+                        )
+                        pdf_p = Path(lo_tmp) / "introduction_and_related_work.pdf"
+                        if pdf_p.exists() and pdf_p.stat().st_size > 0:
+                            final_docx_pdf = out_dir / ("introduction_and_related_work_docx.pdf" if both_tex_and_docx else "introduction_and_related_work.pdf")
+                            shutil.copy2(str(pdf_p), str(final_docx_pdf))
+                            extra_files.append(final_docx_pdf.name)
+                            extra_files.extend(_render_pdf_png_previews(final_docx_pdf, out_dir, "docx"))
+                    except subprocess.TimeoutExpired:
+                        notes.append("soffice_convert_timeout:45s")
+                    except OSError as exc:
+                        notes.append(f"soffice_convert_error:{exc}")
             else:
                 notes.append("soffice_not_installed:docx_written_without_pdf_preview")
         except ImportError:
@@ -634,7 +758,7 @@ def _maybe_export_requested(
             groups = payload.get("related_work_groups") or []
             gaps = payload.get("research_gaps") or []
             contribs = payload.get("contributions") or []
-            fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
+            fig, ax = plt.subplots(figsize=(10.5, 5.8), dpi=150)
             ax.set_xlim(0, 10)
             ax.set_ylim(0, 6)
             ax.axis("off")
@@ -642,11 +766,15 @@ def _maybe_export_requested(
 
             def draw_col(x: float, title: str, items: List[str], color: str) -> None:
                 ax.text(x + 1.4, 5.1, title, ha="center", va="center", fontsize=10, fontweight="bold")
-                for i, it in enumerate(items[:4]):
-                    y = 4.2 - i * 1.05
-                    box = FancyBboxPatch((x, y), 2.8, 0.78, boxstyle="round,pad=0.08", facecolor=color, edgecolor="#334155", linewidth=1.0)
+                shown = items[:4]
+                if len(items) > 4:
+                    shown[-1] = f"{shown[-1][:45]} (+{len(items) - 3} more)"
+                for i, it in enumerate(shown):
+                    y = 4.1 - i * 1.05
+                    box = FancyBboxPatch((x, y), 2.8, 0.85, boxstyle="round,pad=0.06", facecolor=color, edgecolor="#334155", linewidth=1.0)
                     ax.add_patch(box)
-                    ax.text(x + 1.4, y + 0.39, it[:42], ha="center", va="center", fontsize=8)
+                    wrapped = "\n".join(textwrap.wrap(it, width=26)[:3])
+                    ax.text(x + 1.4, y + 0.42, wrapped, ha="center", va="center", fontsize=7.5)
 
             g_labels = [f"{g.get('group_id', '')}: {g.get('route_name', '')}" for g in groups] or ["No routes"]
             gap_labels = [f"{g.get('gap_id', '')}: {g.get('gap_statement', '')}" for g in gaps] or ["Pending gaps"]
@@ -669,11 +797,21 @@ def _maybe_export_requested(
     return extra_files, notes
 
 
-def _coerce_type(val: Any, expected_type: str) -> Any:
+def _coerce_type(val: Any, expected_type: str, role: str = "") -> Any:
     et = (expected_type or "").lower()
     if et in ("string", "str"):
         if isinstance(val, str):
             return val
+        if role == "comparison_matrix" and isinstance(val, list):
+            return _render_matrix_md(val)
+        if role == "related_work_groups" and isinstance(val, list):
+            lines = []
+            for g in val:
+                if isinstance(g, dict):
+                    lines.append(f"### {g.get('route_name', g.get('group_id', 'Group'))}\n{g.get('route_tradeoff_summary', '')}")
+            return "\n\n".join(lines) if lines else json.dumps(val, ensure_ascii=False)
+        if isinstance(val, list) and all(isinstance(x, str) for x in val):
+            return "\n".join(f"- {x}" for x in val)
         return json.dumps(val, ensure_ascii=False)
     if et in ("array", "list"):
         if isinstance(val, list):
@@ -817,19 +955,19 @@ def _build_result_json(
         etype = fspec.get("expected_type", "any")
         role = fspec.get("semantic_role", "custom")
         if fname in overrides:
-            result[fname] = _coerce_type(overrides[fname], etype)
+            result[fname] = _coerce_type(overrides[fname], etype, role)
         elif fname == "manuscript_markdown":
-            result[fname] = _coerce_type(rendered_md, etype)
+            result[fname] = _coerce_type(rendered_md, etype, role)
         elif fname == "references":
-            result[fname] = _coerce_type(refs_filled, etype)
+            result[fname] = _coerce_type(refs_filled, etype, role)
         elif fname == "comparison_matrix":
-            result[fname] = _coerce_type(matrix, etype)
+            result[fname] = _coerce_type(matrix, etype, role)
         elif fname in payload and fname not in ("contract_overrides", "manuscript_file"):
-            result[fname] = _coerce_type(payload[fname], etype)
+            result[fname] = _coerce_type(payload[fname], etype, role)
         elif role in role_map:
-            result[fname] = _coerce_type(role_map[role], etype)
+            result[fname] = _coerce_type(role_map[role], etype, role)
         elif fname not in result:
-            result[fname] = _coerce_type("", etype)
+            result[fname] = _coerce_type("", etype, role)
     return result
 
 
@@ -871,12 +1009,20 @@ def main() -> None:
 
     eff_style = _effective_style(payload)
     lang = str(payload.get("language") or (plan.get("signals") or {}).get("language") or "zh")
-    refs_filled = _fill_reference_citations(payload.get("references") or [], eff_style)
-    manuscript_raw = _resolve_manuscript_text(payload, payload_path, args.manuscript)
+    manuscript_raw, ms_warns, ms_err = resolve_manuscript_text(payload, payload_path, args.manuscript)
+    payload = sync_payload_structures(payload, manuscript_raw)
+    if args.checkpoint == "final" and verification and verification.get("passed") is False and payload.get("status") == "completed":
+        payload = dict(payload)
+        payload["status"] = "partial"
+        payload["uncertainty"] = list(payload.get("uncertainty") or []) + ["verification_not_passed:demoted_from_completed_to_partial"]
+
+    ordered_refs, uncited_list = order_refs_by_appearance(manuscript_raw, payload.get("references") or [], eff_style)
+    uncited_ids = {str(r.get("ref_id") or "").lower() for r in uncited_list if isinstance(r, dict)}
+    refs_filled = _fill_reference_citations(ordered_refs, eff_style)
     rendered_md = render_inline_citations(manuscript_raw, refs_filled, eff_style, language=lang)
     matrix = _enrich_matrix_with_titles(payload.get("comparison_matrix") or [], refs_filled)
 
-    # Uniform sources_list schema across references and contributions
+    # Uniform sources_list schema across references, background, gaps, claims, matrix, and contributions
     sources_list: List[Dict[str, Any]] = []
     for r in refs_filled:
         loc = str(r.get("source_locator") or "")
@@ -889,6 +1035,21 @@ def main() -> None:
                 "status": r.get("verification_status"),
             }
         )
+    bg = payload.get("research_background") or {}
+    if isinstance(bg, dict) and bg.get("evidence_locators"):
+        sources_list.append(
+            {"id": "BG", "kind": "research_background", "cite_key": "", "locators": list(bg.get("evidence_locators") or []), "status": "verified"}
+        )
+    for g in payload.get("research_gaps") or []:
+        if isinstance(g, dict) and g.get("supporting_evidence_locators"):
+            sources_list.append(
+                {"id": g.get("gap_id"), "kind": "research_gap", "cite_key": "", "locators": list(g.get("supporting_evidence_locators") or []), "status": str(g.get("attribution") or "verified")}
+            )
+    for cm in payload.get("claim_citation_map") or []:
+        if isinstance(cm, dict) and cm.get("source_locators"):
+            sources_list.append(
+                {"id": cm.get("claim_id"), "kind": "claim_citation", "cite_key": "", "locators": list(cm.get("source_locators") or []), "status": str(cm.get("attribution_type") or "cited_fact")}
+            )
     for c in payload.get("contributions") or []:
         if isinstance(c, dict):
             sources_list.append(
@@ -902,10 +1063,10 @@ def main() -> None:
             )
 
     # Write core human-readable deliverables FIRST
-    (out_dir / "introduction_and_related_work.md").write_text(_render_manuscript_md(payload, rendered_md, refs_filled), encoding="utf-8", newline="\n")
+    (out_dir / "introduction_and_related_work.md").write_text(_render_manuscript_md(payload, rendered_md, refs_filled, uncited_ids=uncited_ids), encoding="utf-8", newline="\n")
     (out_dir / "related_work_matrix.md").write_text(_render_matrix_md(matrix), encoding="utf-8", newline="\n")
     _write_matrix_csv(matrix, out_dir / "related_work_matrix.csv")
-    (out_dir / "evidence_and_citation_audit.md").write_text(_render_audit_md(payload, refs_filled, ledger, verification), encoding="utf-8", newline="\n")
+    (out_dir / "evidence_and_citation_audit.md").write_text(_render_audit_md(payload, refs_filled, ledger, verification, uncited_ids=uncited_ids), encoding="utf-8", newline="\n")
 
     provenance_map = {
         "case_id": plan.get("case_id"),
@@ -928,8 +1089,7 @@ def main() -> None:
         "provenance_map.json",
     ]
 
-    # Write crash-safe result.json BEFORE optional external binary exports (xelatex/soffice/matplotlib)
-    base_uncertainty = list(payload.get("uncertainty") or [])
+    base_uncertainty = list(payload.get("uncertainty") or []) + list(ms_warns) + ([ms_err] if ms_err else [])
     result = _build_result_json(
         plan, payload, rendered_md, matrix, refs_filled, sources_list, core_deliverables, base_uncertainty, verification, args.checkpoint
     )

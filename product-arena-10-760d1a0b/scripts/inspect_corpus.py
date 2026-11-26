@@ -92,7 +92,7 @@ def jaccard(a: set, b: set) -> float:
 
 def load_json_safe(path: Path) -> Tuple[Optional[Any], Optional[str]]:
     try:
-        return json.loads(path.read_text(encoding="utf-8")), None
+        return json.loads(path.read_text(encoding="utf-8-sig")), None
     except Exception as exc:
         return None, f"Failed to parse JSON {path.name}: {exc}"
 
@@ -696,7 +696,12 @@ def parse_pdf_file(path: Path, source_id: str) -> Tuple[Dict[str, Any], List[Dic
     backend = None
 
     try:
-        import fitz  # type: ignore
+        try:
+            import pymupdf as fitz  # type: ignore
+        except ImportError:
+            import fitz  # type: ignore
+        if not hasattr(fitz, "open"):
+            raise ImportError("fitz without .open")
 
         doc = fitz.open(str(path))
         if doc.is_encrypted:

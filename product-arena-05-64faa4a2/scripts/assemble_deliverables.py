@@ -327,6 +327,8 @@ def _render_pdf_preview_pngs(pdf_path: Path, out_dir: Path, prefix: str, max_pag
             import pymupdf  # type: ignore
         except ImportError:
             import fitz as pymupdf  # type: ignore
+        if not hasattr(pymupdf, "open"):
+            raise ImportError("pymupdf/fitz without .open")
 
         doc = pymupdf.open(str(pdf_path))
         for i in range(min(len(doc), max_pages)):

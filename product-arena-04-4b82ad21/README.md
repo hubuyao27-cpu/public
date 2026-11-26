@@ -37,8 +37,9 @@ submission/
     ├── inspect_case.py                       # Step 1a：契约解析、目录感知文件分类、模式与格式检测
     ├── ingest_materials.py                   # Step 1b：按证据优先级归并文献、原版 PDF 首页卡片抽取、冲突检测与 skeleton 生成
     ├── prepare_workspace.py                  # Step 1 一键入口：串联 inspect -> ingest -> partial 断点落盘
-    ├── verify_intro_rw.py                    # Step 3：十轴模式感知机械防幻觉与结构完整性校验器
-    └── assemble_deliverables.py              # Step 4：断点安全落盘、目标风格引文渲染与结构化 LaTeX/DOCX/MD/图谱组装
+    ├── verify_intro_rw.py                    # Step 3a：十轴模式感知机械防幻觉与结构完整性校验器
+    ├── assemble_deliverables.py              # Step 3b：断点安全落盘、按首次出现重排与目标风格 LaTeX/DOCX/MD/图谱组装
+    └── finalize_workspace.py                 # Step 3 一键收尾：校验通过即 final 组装，否则刷新 partial 并返回修复提示
 ```
 
 ---
@@ -64,24 +65,12 @@ submission/
    单命令串联 `inspect_case.py -> ingest_materials.py -> assemble_deliverables.py --checkpoint partial`，输出 `case_plan.json`、`source_ledger.json`、`evidence_digest.md`、`section_payload_skeleton.json` 与早期 `/app/output/result.json`。
 2. **阅读 `/app/work/evidence_digest.md` 并完成 `/app/work/section_payload.json`**
    基于预填充的 `section_payload_skeleton.json` 补全背景、分组相关工作、对比矩阵、空白推导与贡献对齐；长文本正文既可内联写入 `manuscript_markdown`，也可单独写为 `/app/work/manuscript.md` 并通过 `manuscript_file` 引用，避免 JSON 转义开销。
-3. **十轴机械校验与自修正闭环**
+3. **一键校验与终稿组装（或分步调用）**
    ```bash
-   python3 -B "$SKILL_DIR/scripts/verify_intro_rw.py" \
-     --payload /app/work/section_payload.json \
-     --ledger /app/work/source_ledger.json \
-     --case-plan /app/work/case_plan.json \
-     --out /app/work/verification_report.json
+   python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+     --work-dir /app/work --out-dir /app/output
    ```
-   若返回非零退出码（`error_count > 0`），按 `fix_hint` 修正后重跑直至 `"passed": true`。
-4. **组装最终交付产物**
-   ```bash
-   python3 -B "$SKILL_DIR/scripts/assemble_deliverables.py" \
-     --case-plan /app/work/case_plan.json \
-     --ledger /app/work/source_ledger.json \
-     --payload /app/work/section_payload.json \
-     --verification /app/work/verification_report.json \
-     --checkpoint final --out-dir /app/output
-   ```
+   若返回非零退出码（`error_count > 0`），按 `/app/work/verification_report.json` 中的 `fix_hint` 修正后重跑直至 `"verification_passed": true`（亦可分别调用 `verify_intro_rw.py` 与 `assemble_deliverables.py --checkpoint final`）。
 
 ---
 
@@ -98,10 +87,10 @@ submission/
 
 ---
 
-## 6. 架构权衡与适用边界（Alternatives Considered & Limits）
+## 6. 架构权衡与高星开源对标（Alternatives Considered & Limits）
 
-- **为何采用 `section_payload_skeleton.json` + 可选外置 `manuscript_file`**：相比让模型从零手写整份 JSON 或自由输出纯文本，预填充骨架可防止作者/年份抄错导致的 `METADATA_YEAR_MISMATCH`，而可选外置 Markdown 稿件避免了长文 JSON 转义错误。
-- **为何在组装阶段统一渲染 `[R01]` 为目标引文风格**：起草阶段使用稳定的内部 ID（`[R01]`）可防止序号漂移与格式错位；终稿组装阶段由确定性渲染器统一映射为 `[1]`、`[1], [2]`、`(Author et al., Year)` 或 `\cite{key}`，实现正文与文末列表 100% 一致。
+- **为何采用“Pre-writing 证据骨架 + 外置 `manuscript.md` + 确定性同步”**（对标 [`stanford-oval/storm`](https://github.com/stanford-oval/storm) ~31,000+★ 与 [`assafelovic/gpt-researcher`](https://github.com/assafelovic/gpt-researcher) ~30,800+★）：相比直接 Prompt 一次生成或手写大段多字段 JSON，分章节抽取全篇 PDF 文献卡片（对标 [`kermitt2/grobid`](https://github.com/kermitt2/grobid) 5,246★、`Future-House/paper-qa` 9,665★、`pymupdf/PyMuPDF` 11,200★）配合外置 `manuscript_file` 与自动回填 `comparison_matrix`/`claim_citation_map`，大幅减少 DeepSeek 的请求与 JSON 转义开销。
+- **为何在组装阶段按首次出现顺序重排并统一渲染 `[R01]`**（对标 [`JabRef/jabref`](https://github.com/JabRef/jabref) ~4,900★）：起草期保持稳定的内部键 `[R01]`，组装期对 GB/T 7714-2015 / IEEE / Nature 自动按正文首次出现顺序重排编号，精确推断 `[J]`/`[C]`/`[D]`/`[M]`/`[EB/OL]` 标识，消除 `[J/C]` 占位与 `\bibitem [1] [1]` 重复编号，并隔离 `.tex` 编译中间产物。
 - **客观边界说明**：
   - 本 Skill 不联网检索外部未提供文献库，输入为空或全部损坏时强制输出 `insufficient_material`。
   - 对纯图片扫描版 PDF，若宿主容器未安装 `pdftoppm + tesseract`，将如实记录 `scanned_or_low_text_page` 告警与待确认项，不进行臆测补全。

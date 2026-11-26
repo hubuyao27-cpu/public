@@ -24,8 +24,10 @@ Transform scattered experimental artifacts (configs, code, CLI scripts, logs, ta
 
 ## Runtime Paths & Skill Location
 ```bash
-SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
-[ -d "$SKILL_DIR/scripts" ] || SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+SKILL_DIR="${SKILL_DIR:-}"
+for d in "$SKILL_DIR" "/skills/sci-methods-writer" "/skills/weekly-skill" "/app/submission" "/app/skill" "."; do
+  [ -n "$d" ] && [ -f "$d/scripts/prepare_workspace.py" ] && SKILL_DIR="$d" && break
+done
 mkdir -p /app/work /app/output
 ```
 - **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real source files under `/input/`. Never assume facts from filenames or domain labels.

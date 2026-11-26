@@ -120,40 +120,51 @@ def _extract_refs_from_csv(text: str, rel: str) -> List[Dict[str, Any]]:
 
 def _extract_single_json_ref(item: Dict[str, Any], locator: str, idx: int) -> Optional[Dict[str, Any]]:
     title = str(item.get("title") or "")
-    authors = ""
-    if isinstance(item.get("authors"), list):
-        authors = "; ".join(str(a) for a in item["authors"])
-    elif isinstance(item.get("author"), list):
-        authors = "; ".join(
-            f"{a.get('family', '')}, {a.get('given', '')}".strip(", ")
-            if isinstance(a, dict)
-            else str(a)
-            for a in item["author"]
-        )
+    raw_auth = item.get("authors") if item.get("authors") is not None else item.get("author")
+    if isinstance(raw_auth, list):
+        auth_parts: List[str] = []
+        for a in raw_auth:
+            if isinstance(a, dict):
+                nm = str(a.get("name") or a.get("author") or a.get("full_name") or "").strip()
+                if not nm:
+                    nm = f"{a.get('family', '')}, {a.get('given', '')}".strip(", ")
+                if nm:
+                    auth_parts.append(nm)
+            elif a:
+                auth_parts.append(str(a).strip())
+        authors = "; ".join(auth_parts)
     else:
-        authors = str(item.get("authors") or item.get("author") or "")
-    year = str(item.get("year") or "")
+        authors = str(raw_auth or "")
+    year = str(item.get("year") or item.get("publicationYear") or "")
     if not year and isinstance(item.get("issued"), dict):
         dp = item["issued"].get("date-parts")
         if isinstance(dp, list) and dp and isinstance(dp[0], list) and dp[0]:
             year = str(dp[0][0])
-    venue = str(item.get("venue") or item.get("journal") or item.get("container-title") or item.get("booktitle") or "")
-    doi = str(item.get("doi") or item.get("DOI") or item.get("url") or item.get("arxiv") or "")
-    ck = str(item.get("cite_key") or item.get("key") or item.get("id") or f"{extract_first_author_surname(authors) or 'Ref'}{year}_{idx+1}")
+    venue = str(item.get("venue") or item.get("journal") or item.get("container-title") or item.get("booktitle") or item.get("publicationVenue") or "")
+    if isinstance(item.get("publicationVenue"), dict):
+        venue = str(item["publicationVenue"].get("name") or venue)
+    ext_ids = item.get("externalIds") if isinstance(item.get("externalIds"), dict) else {}
+    doi = str(item.get("doi") or item.get("DOI") or ext_ids.get("DOI") or ext_ids.get("ArXiv") or item.get("url") or item.get("arxiv") or "")
+    raw_ck = str(item.get("cite_key") or item.get("key") or item.get("id") or "").strip()
+    if not raw_ck or raw_ck.startswith(("http://", "https://")) or len(raw_ck) > 64:
+        raw_ck = f"{extract_first_author_surname(authors) or 'Ref'}{year}_{idx+1}"
     abs_parts = [
         str(item.get(k))
-        for k in ("abstract", "summary", "conclusion", "findings", "limitation", "limitations", "applicability", "notes")
+        for k in ("abstract", "summary", "tldr", "conclusion", "findings", "limitation", "limitations", "applicability", "notes")
         if item.get(k)
     ]
     if title or authors or doi or abs_parts:
         return {
-            "cite_key": ck,
+            "cite_key": raw_ck,
             "entry_type": str(item.get("entry_type") or item.get("type") or "article"),
             "authors": authors,
             "year": year,
             "title": title,
             "venue": venue,
             "doi_or_id": doi,
+            "volume": str(item.get("volume") or ""),
+            "issue": str(item.get("issue") or item.get("number") or ""),
+            "pages": str(item.get("pages") or ""),
             "abstract": " | ".join(abs_parts),
             "source_locator": locator,
             "source_tier": "bibtex_or_csl_metadata",
@@ -172,10 +183,21 @@ def _extract_refs_from_json(data: Any, prefix: str) -> List[Dict[str, Any]]:
                 refs.append(rec)
     elif isinstance(data, dict):
         found_container = False
-        for k in ("references", "papers", "literature", "bibliography", "items", "entries", "citations", "works"):
+        for k in ("references", "papers", "literature", "bibliography", "items", "entries", "citations", "works", "sources", "refs", "studies", "articles", "documents", "records", "corpus"):
             if k in data and isinstance(data[k], list):
                 found_container = True
                 refs.extend(_extract_refs_from_json(data[k], f"{prefix}#{k}"))
+        if not found_container and "output_contract" not in data:
+            # Support dict-of-dicts keyed by cite_key (e.g. {"Smith2023": {"title": ...}})
+            dict_vals = [(k, v) for k, v in data.items() if isinstance(v, dict) and any(f in v for f in ("title", "authors", "author", "doi", "DOI", "year"))]
+            if dict_vals:
+                found_container = True
+                for idx, (ck, obj) in enumerate(dict_vals):
+                    enriched = dict(obj)
+                    enriched.setdefault("cite_key", ck)
+                    rec = _extract_single_json_ref(enriched, f"{prefix}#{ck}", idx)
+                    if rec:
+                        refs.append(rec)
         # Single-object reference JSON (e.g., papers/smith2023.json)
         if not found_container and any(k in data for k in ("title", "doi", "DOI", "cite_key")) and "output_contract" not in data:
             rec = _extract_single_json_ref(data, prefix, 0)
@@ -224,27 +246,38 @@ def _extract_pdf_paper_card(lines: List[Tuple[str, str]], rel: str) -> Optional[
     """Extract primary paper metadata from page 1 of a real academic PDF without swallowing its References section."""
     if not lines:
         return None
-    # First try explicit labeled card
     explicit = _extract_prose_card_metadata(lines, rel, source_tier="original_paper_or_pdf")
-    p1_lines = [(loc, ln) for loc, ln in lines if ":p1_" in loc][:45]
+    p1_lines = [(loc, ln) for loc, ln in lines if ":p1_" in loc][:55]
     if not p1_lines:
-        p1_lines = lines[:45]
+        p1_lines = lines[:55]
     p1_text = "\n".join(ln for _, ln in p1_lines)
 
     doi_m = re.search(r"(10\.\d{4,9}/[^\s,;)\]]+|arXiv:\s*\d{4}\.\d{4,5}(?:v\d+)?)", p1_text, re.I)
     doi = re.sub(r"\s+", "", doi_m.group(1)).rstrip(".") if doi_m else ""
-    year = ""
-    ym = re.search(r"\b((?:19|20)\d{2})\b", p1_text)
-    if ym:
-        year = ym.group(1)
-    elif doi.lower().startswith("arxiv:"):
+
+    # Prioritize publication-metadata lines (headers/copyright/Published/DOI) before scanning abstract prose
+    year = explicit.get("year", "") if explicit else ""
+    if not year:
+        pub_ym = re.search(
+            r"(?:Published|Accepted|Received|Available\s+online|Proceedings|Conference|Journal|©|\(c\)|DOI|arXiv\s*:)[^\n]{0,60}?\b((?:19|20)\d{2})\b",
+            p1_text,
+            re.I,
+        )
+        if pub_ym:
+            year = pub_ym.group(1)
+    if not year and doi.lower().startswith("arxiv:"):
         yy = doi.split(":", 1)[1][:2]
         if yy.isdigit():
             year = f"20{yy}"
+    if not year:
+        # Check non-abstract top/bottom header lines before falling back to whole page-1 text
+        non_abs_top = "\n".join(ln for _, ln in p1_lines[:15] if not re.match(r"^(?:abstract|摘要)\b", ln.strip(), re.I))
+        ym = re.search(r"\b((?:19|20)\d{2})\b", non_abs_top) or re.search(r"\b((?:19|20)\d{2})\b", p1_text)
+        if ym:
+            year = ym.group(1)
 
-    # Heuristic title & authors from page 1 top lines (skip banners/URLs/page numbers/arXiv stamps)
     banner_re = re.compile(
-        r"^(?:arXiv:|https?://|doi:|ISSN|Vol\.|Volume|Published\s+in|Preprint|Proceedings\s+of|Accepted\s+at|©|\d+$)",
+        r"^(?:arXiv:|https?://|doi:|ISSN|Vol\.|Volume|Issue|Research\s+Article|Review\s+Article|Original\s+Article|Letter|Communication|Available\s+online|ScienceDirect|Published\s+in|Preprint|Proceedings\s+of|Accepted\s+(?:at|to)|Contents\s+lists\s+available|©|\d+$)",
         re.I,
     )
     title_cand = explicit.get("title", "") if explicit else ""
@@ -262,18 +295,32 @@ def _extract_pdf_paper_card(lines: List[Tuple[str, str]], rel: str) -> Optional[
 
     title_idx = -1
     if not title_cand:
-        for idx, (_, ln) in enumerate(p1_lines[:18]):
+        for idx, (_, ln) in enumerate(p1_lines[:20]):
             s = ln.strip()
-            if len(s) < 12 or len(s) > 220 or banner_re.match(s):
+            if len(s) < 10 or len(s) > 220 or banner_re.match(s):
                 continue
             if re.match(r"^(?:abstract|摘要)\b", s, re.I):
                 break
             title_cand = s
             title_idx = idx
+            # Join a wrapped second title line if it does not look like authors/affiliation/abstract
+            if idx + 1 < len(p1_lines[:20]):
+                nxt = p1_lines[idx + 1][1].strip()
+                if (
+                    4 <= len(nxt) <= 120
+                    and not banner_re.match(nxt)
+                    and not re.match(r"^(?:abstract|摘要)\b", nxt, re.I)
+                    and "@" not in nxt
+                    and "," not in nxt
+                    and " and " not in nxt.lower()
+                    and not any(w in nxt.lower() for w in ("university", "institute", "department", "大学", "学院"))
+                ):
+                    title_cand = f"{title_cand} {nxt}"
+                    title_idx = idx + 1
             break
 
     if not authors_cand and title_idx >= 0:
-        for _, ln in p1_lines[title_idx + 1 : title_idx + 6]:
+        for _, ln in p1_lines[title_idx + 1 : title_idx + 7]:
             s = ln.strip()
             if re.match(r"^(?:abstract|摘要|keywords|1\.?\s+introduction)\b", s, re.I):
                 break
@@ -283,10 +330,9 @@ def _extract_pdf_paper_card(lines: List[Tuple[str, str]], rel: str) -> Optional[
                 authors_cand = re.sub(r"[∗*†‡§\d]+", "", s).strip(" ,;")
                 break
 
-    # Extract abstract paragraph if present
     abs_lines: List[str] = []
     in_abs = False
-    for _, ln in lines[:120]:
+    for _, ln in lines[:140]:
         s = ln.strip()
         if re.match(r"^(?:abstract|摘要)\s*[:：.-]?\s*(.*)$", s, re.I):
             in_abs = True
@@ -315,6 +361,63 @@ def _extract_pdf_paper_card(lines: List[Tuple[str, str]], rel: str) -> Optional[
         "abstract": abstract,
         "source_locator": p1_lines[0][0],
         "source_tier": "original_paper_or_pdf",
+    }
+
+
+def _extract_literature_section_digest(lines: List[Tuple[str, str]], rel: str, max_chars: int = 1600) -> Dict[str, Any]:
+    """Build a multi-section evidence card (Intro/Method/Experiments/Limitations/Conclusion) before References."""
+    buckets: Dict[str, List[str]] = {
+        "abstract_intro": [],
+        "method": [],
+        "experiments_metrics": [],
+        "limitations_conclusion": [],
+    }
+    cur_sec = "abstract_intro"
+    stop_refs_re = re.compile(r"^(?:#+\s*)?(?:\d+\.?\s*)?(?:references|bibliography|acknowledg?ments?|参考文献|致谢)\b", re.I)
+    sec_re = re.compile(r"^(?:#+\s*)?(?:(?:\d+(?:\.\d+)?|[IVX]+)\.?\s+)?(abstract|introduction|related\s+work|method(?:ology|s)?|approach|architecture|model|experiment(?:s|al)?|evaluation|results?|ablation|discussion|limitation(?:s)?|conclusion(?:s)?|future\s+work|摘要|引言|方法|实验|结果|讨论|局限性?|结论|总结)\b", re.I)
+    cue_re = re.compile(r"(?:limit(?:ation)?|drawback|however|future\s+work|cannot|fail|outperform|achiev|accuracy|f1|mae|rmse|auc|%|％|局限|不足|然而|难以|达到|准确率)", re.I)
+
+    for loc, ln in lines:
+        s = ln.strip()
+        if len(loc.split(":")) > 1 and ":p1_" not in loc and stop_refs_re.match(s):
+            break
+        if len(buckets["abstract_intro"]) > 5 and stop_refs_re.match(s):
+            break
+        sm = sec_re.match(s)
+        if sm and len(s) < 90:
+            kw = sm.group(1).lower()
+            if any(w in kw for w in ("method", "approach", "architecture", "model", "方法")):
+                cur_sec = "method"
+            elif any(w in kw for w in ("experiment", "evaluation", "result", "ablation", "实验", "结果")):
+                cur_sec = "experiments_metrics"
+            elif any(w in kw for w in ("limitation", "discussion", "conclusion", "future", "讨论", "局限", "结论", "总结")):
+                cur_sec = "limitations_conclusion"
+            else:
+                cur_sec = "abstract_intro"
+            buckets[cur_sec].append(f"[{loc}] {s}")
+            continue
+        # Capture section openings + quantitative/limitation sentences across full paper
+        if cue_re.search(s) or len(buckets[cur_sec]) < 4:
+            if len(buckets[cur_sec]) < 8:
+                buckets[cur_sec].append(f"[{loc}] {s}")
+
+    rendered_parts: List[str] = []
+    for label, key in (
+        ("Abstract/Intro", "abstract_intro"),
+        ("Method", "method"),
+        ("Experiments/Results", "experiments_metrics"),
+        ("Limitations/Conclusion", "limitations_conclusion"),
+    ):
+        items = buckets[key]
+        if items:
+            rendered_parts.append(f"**{label}**:")
+            rendered_parts.extend(items[:6])
+    summary_text = "\n".join(rendered_parts)[:max_chars]
+    return {
+        "file": rel,
+        "first_locator": lines[0][0],
+        "line_count": len(lines),
+        "preview_lines": summary_text.splitlines() if summary_text else [f"[{loc}] {ln}" for loc, ln in lines[:18]],
     }
 
 
@@ -550,18 +653,21 @@ def main() -> None:
         full_txt = "\n".join(ln for _, ln in lines)
 
         for loc, ln in lines:
-            for tok in extract_numeric_tokens(ln, filter_structural=False):
+            # Filter structural indices (headings, [1], Fig. 1, years) on raw narrative lines while preserving table/metric specificity
+            for tok in extract_numeric_tokens(ln, filter_structural=(bucket not in ("own_paper_evidence", "own_paper_draft"))):
                 grounded_numbers.append({"locator": loc, **tok})
-            for fm in re.finditer(r"(?:Fig(?:ure)?|Table|Tab\.|图|表)\s*\.?\s*[A-Za-z0-9.-]+", ln, re.I):
-                figure_table_mentions.append({"marker": fm.group(0), "locator": loc})
+            if bucket in ("own_paper_evidence", "own_paper_draft"):
+                for fm in re.finditer(r"(?:Fig(?:ure)?|Table|Tab\.|图|表)\s*\.?\s*[A-Za-z0-9.-]+", ln, re.I):
+                    figure_table_mentions.append({"marker": fm.group(0), "locator": loc})
 
         if bucket == "own_paper_draft":
             draft_texts.append((rel, full_txt))
+            if any(w in full_txt.lower() for w in ("method", "experiment", "result", "table", "fig", "方法", "实验", "结果")):
+                own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2600)})
         elif bucket == "own_paper_evidence":
-            own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2400)})
+            own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2600)})
         else:
             if ext == ".pdf" and bucket != "bibliography":
-                # Real academic PDF: index the primary paper from page 1 instead of scraping its back bibliography
                 card = _extract_pdf_paper_card(lines, rel)
                 if card:
                     raw_ref_records.append(card)
@@ -571,19 +677,22 @@ def main() -> None:
                     mr["source_tier"] = "structured_notes"
                 if mrefs:
                     raw_ref_records.extend(mrefs)
-                if len(mrefs) <= 1 and not re.search(r"^(?:#\s*文献笔记|-\s*\[R\d+\])", full_txt, re.M):
+                # Extract multi-section paper cards from structured markdown/note files cleanly
+                sec_starts = [idx for idx, (_, ln) in enumerate(lines) if re.match(r"^#{1,3}\s+(?:Paper|文献|\[?R?\d+|.+?\((?:19|20)\d{2}\))", ln.strip(), re.I)]
+                if len(sec_starts) >= 2:
+                    src_tier = "structured_notes"
+                    for si, st in enumerate(sec_starts):
+                        en = sec_starts[si + 1] if si + 1 < len(sec_starts) else len(lines)
+                        card = _extract_prose_card_metadata(lines[st:en], f"{rel}#S{si+1}", source_tier=src_tier)
+                        if card:
+                            card["source_locator"] = lines[st][0]
+                            raw_ref_records.append(card)
+                elif len(mrefs) <= 1 and not re.search(r"^(?:#\s*文献笔记|-\s*\[R\d+\])", full_txt, re.M):
                     src_tier = "original_paper_or_pdf" if ext in (".pdf", ".tex", ".docx") else "structured_notes"
                     card = _extract_prose_card_metadata(lines, rel, source_tier=src_tier)
                     if card:
                         raw_ref_records.append(card)
-            literature_snippets.append(
-                {
-                    "file": rel,
-                    "first_locator": lines[0][0],
-                    "line_count": len(lines),
-                    "preview_lines": [f"[{loc}] {ln}" for loc, ln in lines[:25]],
-                }
-            )
+            literature_snippets.append(_extract_literature_section_digest(lines, rel))
 
     # 3. Deduplicate references in strict evidence_tier_precedence order & detect cross-source conflicts
     raw_ref_records.sort(key=lambda rec: _tier_rank(str(rec.get("source_tier") or "structured_notes"), tier_precedence))
@@ -601,11 +710,21 @@ def main() -> None:
         ndoi = (rec.get("doi_or_id") or "").strip().lower()
         rec_tier = str(rec.get("source_tier") or "structured_notes")
         match = None
-        if ck and ck in by_key:
-            match = by_key[ck]
-        elif ndoi and ndoi in by_doi:
+        if ndoi and ndoi in by_doi:
             match = by_doi[ndoi]
-        elif ntitle and len(ntitle) >= 12 and ntitle in by_title:
+        elif ck and ck in by_key:
+            cand_m = by_key[ck]
+            old_nt = _norm_title(cand_m.get("title") or "")
+            # Reject cite_key match when both non-empty normalized titles clearly disagree
+            if ntitle and old_nt and len(ntitle) >= 12 and len(old_nt) >= 12 and ntitle != old_nt and ntitle not in old_nt and old_nt not in ntitle:
+                match = None
+                suff = 2
+                while f"{ck}_{suff}" in by_key:
+                    suff += 1
+                ck = f"{ck}_{suff}"
+            else:
+                match = cand_m
+        if match is None and ntitle and len(ntitle) >= 12 and ntitle in by_title:
             match = by_title[ntitle]
 
         if match is None:
@@ -619,6 +738,9 @@ def main() -> None:
                 "title": rec.get("title", ""),
                 "venue": rec.get("venue", ""),
                 "doi_or_id": rec.get("doi_or_id", ""),
+                "volume": str(rec.get("volume") or ""),
+                "issue": str(rec.get("issue") or ""),
+                "pages": str(rec.get("pages") or ""),
                 "abstract_or_notes": rec.get("abstract", ""),
                 "source_locators": [rec.get("source_locator", "")],
                 "source_tier": rec_tier,
@@ -669,7 +791,7 @@ def main() -> None:
                         }
                     )
             # Enrich missing fields from secondary record
-            for field in ("authors", "year", "title", "venue", "doi_or_id", "abstract_or_notes"):
+            for field in ("authors", "year", "title", "venue", "doi_or_id", "volume", "issue", "pages", "abstract_or_notes"):
                 src_k = "abstract" if field == "abstract_or_notes" else field
                 if not match.get(field) and rec.get(src_k):
                     match[field] = rec[src_k]
@@ -746,23 +868,32 @@ def main() -> None:
         g_idx += 1
         pre_gaps.append({"gap_id": f"GAP-{g_idx:02d}", "issue": "unspecified_citation_style", "detail": "Target journal/citation format not specified in task or case.json."})
 
+    # Deduplicate grounded_numbers_index to avoid quadratic verifier bottlenecks on multi-page PDFs
+    dedup_nums: List[Dict[str, Any]] = []
+    seen_num_keys = set()
+    for gt in grounded_numbers:
+        nk = (round(float(gt["value"]), 6), str(gt.get("unit") or ""), bool(gt.get("has_percent")))
+        if nk not in seen_num_keys:
+            seen_num_keys.add(nk)
+            dedup_nums.append(gt)
+
     ledger = {
         "case_id": plan["case_id"],
         "references_catalog": catalog,
         "own_paper_evidence": own_paper_snippets,
         "figure_table_mentions": figure_table_mentions,
         "literature_snippets": literature_snippets,
-        "draft_texts": [{"locator": loc, "text": txt[:4000]} for loc, txt in draft_texts],
+        "draft_texts": [{"locator": loc, "text": txt[:6000]} for loc, txt in draft_texts],
         "draft_audit": draft_audit,
         "conflicts": conflicts,
         "pre_gaps": pre_gaps,
-        "grounded_numbers_index": grounded_numbers,
+        "grounded_numbers_index": dedup_nums,
         "missing_referenced_files": plan.get("missing_referenced_files") or [],
         "access_warnings": warnings,
     }
     save_json(Path(args.out_ledger), ledger)
 
-    # 6. Write compact evidence_digest.md including literature snippets, figures/tables, drafts, and missing files
+    # 6. Write compact evidence_digest.md including multi-section literature cards, figures/tables, drafts, and schema hints
     dlines: List[str] = [
         f"# Evidence Digest (`{plan['case_id']}`)",
         "",
@@ -787,16 +918,17 @@ def main() -> None:
         dlines.append("- *NONE FOUND — do NOT fabricate references.*")
 
     if literature_snippets:
+        per_file_cap = 22 if len(literature_snippets) <= 12 else 12
         dlines.extend(["", f"## 2b. Literature & Notes Source Excerpts ({len(literature_snippets)} files)"])
-        for lsn in literature_snippets[:10]:
+        for lsn in literature_snippets:
             dlines.append(f"### `{lsn['file']}` ({lsn['line_count']} lines)")
-            dlines.extend(lsn.get("preview_lines", [])[:15])
+            dlines.extend(lsn.get("preview_lines", [])[:per_file_cap])
             dlines.append("")
 
     dlines.extend(["", f"## 3. Own-Paper Evidence ({len(own_paper_snippets)} snippets, {len(figure_table_mentions)} fig/table markers)"])
     for sn in own_paper_snippets[:15]:
         dlines.append(f"### `{sn['locator']}`")
-        dlines.append(sn["text"][:2200])
+        dlines.append(sn["text"][:2400])
         dlines.append("")
     if figure_table_mentions:
         seen_ft = set()
@@ -817,7 +949,7 @@ def main() -> None:
         dlines.append(f"- Unresolved citations: `{draft_audit['unresolved_citations']}`")
         for dloc, dtxt in draft_texts[:3]:
             dlines.append(f"### Draft `{dloc}`")
-            dlines.append(dtxt[:2000])
+            dlines.append(dtxt[:3500])
             dlines.append("")
 
     dlines.extend(["", f"## 5. Conflicts ({len(conflicts)}) & Pre-Audit Gaps ({len(pre_gaps)})"])
@@ -833,6 +965,19 @@ def main() -> None:
             dlines.append(f"- `missing_referenced_file:{mf}`")
         for w in warnings:
             dlines.append(f"- `{w}`")
+
+    dlines.extend(
+        [
+            "",
+            "## 7. `section_payload.json` Sub-Schema & Enum Quick Reference",
+            "- Tip: Put long prose in `/app/work/manuscript.md` and set `\"manuscript_file\": \"/app/work/manuscript.md\"` (`comparison_matrix` & `claim_citation_map` also auto-sync if partially supplied).",
+            "- `related_work_groups[]`: `{group_id, route_name, grouping_axis, comparison_dimensions[], works_covered:[{ref_id, core_conclusion, applicability_conditions, limitations, source_locator}], route_tradeoff_summary}`",
+            "- `comparison_matrix[]`: `{ref_id, route, problem_setting, method_route, dataset_and_eval, key_result, applicability_conditions, limitations, source_locator}`",
+            "- `research_gaps[]`: `{gap_id, gap_statement, derivation_type:(shared_limitation|uncovered_scenario|inter_study_conflict|author_judgment), supporting_ref_ids[], supporting_evidence_locators[], how_this_work_addresses, attribution:(literature_derived|author_judgment)}`",
+            "- `contributions[]`: `{contrib_id, claim_text, scope_qualification, linked_methods[], linked_figures_tables[], linked_metrics[], own_evidence_locators[], verification_status:(verified|partial_evidence|author_confirm_required)}`",
+            "- `claim_citation_map[]`: `{claim_id, section, claim_excerpt, citation_ids[], source_locators[], attribution_type:(cited_fact|own_result|author_judgment|author_confirm)}`",
+        ]
+    )
 
     out_dig = Path(args.out_digest)
     out_dig.parent.mkdir(parents=True, exist_ok=True)
@@ -851,6 +996,9 @@ def main() -> None:
             "title": r.get("title") or "",
             "venue": r.get("venue") or "",
             "doi_or_id": r.get("doi_or_id") or "",
+            "volume": r.get("volume") or "",
+            "issue": r.get("issue") or "",
+            "pages": r.get("pages") or "",
             "recency_role": r.get("recency_role") or "representative",
             "source_locator": (r.get("source_locators") or ["unknown"])[0],
             "verification_status": (
@@ -893,6 +1041,7 @@ def main() -> None:
         "citation_style": plan["signals"]["citation_style"],
         "task_mode": plan["signals"]["task_mode"],
         "title": str(case_data.get("title") or "Introduction and Related Work"),
+        "manuscript_file": "",
         "manuscript_markdown": "",
         "research_background": {
             "domain_lineage": "",
