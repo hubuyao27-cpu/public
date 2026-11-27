@@ -1,0 +1,66 @@
+{
+  "schema_version": "2.0",
+  "tiers": {
+    "tier_1_exact_identifier": {
+      "description": "Merge records sharing identical normalized DOI, arXiv ID, PMID, or ISBN unless recycled-DOI conflict is triggered.",
+      "recycled_doi_guard": {
+        "same_script_title_sim_below": 0.30,
+        "require_zero_author_overlap": true,
+        "action": "do_not_merge_flag_critical_conflict"
+      }
+    },
+    "tier_2_canonical_match": {
+      "description": "High-confidence merge for identical normalized title + compatible authors/year, preprint-to-published upgrades, or explicit bilingual CN/EN pairs.",
+      "exact_title_similarity_threshold": 0.94,
+      "preprint_title_similarity_threshold": 0.88,
+      "min_author_overlap_ratio": 0.50,
+      "max_year_gap_for_preprint_upgrade": 4,
+      "bilingual_cross_script_rules": [
+        "explicit_title_translated_exact_match",
+        "shared_doi_or_arxiv_across_scripts",
+        "same_year_and_volume_pages_with_romanized_first_author"
+      ]
+    },
+    "tier_3_ambiguous_candidates": {
+      "description": "Surface near-duplicates for explicit Agent review in dedup_decisions instead of guessing.",
+      "moderate_title_similarity_min": 0.65,
+      "moderate_title_similarity_max": 0.94,
+      "max_year_gap": 2
+    }
+  },
+  "anti_false_merge_guardrails": {
+    "distinct_non_preprint_dois": true,
+    "disjoint_numeric_pages_same_volume_year": true,
+    "series_part_markers": [
+      "part i", "part ii", "part iii", "part iv",
+      "part 1", "part 2", "part 3",
+      "i:", "ii:", "iii:",
+      "上篇", "下篇", "第一部分", "第二部分", "（一）", "（二）", "（三）"
+    ],
+    "same_script_min_similarity_for_auto_merge": 0.65
+  },
+  "primary_record_precedence": [
+    "article",
+    "inproceedings",
+    "book",
+    "incollection",
+    "thesis",
+    "standard",
+    "patent",
+    "techreport",
+    "preprint",
+    "online",
+    "misc",
+    "other"
+  ],
+  "source_format_richness_rank": [
+    "csl_json",
+    "bibtex",
+    "endnote_xml",
+    "ris",
+    "cnki",
+    "enw",
+    "csv",
+    "inline_bib"
+  ]
+}

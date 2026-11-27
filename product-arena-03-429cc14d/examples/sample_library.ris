@@ -1,10 +1,10 @@
-TY  - JOUR
-AU  - Smith, John
-TI  - Electrochemical Impedance Modeling of Porous Electrodes
-JO  - Journal of Electrochemistry
-PY  - 2021
-VL  - 18
-SP  - 22
-EP  - 35
-DO  - 10.1016/j.jelec.2021.0099
+TY  - CONF
+AU  - Vaswani, Ashish
+AU  - Shazeer, Noam
+AU  - Parmar, Niki
+TI  - Attention Is All You Need
+JO  - Advances in Neural Information Processing Systems
+PY  - 2017
+SP  - 5998
+EP  - 6008
 ER  - 

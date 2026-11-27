@@ -1,28 +1,45 @@
-# Edge Cases & Exception Recovery Playbook (`academic-citation-manager`)
+# Edge Cases, Failure Modes & Honesty Rules
 
-## 1. Missing Library Metadata Fields (Volume / Issue / Pages / DOI)
-- **Rule**: Never invent missing DOIs, page numbers, journal volumes, or publication years.
-- `sync_and_format.py` omits empty fields cleanly without emitting `"None"`, `"null"`, empty parentheses `()`, or stray commas, logs missing mandatory style fields into `missing_fields` per entry, and reports them in `author_confirmation_items[]` and `uncertainty[]`.
+Follow these rules whenever inputs, libraries, or claims contain anomalies. **Never fabricate metadata, DOIs, quotes, or verification results.**
 
-## 2. Offline / Failed DOI Verification
-- In sandboxed execution environments without external internet access, live DOI resolution cannot be confirmed via Crossref/doi.org.
-- **Action**: Validate DOI syntactic format (`^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$`), check internal consistency against `library_snapshot.json`, and explicitly record in `uncertainty` / `limitations` that live external DOI HTTP resolution was unavailable offline.
+## 1. Offline DOI & Metadata Verification Boundaries
+- Harbor and air-gapped sandboxes do not guarantee live Crossref/OpenAlex/CNKI access.
+- Never report `"doi_verified_online"` unless a local verification snapshot exists in `/input/`.
+- Classify DOIs honestly: `"not_checked_offline"` (matches `^10\.\d{4,9}/[^\s]+$`), `"invalid_doi_syntax"`, or `"missing"`, and record offline limits in `uncertainty[]`.
 
-## 3. Potentially Fabricated or Unresolved Citations
-- **Condition**: An in-text marker (e.g., `[99]`, `(Ghost et al., 2029)`, `\cite{missing_key}`, or `[REF]`) does not resolve to any record in `canonical_library.json` or embedded reference list, OR an existing reference's author/year contradicts the in-text statement.
-- **Action**: Never invent a fake reference to fill the gap. Set `action: "flag_unresolved"` (or `match_verdict: "mismatch_or_unsupported"` / `"unresolved_ref"`), insert an explicit inline confirmation tag `[待确认引用: ...]` / `[UNVERIFIED_CITE: ...]`, and create an entry in `author_confirmation_items[]`.
+## 2. Recycled / Conflicting DOI Guardrail
+- If two records share a normalized DOI or arXiv ID, yet have same-script `title_similarity < 0.30` and zero author surname overlap:
+  - **DO NOT MERGE.**
+  - Record under `recycled_doi_conflicts[]` and `human_confirmation_items[]` (`severity: "critical"`).
 
-## 4. Same-Author Same-Year Papers & Ambiguous Deduplication
-- **Anti-False-Merge Guard**: Two papers with the same first author and same year (`Smith, 2021`) whose normalized titles have similarity `< 0.75` and share no DOI/arXiv/PMID MUST remain distinct (`REF-xxx` and `REF-yyy`).
-- **Author-Year Disambiguation**: `sync_and_format.py` automatically appends deterministic suffixes (`2021a`, `2021b`) across all in-text labels and bibliography entries.
-- **Ambiguous Pairs (`0.75 <= sim < 0.90`)**: Surface in `dedup_report.json["ambiguous_candidates"]` and log in `author_confirmation_items[]` unless unambiguously resolved via `dedup_overrides`.
+## 3. Same-Author Distinct Works (Anti-False-Merge)
+- Never auto-merge two records solely because they share `(first_author, year)` or `(authors, year, journal)`.
+- Protect as separate whenever:
+  - Both carry distinct valid non-preprint DOIs, OR
+  - Both carry disjoint numeric page ranges in the same volume/year, OR
+  - Title contains distinct series markers (`Part I` vs `Part II`, `上篇` vs `下篇`), OR
+  - Same-script `title_similarity < 0.65`.
 
-## 5. Preprint vs. Formal Published Edition & Bilingual Records
-- When a preprint (e.g., `arXiv:2305.01234`, `bioRxiv`) and a formal journal/conference version share a DOI, arXiv ID, or high title+author similarity, merge them into one canonical entry keeping `journal_article` / `conference_paper` metadata primary while retaining `preprint` IDs/URLs in `alternate_ids` and `merged_from`.
-- Never merge different papers simply because they share an author or topic; record the exact merge tier and rationale in `dedup_report.json`.
+## 4. Dangling / Ghost Citations & Suspect Metadata
+- In-text markers (`[9]`, `\cite{ghost2024}`, `(Nobody, 2024)`) with no matching library entry:
+  - Verdict: `"fabricated_or_dangling_ref"`.
+  - Render inline as `[待核验引用: 原标记 ...]` (ZH) or `[UNVERIFIED_CITE: ...]` (EN) — never invent a bibliography record.
+- Flag `impossible_year` (`< 1800` or `> current_year + 2`), `inverted_page_range` (`start > end`), and `missing_venue_and_identifier` in `integrity_flags` and `human_confirmation_items`.
 
-## 6. Claim-to-Source Verification Without Abstracts
-- If the library record contains only bibliographic fields (no `abstract` or full text), do NOT pretend the claim was verified against paper findings. Use `match_verdict: "insufficient_source_text"` and note `"Metadata matched, but library export lacks abstract/full text to verify empirical claim."`
+## 5. Missing Metadata Fields During Style Conversion
+- Never pad missing `volume`, `issue`, `pages`, `publisher`, `city`, or `doi` with `"N/A"`, `"None"`, `"null"`, or guesses.
+- Omit absent optional punctuation cleanly (e.g., `2023, 45: 12-20.` instead of `2023, 45(): 12-20.`), while logging `missing_required_fields`.
 
-## 7. Corrupt, Encrypted, or Unsupported Manuscript / Library Files
-- Missing referenced files, binary/corrupt `.bib`/`.ris`/`.docx` files, or encrypted PDFs must be reported honestly in `uncertainty[]` and `limitations[]` with `status: "unable_to_determine"` (or `"partial"` if partial valid inputs exist).
+## 6. Clause-Level Placement ("挂得对") vs. Paragraph-End Dumping
+- When a multi-sentence paragraph stacks `[1-4]` or `(A, 2020; B, 2021)` at the end of the final sentence while earlier sentences make distinct claims:
+  - Map each sentence/clause to the specific reference supporting it and place `[[CITE:REF_XXX]]` immediately after that clause before punctuation (`...达到 94.2%[[CITE:REF_002]]。`).
+  - Claims unsupported by any library record get `[证据不足/待人工核验]` (ZH) or `[INSUFFICIENT_EVIDENCE]` (EN).
+
+## 7. Cross-Zone Continuity & Uncited Library Segregation ("编得顺")
+- Synchronize body text, figure captions, table captions, table cells, appendices, and footnotes in exact reading order.
+- Exclude uncited library entries from the numbered bibliography (`1..K`); report them in `uncited_library_entries` so in-text citations and bibliography match 1-to-1.
+
+## 8. Encoding, Malformed Exports & Empty/Corrupt Inputs
+- Decode files in order: `utf-16`, `utf-8-sig`, `utf-8`, `gb18030`, `gbk`, `latin-1`.
+- Salvage malformed `.bib` / `.ris` / CNKI blocks without crashing and log exact line warnings.
+- If `/input/` has zero usable files or all files are corrupt/encrypted, write an honest `status: "unable_to_determine"` `result.json` explaining exact causes.

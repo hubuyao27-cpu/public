@@ -1,15 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CitationPlanPayload",
-  "description": "Structured agent decision payload consumed by sync_and_format.py and assemble_deliverables.py.",
+  "description": "Compact, forgiving Agent decision payload consumed by verify_and_assemble.py.",
   "type": "object",
-  "required": [
-    "case_id",
-    "target_style",
-    "in_text_format",
-    "manuscript_edits",
-    "claim_verifications"
-  ],
+  "required": ["case_id", "target_style", "in_text_format"],
   "properties": {
     "case_id": {
       "type": "string",
@@ -43,18 +37,16 @@
     },
     "requested_output_formats": {
       "type": "array",
-      "description": "Optional override/additions for deliverable formats (e.g., ['docx', 'tex']).",
       "items": { "type": "string" }
     },
-    "actions_performed": {
+    "section_order_override": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "description": "Optional list of section titles in desired final reading order before renumbering.",
+      "items": { "type": "string" }
     },
     "dedup_decisions": {
       "type": "array",
-      "description": "Explicit resolution for every Tier-3 ambiguous_duplicate_candidates entry.",
+      "description": "Resolution for Tier-3 ambiguous_duplicate_candidates (merge | keep_separate | needs_human_confirm).",
       "items": {
         "type": "object",
         "required": ["candidate_id", "record_ids", "decision", "rationale"],
@@ -69,26 +61,22 @@
     },
     "metadata_resolutions": {
       "type": "array",
-      "description": "Field-level resolutions grounded ONLY in existing raw library records or local evidence PDFs.",
+      "description": "Source-grounded field corrections/supplements (never fabricate missing DOIs/pages).",
       "items": {
         "type": "object",
         "required": ["ref_id", "field", "value", "source_locator", "rationale"],
         "properties": {
           "ref_id": { "type": "string" },
-          "field": {
-            "type": "string",
-            "description": "Canonical field name: title, title_translated, authors (list[str]), year (int), venue, volume, issue, pages, doi (bare 10.xxxx/...), arxiv_id, pmid, url, publisher, city, abstract, patent_number, standard_number, access_date, doc_type. Aliases journal/booktitle->venue, number->issue, author->authors, page->pages are also normalized."
-          },
+          "field": { "type": "string" },
           "value": { "type": ["string", "array", "integer", "null"] },
           "source_locator": { "type": "string" },
-          "rationale": { "type": "string" },
-          "needs_human_confirmation": { "type": "boolean" }
+          "rationale": { "type": "string" }
         }
       }
     },
     "manuscript_edits": {
       "type": "array",
-      "description": "Sentence-level edits. Embed [[CITE:REF_001]] or [[CITE:REF_001,REF_002]] or [[CITE_NARR:REF_001]] tokens; never hand-number!",
+      "description": "Only sentences requiring insertion, relocation, cluster splitting, replacement, deletion, or disambiguation. Use [[CITE:REF_001]] or [[CITE_NARR:REF_001]].",
       "items": {
         "type": "object",
         "required": ["sentence_id", "action", "revised_sentence_with_tokens", "anchor_rationale"],
@@ -105,20 +93,14 @@
               "replace_citation",
               "remove_invalid_citation",
               "flag_insufficient_evidence",
-              "reorder_section_kept"
+              "disambiguate_author_year"
             ]
           },
           "revised_sentence_with_tokens": { "type": "string" },
-          "old_markers": { "type": "array", "items": { "type": "string" } },
           "target_ref_ids": { "type": "array", "items": { "type": "string" } },
           "anchor_rationale": { "type": "string" }
         }
       }
-    },
-    "section_order_override": {
-      "type": "array",
-      "description": "Optional list of section titles/IDs if the task asks to reorder chapters/sections before renumbering.",
-      "items": { "type": "string" }
     },
     "claim_verifications": {
       "type": "array",
@@ -180,7 +162,7 @@
     },
     "contract_overrides": {
       "type": "object",
-      "description": "Explicit values for custom output_contract fields from case.json if needed."
+      "description": "Explicit values for custom output_contract keys from case.json."
     }
   }
 }

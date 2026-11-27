@@ -1,0 +1,135 @@
+{
+  "schema_version": "2.0",
+  "supported_styles": {
+    "gbt7714_2015_numeric": {
+      "label": "GB/T 7714-2015 (顺序编码制 / Sequential Numeric)",
+      "ordering": "first_appearance",
+      "default_in_text_format": "superscript_bracket",
+      "allowed_in_text_formats": ["superscript_bracket", "bracket", "superscript_md", "footnote", "latex_cite"],
+      "compress_ranges": true,
+      "max_authors_before_et_al": 3,
+      "zh_et_al": "等",
+      "en_et_al": "et al",
+      "doc_type_codes": {
+        "article": "J",
+        "journal": "J",
+        "inproceedings": "C",
+        "conference": "C",
+        "book": "M",
+        "incollection": "M",
+        "thesis": "D",
+        "phdthesis": "D",
+        "mastersthesis": "D",
+        "techreport": "R",
+        "report": "R",
+        "standard": "S",
+        "patent": "P",
+        "newspaper": "N",
+        "online": "EB",
+        "electronic": "EB",
+        "preprint": "EB",
+        "database": "DB",
+        "software": "CP",
+        "misc": "Z",
+        "other": "Z"
+      }
+    },
+    "gbt7714_2015_author_year": {
+      "label": "GB/T 7714-2015 (著者-出版年制 / Author-Year)",
+      "ordering": "author_year_zh_en",
+      "default_in_text_format": "author_year",
+      "allowed_in_text_formats": ["author_year", "latex_cite"],
+      "max_authors_before_et_al": 3,
+      "zh_et_al": "等",
+      "en_et_al": "et al",
+      "in_text_et_al_zh": "等",
+      "in_text_et_al_en": "et al.",
+      "disambiguation_suffix": "a,b,c"
+    },
+    "apa7": {
+      "label": "APA 7th Edition",
+      "ordering": "author_year_alpha",
+      "default_in_text_format": "author_year",
+      "allowed_in_text_formats": ["author_year", "latex_cite"],
+      "max_authors_in_bib": 20,
+      "in_text_et_al_threshold": 3,
+      "paren_conjunction": "&",
+      "narrative_conjunction": "and",
+      "doi_prefix": "https://doi.org/",
+      "disambiguation_suffix": "a,b,c"
+    },
+    "apa6": {
+      "label": "APA 6th Edition",
+      "ordering": "author_year_alpha",
+      "default_in_text_format": "author_year",
+      "allowed_in_text_formats": ["author_year", "latex_cite"],
+      "max_authors_in_bib": 7,
+      "in_text_et_al_threshold": 6,
+      "paren_conjunction": "&",
+      "narrative_conjunction": "and",
+      "doi_prefix": "https://doi.org/",
+      "disambiguation_suffix": "a,b,c"
+    },
+    "ieee": {
+      "label": "IEEE Transactions",
+      "ordering": "first_appearance",
+      "default_in_text_format": "bracket_separate",
+      "allowed_in_text_formats": ["bracket_separate", "bracket", "latex_cite"],
+      "compress_ranges": true,
+      "max_authors_before_et_al": 6,
+      "en_et_al": "et al."
+    },
+    "nature": {
+      "label": "Nature Portfolio",
+      "ordering": "first_appearance",
+      "default_in_text_format": "superscript_html",
+      "allowed_in_text_formats": ["superscript_html", "superscript_md", "latex_cite"],
+      "compress_ranges": true,
+      "max_authors_before_et_al": 5,
+      "en_et_al": "et al."
+    },
+    "vancouver": {
+      "label": "Vancouver / ICMJE",
+      "ordering": "first_appearance",
+      "default_in_text_format": "bracket",
+      "allowed_in_text_formats": ["bracket", "superscript_bracket", "superscript_html", "latex_cite"],
+      "compress_ranges": true,
+      "max_authors_before_et_al": 6,
+      "en_et_al": "et al."
+    },
+    "chicago_author_date": {
+      "label": "Chicago Manual of Style (Author-Date, 17th)",
+      "ordering": "author_year_alpha",
+      "default_in_text_format": "author_year",
+      "allowed_in_text_formats": ["author_year", "latex_cite"],
+      "in_text_et_al_threshold": 4,
+      "paren_conjunction": "and",
+      "narrative_conjunction": "and",
+      "disambiguation_suffix": "a,b,c"
+    }
+  },
+  "required_fields_by_doc_type": {
+    "article": ["authors", "title", "venue", "year"],
+    "inproceedings": ["authors", "title", "venue", "year"],
+    "book": ["authors", "title", "publisher", "year"],
+    "incollection": ["authors", "title", "venue", "year"],
+    "thesis": ["authors", "title", "publisher", "year"],
+    "techreport": ["authors", "title", "year"],
+    "standard": ["title", "standard_number", "year"],
+    "patent": ["authors", "title", "patent_number", "year"],
+    "preprint": ["authors", "title", "year"],
+    "online": ["title", "url"],
+    "misc": ["authors", "title", "year"],
+    "other": ["authors", "title", "year"]
+  },
+  "style_detection_keywords": {
+    "gbt7714_2015_author_year": ["gb/t 7714.*著者", "著者[—\\-\\s]*出版年", "gbt.*author[-_ ]?year"],
+    "gbt7714_2015_numeric": ["gb/t\\s*7714", "gbt\\s*7714", "国标", "顺序编码"],
+    "apa6": ["apa\\s*6", "apa6", "6th\\s*edition.*apa"],
+    "apa7": ["apa\\s*7", "apa7", "\\bapa\\b"],
+    "ieee": ["\\bieee\\b"],
+    "nature": ["\\bnature\\b"],
+    "vancouver": ["\\bvancouver\\b", "\\bicmje\\b"],
+    "chicago_author_date": ["\\bchicago\\b"]
+  }
+}
