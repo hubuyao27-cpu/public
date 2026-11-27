@@ -52,29 +52,27 @@ def main() -> None:
 
     v_proc = subprocess.run(v_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
     if v_proc.returncode != 0:
-        # Refresh honest partial checkpoint so /app/output/result.json stays up to date
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(sdir / "assemble_deliverables.py"),
-                "--case-plan",
-                str(case_plan),
-                "--ledger",
-                str(ledger),
-                "--verification",
-                str(vreport),
-                "--checkpoint",
-                "partial",
-                "--out-dir",
-                str(out),
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdin=subprocess.DEVNULL,
-        )
+        # Preserve authored payload honestly under --checkpoint partial so work is NEVER overwritten with an empty stub
+        p_cmd = [
+            sys.executable,
+            "-B",
+            str(sdir / "assemble_deliverables.py"),
+            "--case-plan",
+            str(case_plan),
+            "--ledger",
+            str(ledger),
+            "--verification",
+            str(vreport),
+            "--checkpoint",
+            "partial",
+            "--out-dir",
+            str(out),
+        ]
+        if payload.exists():
+            p_cmd.extend(["--payload", str(payload)])
+        if args.manuscript:
+            p_cmd.extend(["--manuscript", args.manuscript])
+        subprocess.run(p_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
         sys.stdout.write(v_proc.stdout)
         sys.stderr.write(v_proc.stderr)
         raise SystemExit(v_proc.returncode)

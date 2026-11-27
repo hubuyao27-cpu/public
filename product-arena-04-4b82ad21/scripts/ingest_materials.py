@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common import (
+    canonicalize_venue,
     extract_docx_text,
     extract_first_author_surname,
     extract_numeric_tokens,
@@ -487,6 +488,7 @@ def main() -> None:
     ap.add_argument("--out-ledger", default="/app/work/source_ledger.json")
     ap.add_argument("--out-digest", default="/app/work/evidence_digest.md")
     ap.add_argument("--out-skeleton", default=None, help="Optional output path for pre-populated section_payload_skeleton.json")
+    ap.add_argument("--extracted-dir", default=None, help="Optional directory to save lossless [locator]-tagged extracted text files")
     args = ap.parse_args()
 
     plan, err = load_json_safe(Path(args.case_plan))
@@ -495,7 +497,24 @@ def main() -> None:
 
     rubric = load_rubric_rules()
     tier_precedence: List[str] = list(rubric.get("evidence_tier_precedence") or [])
+    venue_aliases: Dict[str, str] = dict(rubric.get("venue_aliases") or {})
     cliche_patterns: List[str] = list(rubric.get("cliche_openings_zh") or []) + list(rubric.get("cliche_openings_en") or [])
+
+    extracted_dir = Path(args.extracted_dir) if args.extracted_dir else (Path(args.out_digest).parent / "extracted")
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+    extracted_files_index: List[Dict[str, Any]] = []
+
+    def _save_lossless_extracted(rel_name: str, lines: List[Tuple[str, str]]) -> str:
+        if not lines:
+            return ""
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", rel_name).strip("_") or "source"
+        if not safe_name.endswith(".md"):
+            safe_name = f"{safe_name}.md"
+        out_p = extracted_dir / safe_name
+        body = [f"# Extracted Source: `{rel_name}`", ""] + [f"[{loc}] {ln}" for loc, ln in lines]
+        out_p.write_text("\n".join(body) + "\n", encoding="utf-8", newline="\n")
+        extracted_files_index.append({"source": rel_name, "extracted_file": safe_name, "lines": len(lines)})
+        return safe_name
 
     case_path = Path(plan["case_json_path"]) if plan.get("case_json_path") else None
     case_data: Dict[str, Any] = {}
@@ -650,6 +669,7 @@ def main() -> None:
         warnings.extend(lwarns)
         if not lines:
             continue
+        _save_lossless_extracted(rel, lines)
         full_txt = "\n".join(ln for _, ln in lines)
 
         for loc, ln in lines:
@@ -663,9 +683,9 @@ def main() -> None:
         if bucket == "own_paper_draft":
             draft_texts.append((rel, full_txt))
             if any(w in full_txt.lower() for w in ("method", "experiment", "result", "table", "fig", "方法", "实验", "结果")):
-                own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2600)})
+                own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=3500)})
         elif bucket == "own_paper_evidence":
-            own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=2600)})
+            own_paper_snippets.append({"locator": lines[0][0], "text": _extract_heading_aware_snippet(lines, max_chars=3500)})
         else:
             if ext == ".pdf" and bucket != "bibliography":
                 card = _extract_pdf_paper_card(lines, rel)
@@ -766,9 +786,9 @@ def main() -> None:
                 if field in ("year", "doi_or_id"):
                     is_conflict = v_old.lower() != v_new.lower()
                 elif field == "venue":
-                    n1 = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", v_old.lower())
-                    n2 = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", v_new.lower())
-                    if len(n1) >= 4 and len(n2) >= 4 and n1 != n2 and n1 not in n2 and n2 not in n1:
+                    c1 = canonicalize_venue(v_old, venue_aliases)
+                    c2 = canonicalize_venue(v_new, venue_aliases)
+                    if len(c1) >= 4 and len(c2) >= 4 and c1 != c2 and c1 not in c2 and c2 not in c1:
                         is_conflict = True
                 elif field == "authors":
                     s1 = extract_first_author_surname(v_old).lower()
@@ -883,6 +903,7 @@ def main() -> None:
         "own_paper_evidence": own_paper_snippets,
         "figure_table_mentions": figure_table_mentions,
         "literature_snippets": literature_snippets,
+        "extracted_files": extracted_files_index,
         "draft_texts": [{"locator": loc, "text": txt[:6000]} for loc, txt in draft_texts],
         "draft_audit": draft_audit,
         "conflicts": conflicts,
@@ -901,6 +922,7 @@ def main() -> None:
         f"- **Task Mode**: `{plan['signals']['task_mode']}` | **Language**: `{plan['signals']['language']}` | **Citation Style**: `{plan['signals']['citation_style']}`",
         f"- **Requested Formats**: `{plan['signals']['requested_formats']}` | **Venue**: `{plan['signals']['audience_or_venue'] or 'Unspecified'}`",
         f"- **Required `output_contract` Keys**: `{plan['output_contract'].get('required_keys', [])}`",
+        f"- **Lossless Extracted Corpus**: `{extracted_dir}` ({len(extracted_files_index)} files — inspect exact quotes/tables via `query_sources.py`)",
         "",
         f"## 2. Verified Reference Catalog ({len(catalog)} entries)",
     ]
@@ -913,12 +935,12 @@ def main() -> None:
                 f"DOI/ID: `{r['doi_or_id'] or 'N/A'}` | Locators: `{r['source_locators']}`{miss_s}"
             )
             if r.get("abstract_or_notes"):
-                dlines.append(f"  - *Notes/Abstract*: {r['abstract_or_notes'][:420]}")
+                dlines.append(f"  - *Notes/Abstract*: {r['abstract_or_notes'][:620]}")
     else:
         dlines.append("- *NONE FOUND — do NOT fabricate references.*")
 
     if literature_snippets:
-        per_file_cap = 22 if len(literature_snippets) <= 12 else 12
+        per_file_cap = 28 if len(literature_snippets) <= 12 else 16
         dlines.extend(["", f"## 2b. Literature & Notes Source Excerpts ({len(literature_snippets)} files)"])
         for lsn in literature_snippets:
             dlines.append(f"### `{lsn['file']}` ({lsn['line_count']} lines)")
@@ -928,7 +950,7 @@ def main() -> None:
     dlines.extend(["", f"## 3. Own-Paper Evidence ({len(own_paper_snippets)} snippets, {len(figure_table_mentions)} fig/table markers)"])
     for sn in own_paper_snippets[:15]:
         dlines.append(f"### `{sn['locator']}`")
-        dlines.append(sn["text"][:2400])
+        dlines.append(sn["text"][:3500])
         dlines.append("")
     if figure_table_mentions:
         seen_ft = set()

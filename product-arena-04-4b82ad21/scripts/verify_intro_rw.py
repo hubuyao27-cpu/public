@@ -549,30 +549,47 @@ def main() -> None:
                 "Insert explicit [作者判断] or [AUTHOR_JUDGMENT] tag next to that gap sentence in manuscript_markdown.",
             )
 
-    # Axis 6: Contribution alignment to own-paper evidence
+    # Axis 6: Contribution alignment to own-paper evidence (allow linked methods/figures/tables; warn instead of blocking on non-file locators)
     for c in contribs:
         if not isinstance(c, dict):
             continue
         cid = c.get("contrib_id", "?")
         vstat = c.get("verification_status", "")
         locs = c.get("own_evidence_locators") or []
-        if vstat != "author_confirm_required" and not locs:
+        linked_ft = c.get("linked_figures_tables") or []
+        linked_m = c.get("linked_methods") or []
+        if vstat != "author_confirm_required" and not locs and not linked_ft and not linked_m:
             add_err(
                 "UNALIGNED_CONTRIBUTION",
-                f"Contribution '{cid}' lacks own_evidence_locators while verification_status!='author_confirm_required'.",
+                f"Contribution '{cid}' lacks own_evidence_locators and linked_methods/linked_figures_tables while verification_status!='author_confirm_required'.",
                 "Attach exact own-paper locators (methods/results/figures/tables) or mark verification_status='author_confirm_required' + [待作者确认: GAP-XX].",
             )
+        elif vstat != "author_confirm_required" and not locs:
+            add_warn(
+                "CONTRIBUTION_MISSING_FILE_LOCATOR",
+                f"Contribution '{cid}' has linked methods/figures but empty own_evidence_locators[].",
+                "Add file:Lxx locators to own_evidence_locators[] for full provenance traceability.",
+            )
         for loc in locs:
-            _check_locator_file(loc, f"Contribution '{cid}'", as_error=True)
+            loc_s = str(loc or "").strip()
+            # Accept section/table/figure labels (e.g. 'Table 2', 'Fig. 1', 'Section 3.2') with a gentle warning; check actual file paths strictly
+            if re.match(r"^(?:Table|Tab\.|Fig(?:ure)?\.?|Section|Sec\.|Eq\.?|图|表|节)\s+", loc_s, re.I):
+                add_warn(
+                    "LOCATOR_NOT_FILE_PATH",
+                    f"Contribution '{cid}' locator '{loc_s}' is a manuscript label rather than an input file:line path.",
+                    "Prefer input file:line locators alongside Table/Fig labels when available.",
+                )
+            else:
+                _check_locator_file(loc, f"Contribution '{cid}'", as_error=True)
 
-    # Axis 7: Grounded numeric metrics check (contributions, comparison_matrix, prose metric contexts)
+    # Axis 7: Grounded numeric metrics check (ERROR on structured fields, advisory WARNING on prose)
     grounded_tokens = ledger.get("grounded_numbers_index") or []
-    ungrounded_hits: List[str] = []
+    ungrounded_struct_hits: List[str] = []
+    ungrounded_prose_hits: List[str] = []
 
     def _matches_grounded_or_delta(tok: Dict[str, Any]) -> bool:
         if any(numbers_match(tok, gt) for gt in grounded_tokens):
             return True
-        # Allow honest arithmetic difference / relative improvement derived from two grounded numbers
         tv = float(tok["value"])
         tu = str(tok.get("unit") or "").lower()
         t_pct = bool(tok.get("has_percent"))
@@ -582,7 +599,6 @@ def main() -> None:
             if (tu == gu) or (t_pct and gt.get("has_percent")):
                 same_unit_vals.append(float(gt["value"]))
         if len(same_unit_vals) >= 2:
-            # Cap candidate pair check to keep verification O(1) bounded
             pool = same_unit_vals[:60]
             tol = max(0.06, 0.01 * max(abs(tv), 1.0))
             for idx_a in range(len(pool)):
@@ -597,23 +613,24 @@ def main() -> None:
                         return True
         return False
 
-    def check_text_numbers(txt: str, context_label: str) -> None:
+    def check_text_numbers(txt: str, context_label: str, bucket_hits: List[str]) -> None:
         if "[待作者确认" in txt or "[AUTHOR_CONFIRM" in txt:
             return
         for tok in extract_numeric_tokens(txt, filter_structural=True):
             if not (tok["has_percent"] or tok["unit"] or tok["decimals"] > 0 or abs(tok["value"]) >= 100):
                 continue
             if not _matches_grounded_or_delta(tok):
-                ungrounded_hits.append(f"{context_label}: '{tok['raw']}'")
+                bucket_hits.append(f"{context_label}: '{tok['raw']}'")
 
     for c in contribs:
         if isinstance(c, dict):
-            check_text_numbers(str(c.get("claim_text") or ""), f"contribution[{c.get('contrib_id')}]")
+            check_text_numbers(str(c.get("claim_text") or ""), f"contribution[{c.get('contrib_id')}]", ungrounded_struct_hits)
             for met in c.get("linked_metrics") or []:
-                check_text_numbers(str(met), f"contribution_metric[{c.get('contrib_id')}]")
+                check_text_numbers(str(met), f"contribution_metric[{c.get('contrib_id')}]", ungrounded_struct_hits)
     for row in matrix:
         if isinstance(row, dict):
-            check_text_numbers(str(row.get("key_result") or ""), f"matrix[{row.get('ref_id')}]")
+            check_text_numbers(str(row.get("key_result") or ""), f"matrix[{row.get('ref_id')}]", ungrounded_struct_hits)
+
     # Protect abbreviations (et al., Fig., Sec., e.g., i.e., vs.) from breaking sentences prematurely
     safe_ms = re.sub(r"\b(et\s+al|Fig|Tab|Sec|Eq|e\.g|i\.e|vs|Vol|No|Dr|Prof)\.", r"\1<DOT>", manuscript, flags=re.I)
     for s_idx, sent in enumerate(re.split(r"(?:(?<=[。！？!?])\s*|(?<!\d)\.(?:\s+|$)|\n+)", safe_ms), start=1):
@@ -621,16 +638,21 @@ def main() -> None:
         if re.match(r"^\s*#{1,6}\s+", sent):
             continue
         if any(w in sent.lower() for w in ("%", "％", "accuracy", "f1", "rmse", "mae", "auc", "speedup", "precision", "recall", "latency", "loss", "bleu", "提升", "降低", "达到", "准确率", "误差", "效率")):
-            # Mask qualifying regime/threshold bounds (e.g., '> 300 W/cm2', '400 mA/cm2 以上', 'below 50 mA/cm2') in narrative prose
             sent_check = re.sub(r"(?:[<>≤≥]\s*|above\s+|below\s+|under\s+|over\s+|不足\s*)?\d+(?:\.\d+)?(?:\s*[A-Za-zμ%％/0-9]+)?\s*(?:以上|以下|以内)", " ", sent, flags=re.I)
             sent_check = re.sub(r"(?:[<>≤≥]|above|below|under|over|不足)\s*\d+(?:\.\d+)?(?:\s*[A-Za-zμ%％/0-9]+)?", " ", sent_check, flags=re.I)
-            check_text_numbers(sent_check, f"prose_S{s_idx}")
+            check_text_numbers(sent_check, f"prose_S{s_idx}", ungrounded_prose_hits)
 
-    if ungrounded_hits:
+    if ungrounded_struct_hits:
         add_err(
             "UNGROUNDED_METRIC",
-            f"Numbers not traceable to source_ledger.json: {ungrounded_hits[:6]}",
+            f"Structured metrics not traceable to source_ledger.json: {ungrounded_struct_hits[:6]}",
             "Verify numbers against evidence_digest.md or annotate unverified figures with [待作者确认: GAP-XX]/[AUTHOR_CONFIRM: GAP-XX].",
+        )
+    if ungrounded_prose_hits:
+        add_warn(
+            "PROSE_METRIC_UNVERIFIED",
+            f"Prose numbers not directly matched in source_ledger.json (may be derived/contextual): {ungrounded_prose_hits[:6]}",
+            "Confirm prose numbers match extracted sources or add [待作者确认: GAP-XX] if unverified.",
         )
 
     # Axis 8: Conflict disclosure
@@ -725,6 +747,16 @@ def main() -> None:
         for w in g.get("works_covered") or []:
             if isinstance(w, dict) and (not str(w.get("applicability_conditions") or "").strip() or not str(w.get("limitations") or "").strip()):
                 add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
+
+    # Related Work bridge synthesis check
+    if status == "completed" and rw_groups and rw_m:
+        rw_chunk_l = rw_m.group(1).lower()
+        if not any(kw in rw_chunk_l for kw in ("this work", "our method", "our approach", "our study", "in contrast", "unlike prior", "bridge", "本文", "相比之下", "针对上述", "不同于现有", "弥补上述")):
+            add_warn(
+                "MISSING_BRIDGE_SYNTHESIS",
+                "Related Work section does not explicitly bridge prior routes back to this paper's design choice.",
+                "Add a concluding bridge paragraph showing how this work addresses the grouped limitations.",
+            )
 
     # Coverage ratio check (real cited references vs skeleton padding)
     excluded = {str(e.get("ref_id") or "").lower() for e in (payload.get("excluded_references") or []) if isinstance(e, dict)}

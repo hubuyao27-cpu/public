@@ -990,13 +990,18 @@ def main() -> None:
         raise SystemExit(f"Cannot load ledger: {l_err}")
 
     payload_path: Optional[Path] = None
-    if args.checkpoint == "partial" or not args.payload:
-        payload = build_partial_payload(plan, ledger)
-    else:
+    if args.payload and Path(args.payload).exists():
         payload_path = Path(args.payload)
         payload, pay_err = load_json_safe(payload_path)
         if pay_err or not isinstance(payload, dict):
             raise SystemExit(f"Cannot load payload: {pay_err}")
+        if args.checkpoint == "partial" and payload.get("status") == "completed":
+            payload = dict(payload)
+            payload["status"] = "partial"
+    elif args.checkpoint == "partial":
+        payload = build_partial_payload(plan, ledger)
+    else:
+        raise SystemExit("Missing --payload for --checkpoint final")
 
     verification: Dict[str, Any] = {}
     if args.verification and Path(args.verification).exists():
@@ -1015,6 +1020,10 @@ def main() -> None:
         payload = dict(payload)
         payload["status"] = "partial"
         payload["uncertainty"] = list(payload.get("uncertainty") or []) + ["verification_not_passed:demoted_from_completed_to_partial"]
+    elif args.checkpoint == "partial" and verification and verification.get("passed") is False:
+        payload = dict(payload)
+        err_msgs = [f"{e.get('code')}: {e.get('detail')}" for e in (verification.get("errors") or [])[:6]]
+        payload["uncertainty"] = list(payload.get("uncertainty") or []) + ["partial_with_verification_errors"] + err_msgs
 
     ordered_refs, uncited_list = order_refs_by_appearance(manuscript_raw, payload.get("references") or [], eff_style)
     uncited_ids = {str(r.get("ref_id") or "").lower() for r in uncited_list if isinstance(r, dict)}

@@ -13,12 +13,12 @@
   "language": "zh",
   "citation_style": "gbt7714",
   "output_contract": {
-    "required": ["case_id", "status", "manuscript_markdown", "comparison_matrix", "research_gaps", "contributions", "references", "sources", "uncertainty", "change_records"],
+    "required": ["case_id", "status", "manuscript_markdown", "related_work_matrix", "research_gaps", "contributions", "references", "sources", "uncertainty", "change_records"],
     "properties": {
       "case_id": { "type": "string" },
       "status": { "type": "string" },
       "manuscript_markdown": { "type": "string" },
-      "comparison_matrix": { "type": "array" },
+      "related_work_matrix": { "type": "array" },
       "research_gaps": { "type": "array" },
       "contributions": { "type": "array" },
       "references": { "type": "array" },
@@ -62,39 +62,36 @@
 
 ---
 
-## 2. 精简 4 步标准调用命令
+## 2. 标准 3 步调用命令
 
 ```bash
 SKILL_DIR="/skills/weekly-skill"
 mkdir -p /app/work /app/output
 
-# Step 1: 一键预准备（检查契约 -> 证据抽取与 skeleton 生成 -> 落盘 partial 断点）
+# Step 1: 一键解析契约、无损抽取 [locator] 语料、生成 digest 与 skeleton 并落盘 partial 断点
 python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
   --input-dir /input --work-dir /app/work --out-dir /app/output
 
-# Step 2: 阅读 /app/work/evidence_digest.md 与 section_payload_skeleton.json，
-# 补全 /app/work/section_payload.json（长正文可选写为 /app/work/manuscript.md 并通过 manuscript_file 引用）
+# Step 2: 阅读 /app/work/evidence_digest.md（如需核查全文细节可用 query_sources.py）
+python3 -B "$SKILL_DIR/scripts/query_sources.py" \
+  --extracted-dir /app/work/extracted --section Limitations --limit 20
+# 随后将正文写入 /app/work/manuscript.md（内文使用 [R01] 引用键），并完善 /app/work/section_payload.json
 
-# Step 3: 一键机械核验与组装最终产物（自动将内文 [R01]/[R02] 按首次出现顺序渲染为目标格式 [1]/[2]）
+# Step 3: 一键校验与终稿组装（自动重排编号并将 [R01] 渲染为目标格式 [1]）
 python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
   --work-dir /app/work --out-dir /app/output
 ```
 
 ---
 
-## 2b. 多篇 PDF 与英文/修订场景要点（Synthetic Illustration）
-
-- **英文目标提示（中文提问）**：如 `/input/task.md` 写明“请用英文完成引言与相关工作，采用 IEEE 格式”，`inspect_case.py` 自动置 `language: "en"`、`citation_style: "ieee_numeric"`；同时读取多篇两栏 PDF 的 `Abstract / Method / Experiments / Limitations` 分节卡写入 `/app/work/evidence_digest.md`。
-- **缺料诚实短路**：当 `/input/` 仅含外部文献（无自研实验数据时）或为空时，不会因外部文献的 `Fig./Table` 强迫伪造 `contributions[]`；缺料则设置 `status: "insufficient_material"`。
-
----
-
 ## 3. 示意输出片段（ILLUSTRATIVE OUTPUT）
 
-### 3.1 `introduction_and_related_work.md`（节选，已自动渲染为 GB/T 7714 数字引文）
-> **1. 引言**  
-> 化工精馏塔稳态严格模拟需迭代求解高维 MESH 方程组，在回流比宽范围变工况优化中单次求解耗时成为在线调度瓶颈[2]。早期研究采用固定操作条件下的降阶代理模型[1]，虽降低了计算开销，但在进料组成或回流比越界时误差显著增大；近期图神经网络代理方法[2]改善了拓扑表达，却缺乏质量守恒硬约束，在稀疏采样边界条件下仍可能违背相平衡关系。结合文献局限与工程观测[作者判断]，现有路线在**“跨回流比（1.5–3.0）泛化精度”**与**“物理守恒一致性”**之间仍存在明显缺口。  
-> 为此，本文提出物理约束自适应代理模型 PC-Surrogate（见 `Section 3.2` 与 `Fig. 1`），在 12 块理论板甲醇-水分离工况（回流比 1.5–3.0）下将塔顶纯度预测 MAE 控制在 0.42 mol%，并将推理速度较严格求解提升 38.5x（见 `Table 2`）。
+### 3.1 基础写法 vs Skill 写法对比（示意）
+- **基础模型常见失败**：*“近年来，精馏过程模拟受到广泛关注 [1-2]。Zhang 等 [1] 提出了模型。Chen 等 [2] 也提出了模型。本文彻底解决了代理模型精度问题。”*（空洞套话 + 逐篇流水账 + 无界断言）
+- **本 Skill 输出片段（`introduction_and_related_work.md`）**：
+  > **1. 引言**  
+  > 化工精馏塔稳态严格模拟需迭代求解高维 MESH 方程组，在回流比宽范围变工况优化中单次求解耗时成为在线调度瓶颈[2]。早期研究采用固定操作条件下的降阶代理模型[1]，虽降低了计算开销，但在进料组成或回流比越界时误差显著增大；近期图神经网络代理方法[2]改善了拓扑表达，却缺乏质量守恒硬约束，在稀疏采样边界条件下仍可能违背相平衡关系。结合文献局限与工程观测[作者判断]，现有路线在**“跨回流比（1.5–3.0）泛化精度”**与**“物理守恒一致性”**之间仍存在明显缺口。  
+  > 为此，本文提出物理约束自适应代理模型 PC-Surrogate（见 `Section 3.2` 与 `Fig. 1`），在 12 块理论板甲醇-水分离工况（回流比 1.5–3.0）下将塔顶纯度预测 MAE 控制在 0.42 mol%，并将推理速度较严格求解提升 38.5x（见 `Table 2`）。
 
 ### 3.2 `result.json` 结构示意（节选）
 ```json
@@ -114,7 +111,7 @@ python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
     {
       "contrib_id": "C01",
       "claim_text": "提出物理约束自适应代理模型 PC-Surrogate，在 12 块理论板甲醇-水分离工况下将 MAE 控制在 0.42 mol%，较严格求解提速 38.5x。",
-      "scope_qualification": "适用于 12 块理论板甲醇-水二元分离、回流比 1.5–3.0 工况。",
+      "scope_qualification": "仅限 12 块理论板甲醇-水二元分离、回流比 1.5–3.0 工况。",
       "linked_methods": ["Section 3.2"],
       "linked_figures_tables": ["Fig. 1", "Table 2"],
       "linked_metrics": ["MAE = 0.42 mol%", "38.5x speedup"],

@@ -124,6 +124,28 @@ def normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
+def canonicalize_venue(name: str, venue_aliases: Optional[Dict[str, str]] = None) -> str:
+    """Normalize venue abbreviations and punctuation so JACS == Journal of the American Chemical Society."""
+    raw = (name or "").strip().lower()
+    if not raw:
+        return ""
+    # Strip trailing year/volume/page noise like ", 2023" or "(2023)"
+    raw_clean = re.sub(r"[,;(\[]\s*(?:19|20)\d{2}.*$", "", raw).strip()
+    sp_norm = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", raw_clean).strip()
+    compact = re.sub(r"\s+", "", sp_norm)
+    if venue_aliases is None:
+        venue_aliases = load_rubric_rules().get("venue_aliases") or {}
+    if sp_norm in venue_aliases:
+        return str(venue_aliases[sp_norm])
+    if compact in venue_aliases:
+        return str(venue_aliases[compact])
+    # Also check prefix/token expansions for "Proc. NeurIPS" -> "neurips"
+    for alias, canon in venue_aliases.items():
+        if len(alias) >= 4 and re.search(rf"\b{re.escape(alias)}\b", sp_norm):
+            return str(canon)
+    return compact
+
+
 def infer_semantic_role(field_name: str, desc: str = "") -> str:
     """Map an output_contract field name (prioritizing field_name over description) to a canonical role."""
     fn = (field_name or "").strip().lower()

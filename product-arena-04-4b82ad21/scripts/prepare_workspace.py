@@ -46,18 +46,25 @@ def main() -> None:
     case_plan = work / "case_plan.json"
     ledger = work / "source_ledger.json"
     digest = work / "evidence_digest.md"
+    extracted_dir = work / "extracted"
     skeleton = work / "section_payload_skeleton.json"
 
     r1 = _run(sdir / "inspect_case.py", ["--input-dir", args.input_dir, "--out", str(case_plan)])
     r2 = _run(
         sdir / "ingest_materials.py",
-        ["--case-plan", str(case_plan), "--out-ledger", str(ledger), "--out-digest", str(digest), "--out-skeleton", str(skeleton)],
+        [
+            "--case-plan", str(case_plan),
+            "--out-ledger", str(ledger),
+            "--out-digest", str(digest),
+            "--out-skeleton", str(skeleton),
+            "--extracted-dir", str(extracted_dir),
+        ],
     )
     r3 = _run(
         sdir / "assemble_deliverables.py",
         ["--case-plan", str(case_plan), "--ledger", str(ledger), "--checkpoint", "partial", "--out-dir", args.out_dir],
     )
-    print(json.dumps({"status": "ok", "inspect": r1, "ingest": r2, "partial": r3, "skeleton": str(skeleton)}, ensure_ascii=False))
+    print(json.dumps({"status": "ok", "inspect": r1, "ingest": r2, "partial": r3, "skeleton": str(skeleton), "extracted_dir": str(extracted_dir)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -212,22 +212,29 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
     else:
         tmode = "draft_intro_rw"
 
-    # 4. Requested output formats (guard against input file mentions and explicit negations)
+    # 4. Requested output formats (NEVER infer 'tex' just because input materials mention 'PDF'!)
     fmt_blob = re.sub(r"(?:无需|不用|不要求|不需要|no|without)\s*(?:latex|bibtex|docx|word|pdf|tex|diagram)", " ", low)
-    fmt_blob = re.sub(r"(?:读取|基于|输入|依据|from|read|parse)\s+[A-Za-z0-9_./-]+\.(?:tex|bib|docx|pdf)\b", " ", fmt_blob)
+    fmt_blob = re.sub(r"(?:读取|基于|输入|依据|解析|阅读|附带|attached|input|from|read|parse)\s+(?:the\s+|attached\s+|input\s+)?[^\n.;。]{0,40}?\b(?:pdfs?|tex|bib|docx)\b", " ", fmt_blob)
+    fmt_blob = re.sub(r"[A-Za-z0-9_./-]+\.(?:tex|bib|docx|pdf)\b", " ", fmt_blob)
+    explicit_fmts_raw = str(case_data.get("format") or case_data.get("output_format") or case_data.get("formats") or "").lower()
     req_fmts = ["md"]
-    if re.search(r"\b(?:latex|xelatex|pdflatex|tex)\b|\.tex\b|\\cite", fmt_blob):
+    if re.search(r"\b(?:latex|xelatex|pdflatex)\b|\\cite", fmt_blob) or "tex" in explicit_fmts_raw or re.search(r"(?:output|write|export|generate|交付|输出|生成)\s+(?:as\s+|in\s+)?(?:a\s+)?\.?tex\b", fmt_blob):
         req_fmts.append("tex")
-    if re.search(r"\bbibtex\b|\.bib\b", fmt_blob):
+    if re.search(r"\bbibtex\b", fmt_blob) or "bib" in explicit_fmts_raw or re.search(r"(?:output|export|generate|交付|输出|生成)\s+(?:a\s+)?\.?bib\b", fmt_blob):
         req_fmts.append("bib")
-    if re.search(r"\b(?:docx|ms\s*word|microsoft\s*word)\b|\.docx\b|word\s*文档", fmt_blob):
+    if re.search(r"\b(?:docx|ms\s*word|microsoft\s*word)\b|word\s*文档", fmt_blob) or "docx" in explicit_fmts_raw:
         req_fmts.append("docx")
-    if re.search(r"\bpdf\b|导出\s*pdf", fmt_blob) and "tex" not in req_fmts and "docx" not in req_fmts:
+    if (re.search(r"(?:export|compile|render|output|generate|生成|导出|编译|交付)\s*(?:a\s+|an\s+|to\s+|as\s+)?pdf\b", fmt_blob) or "pdf" in explicit_fmts_raw) and "tex" not in req_fmts and "docx" not in req_fmts:
         req_fmts.append("tex")
-    if re.search(r"\bcsv\b|\.csv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", fmt_blob):
+    if re.search(r"\bcsv\b|\bexcel\b|comparison table|对比表|比较矩阵|矩阵", fmt_blob) or "csv" in explicit_fmts_raw:
         req_fmts.append("csv")
-    if re.search(r"\b(?:diagram|flowchart)\b|\btaxonomy\s+(?:diagram|figure|chart|plot)\b|路线图|关系图|演化图|结构图", fmt_blob):
+    if re.search(r"\b(?:diagram|flowchart)\b|\btaxonomy\s+(?:diagram|figure|chart|plot)\b|路线图|关系图|演化图|结构图", fmt_blob) or "diagram" in explicit_fmts_raw:
         req_fmts.append("diagram")
+
+    # Guard against pure conceptual Q&A prompts that do not request writing/revising/auditing
+    is_non_writing_qa = bool(
+        re.search(r"(?:只回答问题|仅解答概念|do not (?:write|draft|revise)|no writing needed)", low)
+    )
 
     venue = str(case_data.get("venue") or case_data.get("audience") or case_data.get("journal") or "").strip()
     return {
@@ -236,6 +243,7 @@ def detect_signals(case_data: Dict[str, Any], task_text: str) -> Dict[str, Any]:
         "citation_style": cstyle,
         "requested_formats": sorted(set(req_fmts)),
         "audience_or_venue": venue,
+        "is_non_writing_qa": is_non_writing_qa,
     }
 
 
