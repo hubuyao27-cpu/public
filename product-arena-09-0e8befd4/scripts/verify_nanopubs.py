@@ -462,7 +462,8 @@ def verify_nanopubs(
                     loc["char_start"] = m_res["char_start"]
                     loc["char_end"] = m_res["char_end"]
                 if target_para:
-                    loc.setdefault("paragraph_id", target_para["paragraph_id"])
+                    if not loc.get("paragraph_id"):
+                        loc["paragraph_id"] = target_para["paragraph_id"]
                     if not loc.get("section"):
                         loc["section"] = target_para.get("section")
                     if not loc.get("locator_type"):
@@ -949,6 +950,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--report", type=Path, required=True)
     ap.add_argument("--strict", action="store_true", help="Exit with code 2 if any ERROR-level gate fails.")
+    ap.add_argument("--allow-partial", action="store_true", help="Record errors honestly in report but exit 0 for bounded partial export.")
     args = ap.parse_args()
 
     raw_data = load_json(args.input)
@@ -958,7 +960,7 @@ def main() -> None:
     save_json(args.report, report)
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    if args.strict and report["error_count"] > 0:
+    if args.strict and report["error_count"] > 0 and not args.allow_partial:
         sys.exit(2)
 
 

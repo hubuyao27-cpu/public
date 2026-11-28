@@ -51,14 +51,15 @@ Transform scientific papers into **atomic, verbatim-grounded, provenance-traceab
 
 ## 5-Step Execution Workflow
 
-### Step 1: Ingest Sources & Inspect Case Contract
+### Step 1: Ingest Sources & Save Early Honest Partial Checkpoint
 
 ```bash
 python3 "$SKILL_DIR/scripts/ingest_source.py" \
   --input-dir /input \
-  --out-dir /app/work/ingest
+  --out-dir /app/work/ingest \
+  --output-dir /app/output
 ```
-*(If `ingestion` reports `unreadable_or_scanned_pages` on a PDF, re-run once with `--ocr-auto`.)*
+*(Passing `--output-dir /app/output` saves an immediate honest `partial`/`unable_to_determine` checkpoint in `/app/output/result.json`. If `ingestion` reports `unreadable_or_scanned_pages` on a PDF, re-run once with `--ocr-auto`.)*
 
 Read `/app/work/ingest/case_brief.json` and `/app/work/ingest/source_digest.md` (or per-source `digest_<source_id>.md`):
 - Note `case_id`, `workflow_mode` (`extract_and_structure` | `verify_supplied_claims` | `qa_with_nanopubs` | `multi_paper_nanopubs` | `degraded_missing_or_unreadable`), `has_pdf_pages`, `output_contract_fields`, `questions`, `claims_to_verify`, and `warnings`.
@@ -137,7 +138,8 @@ python3 "$SKILL_DIR/scripts/verify_nanopubs.py" \
   --report /app/work/verification_report.json \
   --strict
 ```
-If `--strict` exits non-zero, read `/app/work/verification_report.json`, fix every `ERROR` (`compound_clause_detected`, `quote_not_grounded_in_source`, `evidence_span_too_long`, `fake_pdf_page_number`, `likely_subject_object_inversion`, `ungrounded_numeric_value`, `negation_polarity_mismatch`, `cited_prior_work_mislabeled_direct_finding`), and re-run until `error_count == 0`.
+- **Auto-Resolution Fast-Path**: `verify_nanopubs.py` automatically fills exact `char_start..char_end` offsets and missing `paragraph_id`/`sentence_id` when `quote` matches verbatim in `source_index.json`, and `export_nanopubs.py` automatically maps `temp_id`s in `qa_answers.json` to final Trusty `urn:nanopub:RA...` IDs.
+- **Bounded Self-Correction Rule**: If `--strict` exits non-zero, read `/app/work/verification_report.json`, fix the flagged `ERROR`s in `/app/work/raw_nanopubs.json`, and re-run **at most 2 repair passes**. If blockers persist due to ambiguous/corrupt inputs, run `verify_nanopubs.py ... --allow-partial` and `export_nanopubs.py ... --partial` so an honest `partial` `/app/output/result.json` is delivered within budget.
 
 *(Note: Duplicate assertions from Abstract + Results are automatically merged while preserving all unique `evidence_spans[]` and assigning Trusty `urn:nanopub:RA...` IDs.)*
 

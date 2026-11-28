@@ -801,6 +801,7 @@ def inspect_corpus(
     case_path: Optional[Path],
     task_path: Optional[Path],
     out_dir: Path,
+    output_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     warnings: List[str] = []
@@ -1390,6 +1391,29 @@ def inspect_corpus(
 
     (out_dir / "corpus_digest.md").write_text("\n".join(digest_lines), encoding="utf-8")
 
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        early_status = "unable_to_determine" if workflow_mode == "degraded_missing_inputs" else "partial"
+        early_res: Dict[str, Any] = {
+            "case_id": corpus_index["case_id"],
+            "status": early_status,
+            "summary": f"Early checkpoint from inspect_corpus.py (mode={workflow_mode}, docs={len(canonical_docs)}).",
+            "documents": corpus_index["documents"],
+            "knowledge_graph": {"schema_version": "1.0.0", "graph_version": "v0", "nodes": [], "edges": []},
+            "nodes": [],
+            "edges": [],
+            "alignment_decisions": [],
+            "conflicts": [],
+            "queries": [],
+            "sources": {"documents": corpus_index["documents"], "root_metadata_isolation": root_metadata_isolation},
+            "uncertainty": {"declared_input_boundaries": declared_boundaries, "warnings": warnings},
+            "change_records": [],
+        }
+        for rk in required_fields:
+            if rk not in early_res:
+                early_res[rk] = []
+        (output_dir / "result.json").write_text(json.dumps(early_res, ensure_ascii=False, indent=2), encoding="utf-8")
+
     return case_brief
 
 
@@ -1401,14 +1425,16 @@ def main() -> None:
     parser.add_argument("--case", default=None, help="Optional explicit path to case.json (defaults to <input-dir>/case.json)")
     parser.add_argument("--task", default=None, help="Optional explicit path to task.md (defaults to <input-dir>/task.md)")
     parser.add_argument("--out-dir", default="/app/work/inspect", help="Output directory for index, brief, XML check, and digest")
+    parser.add_argument("--output-dir", default=None, help="Optional /app/output directory to save early honest partial result.json checkpoint")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
     case_path = Path(args.case) if args.case else (input_dir / "case.json")
     task_path = Path(args.task) if args.task else (input_dir / "task.md")
     out_dir = Path(args.out_dir)
+    output_dir = Path(args.output_dir) if args.output_dir else None
 
-    brief = inspect_corpus(input_dir, case_path, task_path, out_dir)
+    brief = inspect_corpus(input_dir, case_path, task_path, out_dir, output_dir=output_dir)
     print(json.dumps(brief, ensure_ascii=False, indent=2))
 
 

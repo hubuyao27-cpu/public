@@ -1094,7 +1094,7 @@ def _index_sentences(paragraphs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, A
     return paragraphs, sentences_flat
 
 
-def ingest(input_dir: Path, out_dir: Path, ocr_auto: bool = False) -> Dict[str, Any]:
+def ingest(input_dir: Path, out_dir: Path, ocr_auto: bool = False, output_dir: Optional[Path] = None) -> Dict[str, Any]:
     cfg = load_config()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1358,6 +1358,26 @@ def ingest(input_dir: Path, out_dir: Path, ocr_auto: bool = False) -> Dict[str, 
 
     (out_dir / "source_digest.md").write_text("\n".join(digest_lines), encoding="utf-8")
 
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        early_status = "unable_to_determine" if not readable_docs else "partial"
+        early_res: Dict[str, Any] = {
+            "case_id": case_id,
+            "status": early_status,
+            "nanopublications": [],
+            "qa_answers": [],
+            "conflicts": [],
+            "sources": case_brief["sources_summary"],
+            "uncertainty": list(warnings),
+            "limitations": ["Early partial checkpoint saved at ingest_source.py; awaiting assertion extraction."],
+            "change_records": [],
+            "manual_takeover_points": [],
+        }
+        for cf in contract_fields:
+            if cf not in early_res:
+                early_res[cf] = []
+        save_json(output_dir / "result.json", early_res)
+
     summary = {
         "status": "ok" if readable_docs else "degraded",
         "case_id": case_id,
@@ -1378,9 +1398,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Ingest scientific papers and build verifiable Nanopub source index.")
     ap.add_argument("--input-dir", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--output-dir", type=Path, default=None, help="Optional /app/output directory for early honest partial result.json checkpoint.")
     ap.add_argument("--ocr-auto", action="store_true", help="Attempt Tesseract OCR on scanned PDF pages if available.")
     args = ap.parse_args()
-    ingest(args.input_dir, args.out_dir, ocr_auto=args.ocr_auto)
+    ingest(args.input_dir, args.out_dir, ocr_auto=args.ocr_auto, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":

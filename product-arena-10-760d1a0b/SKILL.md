@@ -46,8 +46,10 @@ SKILL_DIR="${SKILL_DIR:-/skills/weekly-skill}"
 mkdir -p /app/work /app/output
 python3 "$SKILL_DIR/scripts/inspect_corpus.py" \
   --input-dir /input \
-  --out-dir /app/work/inspect
+  --out-dir /app/work/inspect \
+  --output-dir /app/output
 ```
+*(Passing `--output-dir /app/output` writes an immediate honest early checkpoint in `/app/output/result.json`.)*
 
 Read `/app/work/inspect/case_brief.json` and the per-paper digests `/app/work/inspect/digest_<source_id>.md` (or `/app/work/inspect/corpus_digest.md`).
 - Confirm `workflow_mode` (`two_paper_incremental` | `multi_paper_incremental` | `single_paper` | `degraded_missing_inputs`).
@@ -237,7 +239,8 @@ python3 "$SKILL_DIR/scripts/verify_kg.py" \
   --out /app/work/kg_verification_report.json
 ```
 
-- If exit code is non-zero (`error_count > 0`), read the exact `location`, `code`, and `hint` from `kg_verification_report.json`, fix the extraction/alignment/query JSON, rebuild, and re-run `verify_kg.py` until `error_count == 0`!
+- **Fast-Path**: If `case_questions` is empty or you only author 1–2 custom queries, pass `--auto-fill-min 4` and `query_kg.py` deterministically generates the remaining provenance-bound queries (`cross_paper_comparison`, `multi_hop_chain`, `conflict_and_boundary_audit`, `gap_or_unanswerable_check`) without extra authoring turns.
+- **Bounded Self-Correction Rule**: If exit code is non-zero (`error_count > 0`), inspect `kg_verification_report.json` and perform **at most 2 repair passes**. If blockers persist at budget limit, re-run `verify_kg.py ... --allow-partial` and `export_and_assemble.py ... --partial-checkpoint` so an honest `partial` `result.json` is preserved!
 
 ### Step 7: Export Multi-Format Graph, Visual Previews, & Contract-Aligned `result.json`
 

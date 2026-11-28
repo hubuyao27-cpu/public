@@ -604,6 +604,7 @@ def main() -> None:
     parser.add_argument("--queries", default=None, help="Optional kg_queries.json to verify >=3 executed queries")
     parser.add_argument("--out", required=True, help="Output path for kg_verification_report.json")
     parser.add_argument("--strict", action="store_true", help="Exit non-zero on warnings as well as errors")
+    parser.add_argument("--allow-partial", action="store_true", help="Record verification errors honestly in report and exit 0 for partial checkpoint export")
     args = parser.parse_args()
 
     kg = json.loads(Path(args.kg).read_text(encoding="utf-8"))
@@ -624,9 +625,9 @@ def main() -> None:
         for iss in report["issues"][:25]:
             print(f"  [{iss['severity']}] {iss['code']} @ {iss['location']}: {iss['message']}")
 
-    if report["metrics"]["error_count"] > 0:
+    if report["metrics"]["error_count"] > 0 and not args.allow_partial:
         sys.exit(1)
-    if args.strict and report["metrics"]["warning_count"] > 0:
+    if args.strict and report["metrics"]["warning_count"] > 0 and not args.allow_partial:
         sys.exit(2)
 
 

@@ -445,6 +445,15 @@ def render_markdown_report(
                 f"{xf.get('formula_paragraph_count', 0)} formula/sub/sup paragraph(s), {xf.get('table_count', 0)} table(s) reconciled."
             )
 
+    lines.extend(["", "### Field-Level Metadata Isolation Provenance", "", "| Source ID | Role | Title | DOI | Authors | Backing Files |", "|---|---|---|---|---|---|"])
+    for d in kg.get("documents", []):
+        auth_s = ", ".join(d.get("authors") or [])[:45] or "-"
+        bf_s = ", ".join(d.get("backing_files") or []) or "-"
+        lines.append(
+            f"| `{md_escape(d.get('source_id'))}` | `{md_escape(d.get('role'))}` | {md_escape(str(d.get('title') or '-')[:50])} | "
+            f"`{md_escape(d.get('doi') or '-')}` | {md_escape(auth_s)} | `{md_escape(bf_s)}` |"
+        )
+
     lines.extend(
         [
             "",
@@ -608,8 +617,44 @@ def build_result_json(
     }
 
     change_records = kg.get("incremental_update_history", [])
+    field_prov_by_doc = {
+        str(d.get("source_id") or ""): {
+            "role": d.get("role"),
+            "paper_group_id": d.get("paper_group_id"),
+            "title": {"value": d.get("title"), "backing_files": d.get("backing_files", [])},
+            "doi": {"value": d.get("doi"), "backing_files": d.get("backing_files", [])},
+            "authors": {"value": d.get("authors", []), "backing_files": d.get("backing_files", [])},
+            "publisher_xml_files": d.get("publisher_xml_files", []),
+        }
+        for d in docs
+        if isinstance(d, dict) and d.get("source_id")
+    }
+    evidence_anchors: List[Dict[str, Any]] = []
+    for n in kg.get("nodes", []):
+        for m in (n.get("mentions") or [])[:2]:
+            evidence_anchors.append({
+                "id": n.get("id"),
+                "kind": "node",
+                "source_id": m.get("source_id"),
+                "paragraph_id": m.get("paragraph_id"),
+                "quote": m.get("quote", ""),
+                "attribution": m.get("attribution"),
+            })
+    for e in kg.get("edges", []):
+        for ev in (e.get("evidence") or [])[:2]:
+            evidence_anchors.append({
+                "id": e.get("id"),
+                "kind": "edge",
+                "source_id": ev.get("source_id"),
+                "paragraph_id": ev.get("paragraph_id"),
+                "quote": ev.get("quote", ""),
+                "attribution": e.get("attribution"),
+                "evidence_strength": e.get("evidence_strength"),
+            })
     sources_payload = {
         "documents": docs,
+        "field_provenance_by_doc": field_prov_by_doc,
+        "node_edge_evidence_anchors": evidence_anchors,
         "root_metadata_isolation": kg.get("root_metadata_isolation", {}),
         "duplicate_format_groups": kg.get("duplicate_format_groups", []),
         "has_pdf_pages": bool(kg.get("has_pdf_pages", False)),

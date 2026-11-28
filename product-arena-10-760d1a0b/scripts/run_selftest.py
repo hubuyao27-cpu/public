@@ -839,10 +839,13 @@ def main() -> None:
         for req_k in case_req:
             assert req_k in res_json and res_json[req_k] is not None, f"Missing contract key: {req_k}"
 
-        # Validate GraphML XML well-formedness & SVG existence
+        # Validate GraphML XML well-formedness & SVG existence + field provenance
         ET.parse(out_dir / "kg.graphml")
         assert (out_dir / "kg_preview.svg").exists()
         assert (out_dir / "kg_report.md").exists()
+        assert res_json["sources"].get("field_provenance_by_doc"), "Missing field_provenance_by_doc in result.json['sources']"
+        assert res_json["sources"].get("node_edge_evidence_anchors"), "Missing node_edge_evidence_anchors in result.json['sources']"
+        assert "Field-Level Metadata Isolation Provenance" in (out_dir / "kg_report.md").read_text(encoding="utf-8")
 
         # Step 8: Run 7 adversarial negative tests
         neg_passed = run_negative_tests(

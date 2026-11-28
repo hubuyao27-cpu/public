@@ -420,6 +420,14 @@ def build_markdown_report(
         lines.append(
             f"| `{s.get('source_id')}` | `{s.get('paper_group_id', '-')}` | {norm_ws(m.get('title') or 'UNREPORTED')} | {auths or 'UNREPORTED'} | {m.get('year') or 'UNREPORTED'} | `{ident}` | `{str(s.get('file_sha256') or m.get('file_sha256') or '')[:12]}` |"
         )
+    lines.extend(["", "### Field-Level Metadata & Evidence Provenance", "", "| Source ID | Field | Value | Source File |", "|---|---|---|---|"])
+    for s in sources:
+        fp = s.get("field_provenance") or {}
+        for fld in ("title", "authors", "year", "venue", "doi", "pmid", "arxiv_id"):
+            fmeta = fp.get(fld)
+            if isinstance(fmeta, dict) and fmeta.get("value"):
+                v_str = ", ".join(str(x) for x in fmeta["value"]) if isinstance(fmeta["value"], list) else str(fmeta["value"])
+                lines.append(f"| `{s.get('source_id')}` | `{fld}` | {norm_ws(v_str)[:70].replace('|', ' ')} | `{fmeta.get('source_file', '')}` |")
     lines.extend(["", "## Atomic Nanopublications", "", "| ID (suffix) | Subject | Predicate | Object | Polarity | Epistemic | Conf. | Locator | Minimal Verbatim Quote |", "|---|---|---|---|---|---|---|---|---|"])
     for np in nanopubs:
         a = np["assertion"]
@@ -616,19 +624,43 @@ def export_all(
     csv_text = build_csv(nanopubs)
     (out_dir / "nanopubs.csv").write_text(csv_text, encoding="utf-8-sig")
 
-    sources_out = [
-        {
-            "source_id": d["source_id"],
-            "paper_group_id": d.get("paper_group_id"),
-            "source_file": d["source_file"],
-            "file_sha256": d["file_sha256"],
-            "has_pdf_pages": d["has_pdf_pages"],
-            "page_count": d.get("page_count"),
-            "metadata": d["metadata"],
-            "unreadable_pages": d.get("unreadable_pages") or [],
+    anchors_by_sid: Dict[str, List[Dict[str, Any]]] = {}
+    for np in nanopubs:
+        nid = np.get("nanopub_id", "")
+        for sp in (np.get("provenance") or {}).get("evidence_spans") or []:
+            sid = str(sp.get("source_id") or "")
+            loc = sp.get("locator") or {}
+            anchors_by_sid.setdefault(sid, []).append({
+                "nanopub_id": nid,
+                "paragraph_id": loc.get("paragraph_id"),
+                "sentence_id": loc.get("sentence_id"),
+                "char_start": loc.get("char_start"),
+                "char_end": loc.get("char_end"),
+                "quote": sp.get("quote", ""),
+            })
+
+    sources_out = []
+    for d in docs:
+        meta = d.get("metadata") or {}
+        fp = {
+            fld: {"value": meta.get(fld), "source_file": d["source_file"], "file_sha256": d["file_sha256"]}
+            for fld in ("title", "authors", "year", "venue", "doi", "pmid", "arxiv_id")
+            if meta.get(fld)
         }
-        for d in docs
-    ]
+        sources_out.append(
+            {
+                "source_id": d["source_id"],
+                "paper_group_id": d.get("paper_group_id"),
+                "source_file": d["source_file"],
+                "file_sha256": d["file_sha256"],
+                "has_pdf_pages": d["has_pdf_pages"],
+                "page_count": d.get("page_count"),
+                "metadata": meta,
+                "field_provenance": fp,
+                "evidence_anchors": anchors_by_sid.get(d["source_id"], []),
+                "unreadable_pages": d.get("unreadable_pages") or [],
+            }
+        )
 
     md_text = build_markdown_report(
         case_id=case_id,

@@ -73,10 +73,11 @@ def run_selftest() -> Dict[str, Any]:
             encoding="utf-8",
         )
 
-        # 1. Ingest
-        ingest_summary = ingest(in_dir, work_dir / "ingest")
+        # 1. Ingest (including early partial checkpoint)
+        ingest_summary = ingest(in_dir, work_dir / "ingest", output_dir=out_dir)
         _assert(ingest_summary["status"] == "ok", f"Ingest failed: {ingest_summary}")
         _assert(ingest_summary["has_pdf_pages"] is False, "Markdown should have has_pdf_pages=False")
+        _assert((out_dir / "result.json").exists() and load_json(out_dir / "result.json")["status"] == "partial", "Expected early partial checkpoint")
 
         source_index = load_json(work_dir / "ingest" / "source_index.json")
         case_brief = load_json(work_dir / "ingest" / "case_brief.json")
@@ -88,6 +89,14 @@ def run_selftest() -> Dict[str, Any]:
         _assert(v_report["audited_nanopubs_count"] == 20, f"Expected 20 merged nanopubs, got {v_report['audited_nanopubs_count']}")
         _assert(v_report["merged_duplicates_count"] == 1, "Expected 1 duplicate merge (BM_01 + BM_02_DUP_RESULTS)")
         _assert(v_report["quote_grounding_rate"] == 1.0, "Expected 100% quote grounding rate")
+        exp_pos = export_all(
+            audited, source_index, case_brief, v_report, out_dir, qa_data=None, strict=False
+        )
+        _assert(exp_pos["status"] == "success", f"Expected success export, got {exp_pos}")
+        pos_rj = load_json(out_dir / "result.json")
+        _assert(pos_rj["sources"][0].get("field_provenance"), "Missing field_provenance in result.json['sources']")
+        _assert(pos_rj["sources"][0].get("evidence_anchors"), "Missing evidence_anchors in result.json['sources']")
+        _assert("Field-Level Metadata & Evidence Provenance" in (out_dir / "nanopub_report.md").read_text(encoding="utf-8"), "Missing Field-Level Metadata & Evidence Provenance in nanopub_report.md")
 
         # Verify corroborating spans preserved on merged NP
         merged_np = next(
