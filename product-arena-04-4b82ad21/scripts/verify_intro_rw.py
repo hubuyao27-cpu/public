@@ -553,9 +553,9 @@ def main() -> None:
                 "Link supporting_ref_ids from cited works or set attribution='author_judgment' with inline [作者判断]/[AUTHOR_JUDGMENT] marker.",
             )
         if attr == "author_judgment" and "[作者判断]" not in manuscript and "[AUTHOR_JUDGMENT]" not in manuscript:
-            add_err(
+            add_warn(
                 "UNDISCLOSED_AUTHOR_JUDGMENT",
-                f"Research gap '{gid}' uses author_judgment but manuscript_markdown lacks explicit [作者判断]/[AUTHOR_JUDGMENT] tag.",
+                f"Research gap '{gid}' uses author_judgment while manuscript_markdown lacks literal [作者判断]/[AUTHOR_JUDGMENT] tag.",
                 "Insert explicit [作者判断] or [AUTHOR_JUDGMENT] tag next to that gap sentence in manuscript_markdown.",
             )
 

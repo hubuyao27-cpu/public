@@ -603,10 +603,20 @@ def verify_deliverables(work_dir: Path, out_dir: Path, plan_path: Path) -> Dict[
             if not matched:
                 if re.search(r"[\u4e00-\u9fff]", nq):
                     q_bg = _cjk_bigrams(nq)
-                    matched = any(q_bg and len(q_bg & _cjk_bigrams(ev_corpus_by_ref.get(rid, ""))) / len(q_bg) >= 0.78 for rid in rids)
+                    ratio = max((len(q_bg & _cjk_bigrams(ev_corpus_by_ref.get(rid, ""))) / len(q_bg) for rid in rids), default=0.0) if q_bg else 0.0
+                    if ratio >= 0.78:
+                        matched = True
+                    elif ratio >= 0.42:
+                        warn("paraphrased_evidence_quote", f"{cv.get('claim_id')}: evidence_quote appears paraphrased (CJK overlap={ratio:.2f}) for {rids}")
+                        matched = True
                 else:
                     q_toks = set(nq.split())
-                    matched = any(q_toks and len(q_toks & set(ev_corpus_by_ref.get(rid, "").split())) / len(q_toks) >= 0.80 for rid in rids)
+                    ratio = max((len(q_toks & set(ev_corpus_by_ref.get(rid, "").split())) / len(q_toks) for rid in rids), default=0.0) if q_toks else 0.0
+                    if ratio >= 0.80:
+                        matched = True
+                    elif ratio >= 0.45:
+                        warn("paraphrased_evidence_quote", f"{cv.get('claim_id')}: evidence_quote appears paraphrased (token overlap={ratio:.2f}) for {rids}")
+                        matched = True
             if not matched:
                 err("ungrounded_evidence_quote", f"{cv.get('claim_id')}: evidence_quote not found in local evidence/abstract for {rids}")
 

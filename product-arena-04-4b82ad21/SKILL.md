@@ -54,10 +54,10 @@ Runs `inspect_case -> ingest_materials -> assemble_deliverables (--checkpoint pa
    python3 -B "$SKILL_DIR/scripts/query_sources.py" \
      --extracted-dir /app/work/extracted --section Limitations --limit 25
    ```
-3. Write publication-ready prose cleanly to `/app/work/manuscript.md` and save `/app/work/section_payload.json` (`"manuscript_file": "/app/work/manuscript.md"` plus your structured `related_work_groups[]`, `research_gaps[]`, and `contributions[]`):
+3. Write publication-ready prose cleanly to `/app/work/manuscript.md` (with `## Introduction`, `## Related Work` + `###` route subsections, `## Research Gaps`, `## Contributions`) and save a compact `/app/work/section_payload.json` (`case_id`, `status`, `manuscript_file` — plus optional custom overrides):
    - **Uniform Internal Anchors**: Cite works in prose as **`[R01]` / `[R1]` / `[R01, R02]`** — `assemble_deliverables.py` orders numeric bibliographies (`gbt7714`/`ieee_numeric`/`nature_numeric`) by **first appearance in prose** and renders `[R01]` uniformly into `[1]`, `[1], [2]`, `(Author, Year)`, or `\cite{key}` across `.md`, `.docx`, `.tex`, and `result.json`.
-   - **Honest Inline Markers**: Tag synthetic inferences `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing/conflicting items `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]` matched 1-to-1 in `author_confirmation_items[]`.
-   - **Zero-Rework Auto-Hydration**: `references[]` (with `field_provenance`), `conflicts[]`, `comparison_matrix[]`, `claim_citation_map[]` (with verbatim `evidence_quote` + `[file:pX_LY]` locators), and prose-to-structure baselines deterministically auto-hydrate from `source_ledger.json` and `/app/work/extracted/` when omitted or partial — focus tokens on high-craft writing and evidence-backed arguments rather than duplicating boilerplate JSON.
+   - **Honest Inline Markers**: Tag synthetic inferences `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing/conflicting items `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]`.
+   - **Zero-Rework Auto-Hydration (Fast-Path)**: `references[]` (with `field_provenance`), `conflicts[]`, `research_background`, `related_work_groups[]`, `comparison_matrix[]`, `research_gaps[]`, `contributions[]`, `author_confirmation_items[]`, and `claim_citation_map[]` (with verbatim `evidence_quote` + `[file:pX_LY]` locators) deterministically auto-hydrate from `source_ledger.json`, `/app/work/extracted/`, and `/app/work/manuscript.md` when omitted — focus your token budget on publication-grade prose rather than duplicating boilerplate JSON.
    - **Custom Contracts**: Populate `contract_overrides` only for custom `output_contract` fields not mapped automatically by semantic roles.
 
 ### Step 3: One-Command Verify & Non-Destructive Final Assembly

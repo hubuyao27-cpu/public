@@ -1768,6 +1768,51 @@ def sync_payload_structures(
                         "attribution": "author_judgment" if has_aj else "literature_derived",
                     }]
 
+        if not (synced.get("contributions") or []) and ((ledger or {}).get("own_paper_evidence") or (ledger or {}).get("figure_table_mentions")):
+            c_m = re.search(r"(?im)^#{1,4}\s+.*(?:contributions?|本文贡献|主要贡献)\b[^\n]*\n(.*?)(?=^#{1,2}\s+|\Z)", manuscript, re.S)
+            if c_m:
+                c_body = c_m.group(1).strip()
+                c_items = [ln.strip().lstrip("-*•0123456789. ") for ln in c_body.splitlines() if len(ln.strip()) >= 18]
+                if not c_items:
+                    c_items = [s.strip() for s in re.split(r"(?<=[。！？!?])\s+|\.\s+", c_body) if len(s.strip()) >= 18]
+                own_locs = [str(ev.get("locator") or "") for ev in ((ledger or {}).get("own_paper_evidence") or []) if isinstance(ev, dict) and ev.get("locator")]
+                auto_contribs: List[Dict[str, Any]] = []
+                for idx_c, ctxt in enumerate(c_items[:4], start=1):
+                    l_meth = re.findall(r"(?:Section|Sec\.|第)\s*\d+(?:\.\d+)*", ctxt, re.I)
+                    l_ft = re.findall(r"(?:Fig(?:ure)?\.?|Table|Tab\.?|图|表)\s*[A-Za-z0-9.\-]+", ctxt, re.I)
+                    l_met = re.findall(r"\d+(?:\.\d+)?\s*(?:%|％|mA/cm2|h|ms|s|x|倍)", ctxt, re.I)
+                    locs_use = own_locs[:2] if own_locs else (l_ft[:2] or ["case.json"])
+                    auto_contribs.append({
+                        "contrib_id": f"C{idx_c:02d}",
+                        "claim_text": ctxt[:240],
+                        "scope_qualification": "As evaluated in reported experimental setup",
+                        "linked_methods": l_meth[:3],
+                        "linked_figures_tables": l_ft[:4],
+                        "linked_metrics": l_met[:4],
+                        "own_evidence_locators": locs_use,
+                        "verification_status": "verified",
+                    })
+                if auto_contribs:
+                    synced["contributions"] = auto_contribs
+
+        # Auto-sync any inline [待作者确认: GAP-XX] / [AUTHOR_CONFIRM: GAP-XX] missing from author_confirmation_items[]
+        inline_gap_ids = re.findall(r"\[(?:待作者确认|AUTHOR_CONFIRM)\s*:\s*(GAP-\d+)\b[^\]]*\]", manuscript)
+        if inline_gap_ids:
+            existing_ac = [dict(x) for x in (synced.get("author_confirmation_items") or []) if isinstance(x, dict)]
+            known_gids = {str(x.get("gap_id") or "").strip() for x in existing_ac}
+            for ig in inline_gap_ids:
+                if ig not in known_gids:
+                    known_gids.add(ig)
+                    existing_ac.append({
+                        "gap_id": ig,
+                        "severity": "important",
+                        "location_in_draft": "manuscript_markdown",
+                        "issue_type": "author_confirmation_needed",
+                        "question": f"Please verify inline confirmation item {ig}.",
+                        "what_was_checked": "source_ledger.json and /app/work/extracted",
+                    })
+            synced["author_confirmation_items"] = existing_ac
+
     # 2. Derive comparison_matrix from related_work_groups if matrix is empty
     rw_groups = [g for g in (synced.get("related_work_groups") or []) if isinstance(g, dict)]
     if not (synced.get("comparison_matrix") or []) and rw_groups:

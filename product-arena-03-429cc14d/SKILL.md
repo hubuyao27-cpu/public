@@ -48,7 +48,7 @@ This single command inspects `case.json` + `task.md` + all input files (plus inl
 - **Library-Only Mode**: If `sentences == 0` and the task only asks to deduplicate or convert references, keep `manuscript_edits: []`.
 
 ### Step 2: Read Compact Digests & Write `/app/work/citation_plan.json`
-Read `/input/task.md` (if present), `/app/work/case_brief.md`, `/app/work/library_digest.md`, `/app/work/manuscript_digest.md` (and `/app/work/evidence_corpus.json` only if needed beyond the pre-matched evidence snippets). Write `/app/work/citation_plan.json` conforming to `$SKILL_DIR/resources/plan_schema.json`:
+Read `/input/task.md` (if present), `/app/work/case_brief.md`, `/app/work/library_digest.md`, `/app/work/manuscript_digest.md` (and `/app/work/evidence_corpus.json` only if needed beyond the pre-matched evidence snippets). Write a **minimal** `/app/work/citation_plan.json` (fast-path: omit unmodified sentences and omit `claim_verifications` unless overriding pre-matched verdicts):
 1. Confirm `target_style` (`gbt7714_2015_numeric`, `gbt7714_2015_author_year`, `apa7`, `apa6`, `ieee`, `nature`, `vancouver`, `chicago_author_date`), `in_text_format`, and optional `requested_output_formats` (`["docx"]`, `["tex"]`).
 2. **`dedup_decisions`**: Decide `"merge"` or `"keep_separate"` for every `AMB_XXX` candidate (never merge `recycled_doi_conflicts`).
 3. **`metadata_resolutions`**: Fill/correct fields **only** from raw records or local evidence (`source_locator` required). Never invent DOIs, pages, or volumes.
