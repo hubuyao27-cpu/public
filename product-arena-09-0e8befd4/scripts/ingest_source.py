@@ -1328,6 +1328,29 @@ def ingest(input_dir: Path, out_dir: Path, ocr_auto: bool = False, output_dir: O
             digest_lines.append(f"- {w}")
         digest_lines.append("")
 
+    # Surface top high-signal Result/Abstract/Conclusion/Quantitative sentences for fast 1-pass atomic extraction
+    key_cands: List[str] = []
+    for doc in documents:
+        for p in doc["paragraphs"]:
+            sec_l = str(p.get("section") or "").lower()
+            is_key_sec = any(k in sec_l for k in ("abstract", "result", "conclusion", "finding", "discussion", "摘要", "结果", "结论"))
+            ptag = f"p.{p['page']} | " if (doc["has_pdf_pages"] and p.get("page") is not None) else ""
+            for s in p.get("sentences") or []:
+                stxt = s["text"]
+                has_quant = bool(re.search(r"\d+(?:\.\d+)?\s*(?:%|±|mV|mA|K|ms|h|s|nm|μm|eV|fold|×|p\s*[<>=])", stxt, re.I))
+                if (is_key_sec or has_quant) and len(stxt) >= 24:
+                    key_cands.append(f"- `[{doc['source_id']} | {p['paragraph_id']} | {s['sentence_id']} | {ptag}{p.get('section')}]` {stxt[:240]}")
+                    if len(key_cands) >= 35:
+                        break
+            if len(key_cands) >= 35:
+                break
+        if len(key_cands) >= 35:
+            break
+    if key_cands:
+        digest_lines.append("## High-Signal Candidate Sentences (Exact Locators)")
+        digest_lines.extend(key_cands)
+        digest_lines.append("")
+
     for doc in documents:
         doc_lines = [
             f"## Source `{doc['source_id']}` (Group `{doc['paper_group_id']}`, File `{doc['source_file']}`)",

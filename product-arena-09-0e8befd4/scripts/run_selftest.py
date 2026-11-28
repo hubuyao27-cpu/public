@@ -97,6 +97,15 @@ def run_selftest() -> Dict[str, Any]:
         _assert(pos_rj["sources"][0].get("field_provenance"), "Missing field_provenance in result.json['sources']")
         _assert(pos_rj["sources"][0].get("evidence_anchors"), "Missing evidence_anchors in result.json['sources']")
         _assert("Field-Level Metadata & Evidence Provenance" in (out_dir / "nanopub_report.md").read_text(encoding="utf-8"), "Missing Field-Level Metadata & Evidence Provenance in nanopub_report.md")
+        _assert("High-Signal Candidate Sentences" in (work_dir / "ingest" / "source_digest.md").read_text(encoding="utf-8"), "Missing High-Signal Candidate Sentences in source_digest.md")
+
+        # Verify auto-correction of mismatched paragraph_id when quote is verbatim in same source
+        g_loc_fix = copy.deepcopy(bm["nanopublications"][0])
+        g_loc_fix["temp_id"] = "LOC_AUTO_FIX"
+        g_loc_fix["evidence_spans"][0]["locator"]["paragraph_id"] = "P_WRONG_ID"
+        aud_fix, rep_fix = verify_nanopubs([g_loc_fix], source_index)
+        _assert(rep_fix["error_count"] == 0, f"Auto-locator fix should pass with 0 errors, got {rep_fix['issues']}")
+        _assert(aud_fix["nanopublications"][0]["provenance"]["evidence_spans"][0]["locator"]["paragraph_id"] != "P_WRONG_ID", "paragraph_id was not auto-corrected")
 
         # Verify corroborating spans preserved on merged NP
         merged_np = next(

@@ -138,8 +138,8 @@ python3 "$SKILL_DIR/scripts/verify_nanopubs.py" \
   --report /app/work/verification_report.json \
   --strict
 ```
-- **Auto-Resolution Fast-Path**: `verify_nanopubs.py` automatically fills exact `char_start..char_end` offsets and missing `paragraph_id`/`sentence_id` when `quote` matches verbatim in `source_index.json`, and `export_nanopubs.py` automatically maps `temp_id`s in `qa_answers.json` to final Trusty `urn:nanopub:RA...` IDs.
-- **Bounded Self-Correction Rule**: If `--strict` exits non-zero, read `/app/work/verification_report.json`, fix the flagged `ERROR`s in `/app/work/raw_nanopubs.json`, and re-run **at most 2 repair passes**. If blockers persist due to ambiguous/corrupt inputs, run `verify_nanopubs.py ... --allow-partial` and `export_nanopubs.py ... --partial` so an honest `partial` `/app/output/result.json` is delivered within budget.
+- **Auto-Resolution Fast-Path**: `verify_nanopubs.py` automatically resolves `char_start..char_end`, `sentence_id`, and exact `paragraph_id` when `quote` matches verbatim in `source_index.json`, and `export_nanopubs.py` automatically maps `temp_id`s in `qa_answers.json` to final Trusty `urn:nanopub:RA...` IDs.
+- **Repair Loop**: If `--strict` exits non-zero, read `/app/work/verification_report.json`, fix every `ERROR` in `/app/work/raw_nanopubs.json`, and re-run `verify_nanopubs.py --strict` until `error_count == 0` so Step 4 exports `status: "success"`.
 
 *(Note: Duplicate assertions from Abstract + Results are automatically merged while preserving all unique `evidence_spans[]` and assigning Trusty `urn:nanopub:RA...` IDs.)*
 

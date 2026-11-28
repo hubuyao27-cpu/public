@@ -401,6 +401,7 @@ def verify_nanopubs(
             elif sent_id and str(sent_id) in doc_bundle["sentences"]:
                 srec = doc_bundle["sentences"][str(sent_id)]
                 pid = srec["paragraph_id"]
+                loc["paragraph_id"] = pid
                 target_para = doc_bundle["paragraphs"].get(str(pid))
                 haystack = target_para["text"] if target_para else srec["text"]
             else:
@@ -423,35 +424,52 @@ def verify_nanopubs(
                         target_para = p_cand
                         haystack = p_cand["text"]
                         pid = p_cand["paragraph_id"]
+                        loc["paragraph_id"] = pid
                         break
                 if not haystack:
                     haystack = doc_bundle["full_text"]
 
-            # Gate 2: Verbatim match verification
+            # Gate 2: Verbatim match verification (auto-correct paragraph_id if quote exists verbatim in same source)
             m_res = find_verbatim_span(quote, haystack)
+            if not m_res["matched"] and haystack != doc_bundle["full_text"]:
+                for p_cand in doc_obj.get("paragraphs") or []:
+                    cand_m = find_verbatim_span(quote, p_cand["text"])
+                    if cand_m["matched"]:
+                        old_pid = pid
+                        target_para = p_cand
+                        haystack = p_cand["text"]
+                        pid = p_cand["paragraph_id"]
+                        loc["paragraph_id"] = pid
+                        if has_pdf and p_cand.get("page") is not None:
+                            loc["page"] = p_cand["page"]
+                        m_res = cand_m
+                        change_records.append({
+                            "item_id": temp_id,
+                            "field": f"evidence_spans[{sp_idx - 1}].locator.paragraph_id",
+                            "before": old_pid,
+                            "after": pid,
+                            "reason": "Auto-corrected paragraph_id to exact paragraph containing verbatim quote.",
+                        })
+                        _add_issue(
+                            issues,
+                            "WARNING",
+                            "LOCATOR_INTEGRITY",
+                            "auto_corrected_paragraph_locator",
+                            temp_id,
+                            f"Quote was found verbatim in `{pid}` rather than `{old_pid}`; auto-corrected locator.",
+                            "Keep verified locator.",
+                        )
+                        break
             if not m_res["matched"]:
-                # Also check across full source if paragraph scoping missed
-                m_full = find_verbatim_span(quote, doc_bundle["full_text"]) if haystack != doc_bundle["full_text"] else m_res
-                if m_full["matched"]:
-                    _add_issue(
-                        issues,
-                        "ERROR",
-                        "LOCATOR_INTEGRITY",
-                        "quote_in_wrong_paragraph_locator",
-                        temp_id,
-                        f"Quote exists in `{sid}`, but NOT inside cited paragraph `{pid}`.",
-                        "Update locator.paragraph_id / page to the paragraph where the quote actually appears.",
-                    )
-                else:
-                    _add_issue(
-                        issues,
-                        "ERROR",
-                        "EVIDENCE_GROUNDING",
-                        "quote_not_grounded_in_source",
-                        temp_id,
-                        f"Evidence quote not found verbatim in `{sid}` (best token similarity={m_res['best_similarity']}). Quote: `{quote[:120]}`",
-                        "Copy an exact verbatim excerpt directly from source_digest.md.",
-                    )
+                _add_issue(
+                    issues,
+                    "ERROR",
+                    "EVIDENCE_GROUNDING",
+                    "quote_not_grounded_in_source",
+                    temp_id,
+                    f"Evidence quote not found verbatim in `{sid}` (best token similarity={m_res['best_similarity']}). Quote: `{quote[:120]}`",
+                    "Copy an exact verbatim excerpt directly from source_digest.md.",
+                )
             else:
                 matched_span_count += 1
                 if m_res["match_mode"] == "exact":
