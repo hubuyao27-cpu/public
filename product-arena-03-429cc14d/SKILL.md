@@ -48,12 +48,12 @@ This single command inspects `case.json` + `task.md` + all input files (plus inl
 - **Library-Only Mode**: If `sentences == 0` and the task only asks to deduplicate or convert references, keep `manuscript_edits: []`.
 
 ### Step 2: Read Compact Digests & Write `/app/work/citation_plan.json`
-Read `/input/task.md` (if present), `/app/work/case_brief.md`, `/app/work/library_digest.md`, `/app/work/manuscript_digest.md` (and `/app/work/evidence_corpus.json` when verifying claims against local PDFs/papers). Write `/app/work/citation_plan.json` conforming to `$SKILL_DIR/resources/plan_schema.json`:
+Read `/input/task.md` (if present), `/app/work/case_brief.md`, `/app/work/library_digest.md`, `/app/work/manuscript_digest.md` (and `/app/work/evidence_corpus.json` only if needed beyond the pre-matched evidence snippets). Write `/app/work/citation_plan.json` conforming to `$SKILL_DIR/resources/plan_schema.json`:
 1. Confirm `target_style` (`gbt7714_2015_numeric`, `gbt7714_2015_author_year`, `apa7`, `apa6`, `ieee`, `nature`, `vancouver`, `chicago_author_date`), `in_text_format`, and optional `requested_output_formats` (`["docx"]`, `["tex"]`).
 2. **`dedup_decisions`**: Decide `"merge"` or `"keep_separate"` for every `AMB_XXX` candidate (never merge `recycled_doi_conflicts`).
 3. **`metadata_resolutions`**: Fill/correct fields **only** from raw records or local evidence (`source_locator` required). Never invent DOIs, pages, or volumes.
-4. **`manuscript_edits`**: Only include sentences requiring insertion, paragraph-end dump splitting, dangling-marker replacement, deletion (`"action": "delete"`), or Author-Year disambiguation (all unmodified sentences are auto-tokenized and renumbered in order). Embed `[[CITE:REF_001]]`, `[[CITE:REF_001,REF_002]]`, or `[[CITE_NARR:REF_001]]` at the exact supported clause before punctuation; mark unsupported claims `[证据不足/待人工核验]` (ZH) or `[INSUFFICIENT_EVIDENCE]` (EN). Set `section_order_override` if reordering sections.
-5. **`claim_verifications`**: Audit cited claims honestly (`supported_by_local_fulltext`, `supported_by_abstract`, `title_metadata_only_unverified_claim`, `claim_mismatch`, `fabricated_or_dangling_ref`, `metadata_conflict`, `insufficient_evidence_in_library`). Copy verbatim `evidence_quote` substrings from local evidence/abstracts (or `""` if title/metadata only).
+4. **`manuscript_edits`**: Only include sentences requiring insertion, paragraph-end dump splitting, dangling-marker replacement, deletion (`"action": "delete"`), or Author-Year disambiguation (all unmodified sentences are auto-tokenized and renumbered in order). Embed `[[CITE:REF_001]]`, `[[CITE:REF_001,REF_002]]`, or `[[CITE_NARR:REF_001]]` (or `[REF_001]` shorthand) at the exact supported clause before punctuation; mark unsupported claims `[证据不足/待人工核验]` (ZH) or `[INSUFFICIENT_EVIDENCE]` (EN). Set `section_order_override` if reordering sections.
+5. **`claim_verifications`**: `citation_plan_skeleton.json` already pre-populates baseline entries with exact `file:pX_LY` / `#abstract` locators and verbatim quotes from local evidence (and `verify_and_assemble.py` auto-hydrates them if omitted). Review/override only claims that need adjustment (`claim_mismatch`, `fabricated_or_dangling_ref`, `metadata_conflict`, `insufficient_evidence_in_library`) without paraphrasing `evidence_quote`.
 6. **`human_confirmation_items` & `contract_overrides`**: Record unresolved gaps/conflicts and any custom `output_contract` keys.
 
 ### Step 3: Synchronize, Verify 10 Invariants & Assemble `/app/output`
@@ -63,7 +63,7 @@ python3 -B "$SKILL_DIR/scripts/verify_and_assemble.py" \
   --out-dir /app/output \
   --plan /app/work/citation_plan.json
 ```
-Inspect the printed verification report. If `error_count > 0`, fix the flagged defects in `/app/work/citation_plan.json` and re-run Step 3 until `"passed": true`. Confirm `/app/output/` contains `result.json` (preserving `case_id` and every `output_contract` key), `revised_manuscript.md` (+ `.docx`/`.tex` and previews when applicable), `references_formatted.md`, `references_clean.{bib,ris,csl.json}`, `references_table.csv`, `citation_audit_report.md`, and `provenance_ledger.json`.
+Inspect the printed verification report. **Bounded Self-Correction Rule**: if `error_count > 0`, perform **at most 2 repair passes** on `/app/work/citation_plan.json` and re-run Step 3; if input defects still prevent full resolution, run `verify_and_assemble.py ... --allow-partial` so an honest `partial` `/app/output/result.json` is preserved without exhausting turn budget. Confirm `/app/output/` contains `result.json`, `revised_manuscript.md` (+ `.docx`/`.tex` and previews when applicable), `references_formatted.md`, `references_clean.{bib,ris,csl.json}`, `references_table.csv`, `citation_audit_report.md` (including Field-Level Source Evidence Ledger), and `provenance_ledger.json`.
 
 ---
 

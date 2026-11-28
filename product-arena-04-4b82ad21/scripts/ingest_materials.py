@@ -748,6 +748,17 @@ def main() -> None:
             match = by_title[ntitle]
 
         if match is None:
+            fp: Dict[str, Any] = {}
+            for pfld in ("title", "authors", "year", "venue", "doi_or_id", "volume", "issue", "pages", "abstract"):
+                pval = str(rec.get(pfld) or "").strip()
+                if pval:
+                    fp[pfld] = {
+                        "value": pval[:240],
+                        "source_locator": rec.get("source_locator", ""),
+                        "source_tier": rec_tier,
+                        "status": "adopted_primary",
+                        "alternates": [],
+                    }
             item_entry = {
                 "ref_id": f"R{len(catalog)+1:02d}",
                 "cite_key": ck or f"R{len(catalog)+1:02d}",
@@ -762,8 +773,10 @@ def main() -> None:
                 "issue": str(rec.get("issue") or ""),
                 "pages": str(rec.get("pages") or ""),
                 "abstract_or_notes": rec.get("abstract", ""),
+                "abstract_excerpt": str(rec.get("abstract") or "")[:360],
                 "source_locators": [rec.get("source_locator", "")],
                 "source_tier": rec_tier,
+                "field_provenance": fp,
             }
             catalog.append(item_entry)
             if item_entry["cite_key"]:
@@ -776,7 +789,8 @@ def main() -> None:
             loc = rec.get("source_locator", "")
             if loc and loc not in match["source_locators"]:
                 match["source_locators"].append(loc)
-            # Check conflicts on year / doi_or_id / venue / first-author surname
+            fp_map = match.setdefault("field_provenance", {})
+            # Check conflicts on year / doi_or_id / venue / authors
             for field in ("year", "doi_or_id", "venue", "authors"):
                 v_old = str(match.get(field) or "").strip()
                 v_new = str(rec.get(field) or "").strip()
@@ -810,11 +824,36 @@ def main() -> None:
                             "needs_author_confirmation": True,
                         }
                     )
+                    fp_entry = fp_map.setdefault(
+                        field,
+                        {"value": v_old[:240], "source_locator": match["source_locators"][0], "source_tier": match.get("source_tier", "primary_record"), "status": "adopted_primary", "alternates": []},
+                    )
+                    fp_entry["status"] = "conflict"
+                    alt_rec = {"value": v_new[:240], "source_locator": loc, "source_tier": rec_tier}
+                    if alt_rec not in fp_entry["alternates"]:
+                        fp_entry["alternates"].append(alt_rec)
+                elif v_new.lower() != v_old.lower():
+                    fp_entry = fp_map.setdefault(
+                        field,
+                        {"value": v_old[:240], "source_locator": match["source_locators"][0], "source_tier": match.get("source_tier", "primary_record"), "status": "adopted_primary", "alternates": []},
+                    )
+                    alt_rec = {"value": v_new[:240], "source_locator": loc, "source_tier": rec_tier}
+                    if alt_rec not in fp_entry["alternates"]:
+                        fp_entry["alternates"].append(alt_rec)
             # Enrich missing fields from secondary record
             for field in ("authors", "year", "title", "venue", "doi_or_id", "volume", "issue", "pages", "abstract_or_notes"):
                 src_k = "abstract" if field == "abstract_or_notes" else field
                 if not match.get(field) and rec.get(src_k):
                     match[field] = rec[src_k]
+                    if field == "abstract_or_notes":
+                        match["abstract_excerpt"] = str(rec[src_k])[:360]
+                    fp_map[src_k] = {
+                        "value": str(rec[src_k])[:240],
+                        "source_locator": loc,
+                        "source_tier": rec_tier,
+                        "status": "enriched_from_secondary",
+                        "alternates": [],
+                    }
             if not match["first_author_surname"] and match["authors"]:
                 match["first_author_surname"] = extract_first_author_surname(match["authors"])
 
@@ -934,6 +973,15 @@ def main() -> None:
                 f"{r['authors'] or '?'} ({r['year'] or '?'}). *{r['title'] or '?'}*. {r['venue'] or '?'}. "
                 f"DOI/ID: `{r['doi_or_id'] or 'N/A'}` | Locators: `{r['source_locators']}`{miss_s}"
             )
+            if r.get("field_provenance"):
+                fp_items = []
+                for fld in ("title", "authors", "year", "venue", "doi_or_id", "volume", "pages", "abstract"):
+                    fmeta = r["field_provenance"].get(fld)
+                    if isinstance(fmeta, dict) and fmeta.get("source_locator"):
+                        tag = "*" if fmeta.get("status") == "conflict" else ""
+                        fp_items.append(f"{fld}{tag}<-{fmeta['source_locator']}")
+                if fp_items:
+                    dlines.append(f"  - *Field provenance*: {', '.join(fp_items)}")
             if r.get("abstract_or_notes"):
                 dlines.append(f"  - *Notes/Abstract*: {r['abstract_or_notes'][:620]}")
     else:
@@ -1028,6 +1076,8 @@ def main() -> None:
                 if any(r["ref_id"].lower() in json.dumps(c, ensure_ascii=False).lower() for c in conflicts)
                 else ("partial_metadata" if r.get("missing_metadata_fields") else "verified")
             ),
+            "field_provenance": r.get("field_provenance") or {},
+            "abstract_excerpt": str(r.get("abstract_excerpt") or r.get("abstract_or_notes") or "")[:360],
             "formatted_citation": "",
         }
         for r in catalog

@@ -54,10 +54,10 @@ Runs `inspect_case -> ingest_materials -> assemble_deliverables (--checkpoint pa
    python3 -B "$SKILL_DIR/scripts/query_sources.py" \
      --extracted-dir /app/work/extracted --section Limitations --limit 25
    ```
-3. Write publication-ready prose cleanly to `/app/work/manuscript.md` and save `/app/work/section_payload.json` (copying pre-grounded `references[]`, `conflicts[]`, `author_confirmation_items[]`, and `uncertainty[]` from the skeleton, setting `"manuscript_file": "/app/work/manuscript.md"`):
-   - **Uniform Internal Anchors**: Cite works in prose as **`[R01]` / `[R01, R02]`** — `assemble_deliverables.py` orders numeric bibliographies (`gbt7714`/`ieee_numeric`/`nature_numeric`) by **first appearance in prose** and renders `[R01]` uniformly into `[1]`, `[1], [2]`, `(Author, Year)`, or `\cite{key}` across `.md`, `.docx`, `.tex`, and `result.json`.
+3. Write publication-ready prose cleanly to `/app/work/manuscript.md` and save `/app/work/section_payload.json` (`"manuscript_file": "/app/work/manuscript.md"` plus your structured `related_work_groups[]`, `research_gaps[]`, and `contributions[]`):
+   - **Uniform Internal Anchors**: Cite works in prose as **`[R01]` / `[R1]` / `[R01, R02]`** — `assemble_deliverables.py` orders numeric bibliographies (`gbt7714`/`ieee_numeric`/`nature_numeric`) by **first appearance in prose** and renders `[R01]` uniformly into `[1]`, `[1], [2]`, `(Author, Year)`, or `\cite{key}` across `.md`, `.docx`, `.tex`, and `result.json`.
    - **Honest Inline Markers**: Tag synthetic inferences `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing/conflicting items `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]` matched 1-to-1 in `author_confirmation_items[]`.
-   - **Auto-Sync**: Leave `comparison_matrix[]` or `claim_citation_map[]` partial/empty if concise — `verify_intro_rw.py` and `assemble_deliverables.py` deterministically sync them from `related_work_groups[]` and cited prose sentences.
+   - **Zero-Rework Auto-Hydration**: `references[]` (with `field_provenance`), `conflicts[]`, `comparison_matrix[]`, `claim_citation_map[]` (with verbatim `evidence_quote` + `[file:pX_LY]` locators), and prose-to-structure baselines deterministically auto-hydrate from `source_ledger.json` and `/app/work/extracted/` when omitted or partial — focus tokens on high-craft writing and evidence-backed arguments rather than duplicating boilerplate JSON.
    - **Custom Contracts**: Populate `contract_overrides` only for custom `output_contract` fields not mapped automatically by semantic roles.
 
 ### Step 3: One-Command Verify & Non-Destructive Final Assembly
@@ -65,5 +65,5 @@ Runs `inspect_case -> ingest_materials -> assemble_deliverables (--checkpoint pa
 python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
   --work-dir /app/work --out-dir /app/output
 ```
-- If `verify_intro_rw.py` passes, it writes final verified deliverables (`result.json`, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md`, `provenance_map.json`, plus `.tex`/`.bib`/`.docx`/diagram previews only when explicitly requested).
-- If `verify_intro_rw.py` flags blocking errors (`error_count > 0`), `finalize_workspace.py` **preserves your authored manuscript** under an honest `status: "partial"` checkpoint while printing exact `fix_hint`s; inspect `/app/work/verification_report.json`, fix the flagged fields, and re-run until `"verification_passed": true`.
+- If `verify_intro_rw.py` passes, it writes final verified deliverables (`result.json`, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md` with Field-Level Metadata Provenance + claim quotes, `provenance_map.json`, plus `.tex`/`.bib`/`.docx`/diagram previews only when explicitly requested).
+- **Bounded Self-Correction Rule**: If `verify_intro_rw.py` flags blocking errors (`error_count > 0`), `finalize_workspace.py` **preserves your authored manuscript** under an honest `status: "partial"` checkpoint; inspect `/app/work/verification_report.json` and perform **at most 2 repair passes**. If blockers remain due to missing or conflicting user inputs, run `finalize_workspace.py --work-dir /app/work --out-dir /app/output --allow-partial` so an honest `partial` output is finalized cleanly within budget.

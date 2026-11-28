@@ -1198,6 +1198,15 @@ def format_apa_inline_item(ref: Dict[str, Any], language: str = "en") -> str:
     return f"{lead}, {year}"
 
 
+def normalize_ref_id_token(tok: str) -> str:
+    """Normalize unpadded reference tokens like R1 -> R01 while leaving cite keys untouched."""
+    s = str(tok or "").strip()
+    m = re.match(r"^R(\d{1,3})$", s, re.I)
+    if m:
+        return f"R{int(m.group(1)):02d}"
+    return s
+
+
 def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Order references by first citation occurrence in prose for numeric styles; return (ordered_refs, uncited_refs)."""
     if not md_text or not refs:
@@ -1209,6 +1218,10 @@ def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: st
         ck = str(r.get("cite_key") or "").strip().lower()
         if rid:
             by_tok[rid] = r
+            rm = re.match(r"^r0*(\d+)$", rid)
+            if rm:
+                by_tok[f"r{int(rm.group(1))}"] = r
+                by_tok[f"r{int(rm.group(1)):02d}"] = r
         if ck:
             by_tok[ck] = r
 
@@ -1216,7 +1229,7 @@ def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: st
     seen_set = set()
 
     def _mark(tok: str) -> None:
-        r = by_tok.get(tok.strip().lower())
+        r = by_tok.get(normalize_ref_id_token(tok).lower()) or by_tok.get(tok.strip().lower())
         if r is not None and id(r) not in seen_set:
             seen_set.add(id(r))
             seen_ids.append(id(r))
@@ -1229,14 +1242,15 @@ def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: st
             inner = (m.group(2) or "").strip()
             if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充", ":")):
                 continue
-            rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
+            rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner, re.I)
             if rm:
                 a, b = int(rm.group(1)), int(rm.group(2))
                 for k in range(a, min(b + 1, a + 21)):
                     _mark(f"R{k:02d}")
             else:
                 for p in re.split(r"[,;]", inner):
-                    if p.strip().lower() in by_tok:
+                    pn = normalize_ref_id_token(p).lower()
+                    if pn in by_tok or p.strip().lower() in by_tok:
                         _mark(p)
 
     if not seen_ids:
@@ -1252,7 +1266,7 @@ def order_refs_by_appearance(md_text: str, refs: List[Dict[str, Any]], style: st
 
 
 def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str, language: str = "zh") -> str:
-    """Convert [R01] / [cite_key] / \\cite{key} markers consistently to the target citation style."""
+    """Convert [R01] / [R1] / [cite_key] / \\cite{key} markers consistently to the target citation style."""
     if not md_text or not refs:
         return md_text or ""
     eff_style = style or "unspecified"
@@ -1269,6 +1283,10 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
         ck = str(r.get("cite_key") or "").strip().lower()
         if rid:
             by_id[rid] = (idx, r)
+            rm = re.match(r"^r0*(\d+)$", rid)
+            if rm:
+                by_id[f"r{int(rm.group(1))}"] = (idx, r)
+                by_id[f"r{int(rm.group(1)):02d}"] = (idx, r)
         if ck:
             by_key[ck] = (idx, r)
         surn = extract_first_author_surname(str(r.get("authors") or "")).lower()
@@ -1278,7 +1296,8 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
 
     def _resolve_tok(tok: str) -> Optional[Tuple[int, Dict[str, Any]]]:
         tl = tok.strip().lower()
-        return by_id.get(tl) or by_key.get(tl) or by_ay.get(tl)
+        tn = normalize_ref_id_token(tok).lower()
+        return by_id.get(tl) or by_id.get(tn) or by_key.get(tl) or by_ay.get(tl)
 
     def _format_items(items: List[Tuple[int, Dict[str, Any]]]) -> str:
         if eff_style == "bibtex_latex":
@@ -1295,7 +1314,7 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
         inner = m.group(1).strip()
         if any(tag in inner for tag in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", "待补充", ":")):
             return m.group(0)
-        rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner)
+        rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner, re.I)
         if rm:
             a, b = int(rm.group(1)), int(rm.group(2))
             if 0 < a <= b <= a + 20:
@@ -1307,7 +1326,7 @@ def render_inline_citations(md_text: str, refs: List[Dict[str, Any]], style: str
         parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
         if not parts:
             return m.group(0)
-        if not all(re.match(r"^R\d{1,3}$", p) or p.lower() in by_key for p in parts):
+        if not all(re.match(r"^R\d{1,3}$", p, re.I) or p.lower() in by_key for p in parts):
             return m.group(0)
         resolved = [_resolve_tok(p) for p in parts]
         if not all(x is not None for x in resolved):
@@ -1448,21 +1467,308 @@ def resolve_manuscript_text(
     return inline, warns, None
 
 
-def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[str, Any]:
-    """Deterministically cross-fill missing comparison_matrix or claim_citation_map to cut redundant LLM tokens."""
-    synced = dict(payload)
-    refs_by_id = {
-        str(r.get("ref_id") or "").strip().lower(): r
-        for r in (synced.get("references") or [])
-        if isinstance(r, dict) and r.get("ref_id")
-    }
-    refs_by_key = {
-        str(r.get("cite_key") or "").strip().lower(): r
-        for r in (synced.get("references") or [])
-        if isinstance(r, dict) and r.get("cite_key")
-    }
+def _cjk_bigrams_norm(s: str) -> set:
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]", s))
+    if len(cjk) < 2:
+        return set(cjk)
+    return {cjk[i : i + 2] for i in range(len(cjk) - 1)}
 
-    # 1. Derive comparison_matrix from related_work_groups if matrix is empty
+
+def _build_ref_evidence_pool(
+    ledger: Optional[Dict[str, Any]],
+    extracted_dir: Optional[Path],
+) -> Dict[str, List[Tuple[str, str]]]:
+    """Build per-ref_id candidate (locator, verbatim_text) snippets from ledger + /app/work/extracted."""
+    pool: Dict[str, List[Tuple[str, str]]] = {}
+    if not isinstance(ledger, dict):
+        return pool
+    cat = ledger.get("references_catalog") or []
+    ext_lines_by_file: Dict[str, List[Tuple[str, str]]] = {}
+    if extracted_dir and extracted_dir.exists():
+        for txt_p in sorted(extracted_dir.glob("*.txt"))[:30]:
+            content, _ = read_text_safe(txt_p)
+            if not content:
+                continue
+            for ln in content.splitlines():
+                lm = re.match(r"^\[([^\]]+)\]\s*(.+)$", ln.strip())
+                if not lm:
+                    continue
+                loc_tag, body = lm.group(1).strip(), re.sub(r"\s+", " ", lm.group(2)).strip()
+                if len(body) < 16:
+                    continue
+                fpart = loc_tag.split(":", 1)[0]
+                if "#" in fpart:
+                    fpart = fpart.split("#", 1)[0]
+                ext_lines_by_file.setdefault(fpart, []).append((loc_tag, body))
+
+    for lr in cat:
+        if not isinstance(lr, dict):
+            continue
+        rid = str(lr.get("ref_id") or "").strip().lower()
+        if not rid:
+            continue
+        cands: List[Tuple[str, str]] = []
+        primary_loc = str((lr.get("source_locators") or [""])[0] or "")
+        abs_txt = str(lr.get("abstract_or_notes") or lr.get("abstract_excerpt") or "").strip()
+        if len(abs_txt) >= 14:
+            for seg in re.split(r"(?<=[.。;；!?！？])\s+", re.sub(r"\s+", " ", abs_txt)):
+                seg = seg.strip()
+                if len(seg) >= 14:
+                    cands.append((f"{primary_loc}#abstract" if primary_loc else "abstract", seg[:220]))
+        for sloc in lr.get("source_locators") or []:
+            fbase = str(sloc).split(":", 1)[0].split("#", 1)[0]
+            for ltag, lbody in ext_lines_by_file.get(fbase, [])[:160]:
+                if re.match(r"^(?:title|authors?|year|venue|doi|ty\s+-|er\s+-|@)", lbody, re.I):
+                    continue
+                for seg in re.split(r"(?<=[.。;；!?！？])\s+", lbody):
+                    seg = seg.strip()
+                    if len(seg) >= 14:
+                        cands.append((ltag, seg[:220]))
+        # Also match literature_snippets preview lines mentioning cite_key / ref_id / surname
+        ck_l = str(lr.get("cite_key") or "").lower()
+        surn_l = str(lr.get("first_author_surname") or "").lower()
+        for lsn in ledger.get("literature_snippets") or []:
+            if not isinstance(lsn, dict):
+                continue
+            frel = str(lsn.get("file") or "")
+            for pline in lsn.get("preview_lines") or []:
+                pl_l = str(pline).lower()
+                if (ck_l and ck_l in pl_l) or (rid in pl_l) or (surn_l and len(surn_l) >= 3 and surn_l in pl_l):
+                    lm = re.match(r"^\[([^\]]+)\]\s*(.+)$", str(pline).strip())
+                    if lm:
+                        cands.append((lm.group(1).strip(), re.sub(r"\s+", " ", lm.group(2)).strip()[:220]))
+                    else:
+                        cands.append((frel, re.sub(r"\s+", " ", str(pline)).strip()[:220]))
+        if cands:
+            pool[rid] = cands
+    return pool
+
+
+def _match_claim_verbatim_quote(
+    claim_text: str,
+    citation_ids: List[str],
+    ev_pool: Dict[str, List[Tuple[str, str]]],
+) -> Tuple[str, str]:
+    """Return (verbatim_quote, exact_locator) matching claim_text against cited refs' source text."""
+    clean_q = re.sub(r"\[[^\]]*\]|\\cite[a-z]*\{[^}]*\}", " ", claim_text or "").lower()
+    q_words = {w for w in re.findall(r"[a-z0-9]{3,}", clean_q)}
+    q_cjk = _cjk_bigrams_norm(clean_q)
+    q_nums = set(re.findall(r"\d+(?:\.\d+)?%?", claim_text or ""))
+    best_score = 0.0
+    best_pair = ("", "")
+    for cid in citation_ids or []:
+        cid_norm = normalize_ref_id_token(str(cid)).lower()
+        for loc, body in ev_pool.get(cid_norm, []):
+            bl = body.lower()
+            bw = set(re.findall(r"[a-z0-9]{3,}", bl))
+            bc = _cjk_bigrams_norm(bl)
+            bn = set(re.findall(r"\d+(?:\.\d+)?%?", body))
+            sc = 0.0
+            if q_words and bw:
+                sc += len(q_words & bw) / max(2, min(len(q_words), 8))
+            if q_cjk and bc:
+                sc += len(q_cjk & bc) / max(2, min(len(q_cjk), 10))
+            if q_nums and bn:
+                sc += 0.65 * len(q_nums & bn)
+            if sc > best_score:
+                best_score = sc
+                best_pair = (body[:220], loc)
+    if best_score >= 0.08:
+        return best_pair
+    return ("", "")
+
+
+def sync_payload_structures(
+    payload: Dict[str, Any],
+    manuscript: str,
+    ledger: Optional[Dict[str, Any]] = None,
+    extracted_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Deterministically auto-hydrate & cross-fill missing structures and verbatim evidence quotes."""
+    synced = dict(payload)
+
+    # 0. Auto-hydrate missing references[] / field_provenance / conflicts[] from ledger without mutating existing user refs
+    cat = [r for r in ((ledger or {}).get("references_catalog") or []) if isinstance(r, dict)]
+    ledger_by_id = {str(r.get("ref_id") or "").strip().lower(): r for r in cat if r.get("ref_id")}
+    ledger_by_key = {str(r.get("cite_key") or "").strip().lower(): r for r in cat if r.get("cite_key")}
+    ledger_conflicts = (ledger or {}).get("conflicts") or []
+
+    existing_refs = [dict(r) for r in (synced.get("references") or []) if isinstance(r, dict)]
+    existing_rids = set()
+    for pr in existing_refs:
+        pr_rid = normalize_ref_id_token(str(pr.get("ref_id") or ""))
+        if pr_rid:
+            pr["ref_id"] = pr_rid
+            existing_rids.add(pr_rid.lower())
+        lref = ledger_by_id.get(pr_rid.lower()) or ledger_by_key.get(str(pr.get("cite_key") or "").strip().lower())
+        if lref and not pr.get("field_provenance") and lref.get("field_provenance"):
+            pr["field_provenance"] = lref["field_provenance"]
+
+    if cat:
+        cited_tokens: set = set()
+        for bm in re.finditer(r"\[([^\[\]]+)\]", manuscript or ""):
+            inner = bm.group(1).strip()
+            if any(t in inner for t in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", ":")):
+                continue
+            rm = re.match(r"^R(\d{1,3})\s*[-–]\s*R(\d{1,3})$", inner, re.I)
+            if rm:
+                for k in range(int(rm.group(1)), min(int(rm.group(2)) + 1, int(rm.group(1)) + 21)):
+                    cited_tokens.add(f"r{k:02d}")
+            else:
+                for tok in re.split(r"[,;]", inner):
+                    nt = normalize_ref_id_token(tok).lower()
+                    if nt:
+                        cited_tokens.add(nt)
+        for cm in re.finditer(r"\\cite[a-z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}", manuscript or ""):
+            for tok in cm.group(1).split(","):
+                cited_tokens.add(tok.strip().lower())
+
+        need_full_hydrate = (len(existing_refs) == 0)
+        for lr in cat:
+            lrid = str(lr.get("ref_id") or "").strip()
+            lck = str(lr.get("cite_key") or "").strip()
+            if not lrid or lrid.lower() in existing_rids:
+                continue
+            if need_full_hydrate or lrid.lower() in cited_tokens or (lck and lck.lower() in cited_tokens):
+                has_conf = any(lrid.lower() in json.dumps(c, ensure_ascii=False).lower() for c in ledger_conflicts)
+                vstat = "metadata_conflict" if has_conf else ("partial_metadata" if lr.get("missing_metadata_fields") else "verified")
+                existing_refs.append({
+                    "ref_id": lrid,
+                    "cite_key": lck or lrid,
+                    "entry_type": lr.get("entry_type") or "article",
+                    "authors": lr.get("authors") or "",
+                    "year": lr.get("year") or "",
+                    "title": lr.get("title") or "",
+                    "venue": lr.get("venue") or "",
+                    "doi_or_id": lr.get("doi_or_id") or "",
+                    "volume": lr.get("volume") or "",
+                    "issue": lr.get("issue") or "",
+                    "pages": lr.get("pages") or "",
+                    "recency_role": lr.get("recency_role") or "representative",
+                    "source_locator": (lr.get("source_locators") or ["unknown"])[0],
+                    "verification_status": vstat,
+                    "field_provenance": lr.get("field_provenance") or {},
+                    "formatted_citation": "",
+                })
+                existing_rids.add(lrid.lower())
+    if existing_refs:
+        synced["references"] = existing_refs
+
+    if not (synced.get("conflicts") or []) and ledger_conflicts:
+        synced["conflicts"] = list(ledger_conflicts)
+    if "uncertainty" not in synced:
+        synced["uncertainty"] = list((ledger or {}).get("access_warnings") or [])
+    for list_k in ("change_records", "excluded_references", "author_confirmation_items"):
+        if list_k not in synced:
+            synced[list_k] = []
+
+    refs_by_id: Dict[str, Dict[str, Any]] = {}
+    refs_by_key: Dict[str, Dict[str, Any]] = {}
+    for r in synced.get("references") or []:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("ref_id") or "").strip().lower()
+        ck = str(r.get("cite_key") or "").strip().lower()
+        if rid:
+            refs_by_id[rid] = r
+            rm = re.match(r"^r0*(\d+)$", rid)
+            if rm:
+                refs_by_id[f"r{int(rm.group(1))}"] = r
+                refs_by_id[f"r{int(rm.group(1)):02d}"] = r
+        if ck:
+            refs_by_key[ck] = r
+
+    # 1. Prose-to-structure fallback when agent authored clean markdown without duplicating JSON skeletons
+    if manuscript.strip():
+        bg = synced.get("research_background")
+        if (not isinstance(bg, dict) or not str(bg.get("concrete_problem") or "").strip()):
+            intro_m = re.search(r"(?im)^#{1,4}\s+.*(?:introduction|引言)\b[^\n]*\n(.*?)(?=^#{1,2}\s+|\Z)", manuscript, re.S)
+            intro_txt = intro_m.group(1).strip() if intro_m else manuscript.strip()
+            intro_sents = [s.strip() for s in re.split(r"(?:(?<=[。！？!?])\s*|(?<!\d)\.(?:\s+|$)|\n+)", intro_txt) if len(s.strip()) >= 20]
+            if intro_sents:
+                bg_cids: List[str] = []
+                bg_locs: List[str] = []
+                for m in re.finditer(r"\[(R\d{1,3}(?:\s*[,;]\s*R\d{1,3})*)\]", intro_txt[:1500], re.I):
+                    for tok in re.split(r"[,;]", m.group(1)):
+                        robj = refs_by_id.get(normalize_ref_id_token(tok).lower())
+                        if robj and robj.get("ref_id") not in bg_cids:
+                            bg_cids.append(str(robj["ref_id"]))
+                            sloc = str(robj.get("source_locator") or "").strip()
+                            if sloc and sloc not in bg_locs:
+                                bg_locs.append(sloc)
+                synced["research_background"] = {
+                    "domain_lineage": intro_sents[0][:180],
+                    "concrete_problem": (intro_sents[1] if len(intro_sents) > 1 else intro_sents[0])[:220],
+                    "technical_constraints": [],
+                    "why_now": (bg or {}).get("why_now", "") if isinstance(bg, dict) else "",
+                    "evidence_locators": bg_locs or (["case.json"] if bg_cids else []),
+                    "citation_ids": bg_cids,
+                }
+
+        if not (synced.get("related_work_groups") or []):
+            rw_m = re.search(r"(?im)^#{1,3}\s+.*(?:related\s+work|相关工作)\b[^\n]*\n(.*?)(?=^#{1,2}\s+|\Z)", manuscript, re.S)
+            if rw_m:
+                rw_body = rw_m.group(1)
+                sub_hdrs = list(re.finditer(r"(?m)^###\s+(.+)$", rw_body))
+                auto_groups: List[Dict[str, Any]] = []
+                for idx_g, hm in enumerate(sub_hdrs, start=1):
+                    end_pos = sub_hdrs[idx_g].start() if idx_g < len(sub_hdrs) else len(rw_body)
+                    chunk = rw_body[hm.end():end_pos].strip()
+                    seen_w = set()
+                    works_cov: List[Dict[str, Any]] = []
+                    for bm in re.finditer(r"\[([^\[\]]+)\]", chunk):
+                        for tok in re.split(r"[,;]", bm.group(1)):
+                            robj = refs_by_id.get(normalize_ref_id_token(tok).lower()) or refs_by_key.get(tok.strip().lower())
+                            if robj and robj.get("ref_id") and robj["ref_id"] not in seen_w:
+                                seen_w.add(robj["ref_id"])
+                                works_cov.append({
+                                    "ref_id": robj["ref_id"],
+                                    "core_conclusion": (robj.get("title") or "")[:100],
+                                    "applicability_conditions": "As reported in source",
+                                    "limitations": "See route discussion",
+                                    "source_locator": str(robj.get("source_locator") or "-"),
+                                })
+                    if works_cov:
+                        rname = hm.group(1).strip()
+                        auto_groups.append({
+                            "group_id": f"RG{len(auto_groups) + 1}",
+                            "route_name": rname,
+                            "grouping_axis": "Methodological route",
+                            "comparison_dimensions": ["Core approach", "Applicability", "Limitations"],
+                            "works_covered": works_cov,
+                            "route_tradeoff_summary": chunk.splitlines()[0][:180] if chunk else rname,
+                        })
+                if auto_groups:
+                    synced["related_work_groups"] = auto_groups
+
+        if not (synced.get("research_gaps") or []):
+            gap_m = re.search(r"(?im)^#{1,4}\s+.*(?:gap|空白|局限)\b[^\n]*\n(.*?)(?=^#{1,2}\s+|\Z)", manuscript, re.S)
+            gap_src = gap_m.group(1).strip() if gap_m else ""
+            if gap_src:
+                gap_s = re.split(r"(?:(?<=[。！？!?])\s*|\n+)", gap_src)[0].strip()
+                g_cids: List[str] = []
+                g_locs: List[str] = []
+                for bm in re.finditer(r"\[([^\[\]]+)\]", gap_s):
+                    for tok in re.split(r"[,;]", bm.group(1)):
+                        robj = refs_by_id.get(normalize_ref_id_token(tok).lower()) or refs_by_key.get(tok.strip().lower())
+                        if robj and robj.get("ref_id") not in g_cids:
+                            g_cids.append(str(robj["ref_id"]))
+                            sloc = str(robj.get("source_locator") or "").strip()
+                            if sloc and sloc not in g_locs:
+                                g_locs.append(sloc)
+                has_aj = ("[作者判断]" in gap_s or "[AUTHOR_JUDGMENT]" in gap_s)
+                if gap_s and (g_cids or has_aj):
+                    synced["research_gaps"] = [{
+                        "gap_id": "GAP-S1",
+                        "gap_statement": gap_s[:220],
+                        "derivation_type": "author_judgment" if (has_aj and not g_cids) else "shared_limitation",
+                        "supporting_ref_ids": g_cids,
+                        "supporting_evidence_locators": g_locs,
+                        "how_this_work_addresses": "Addressed by proposed approach",
+                        "attribution": "author_judgment" if has_aj else "literature_derived",
+                    }]
+
+    # 2. Derive comparison_matrix from related_work_groups if matrix is empty
     rw_groups = [g for g in (synced.get("related_work_groups") or []) if isinstance(g, dict)]
     if not (synced.get("comparison_matrix") or []) and rw_groups:
         derived_rows: List[Dict[str, Any]] = []
@@ -1473,7 +1779,7 @@ def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[st
             for w in g.get("works_covered") or []:
                 if not isinstance(w, dict):
                     continue
-                rid = str(w.get("ref_id") or "").strip()
+                rid = normalize_ref_id_token(str(w.get("ref_id") or "").strip())
                 if not rid or rid.lower() in seen_rids:
                     continue
                 seen_rids.add(rid.lower())
@@ -1495,7 +1801,7 @@ def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[st
         if derived_rows:
             synced["comparison_matrix"] = derived_rows
 
-    # 2. Extract candidate claim_citation_map from cited sentences in manuscript if empty
+    # 3. Extract candidate claim_citation_map from cited sentences in manuscript if empty
     if not (synced.get("claim_citation_map") or []) and manuscript.strip():
         cur_sec = "Introduction"
         claims: List[Dict[str, Any]] = []
@@ -1515,8 +1821,8 @@ def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[st
                 if any(t in inner for t in ("待作者确认", "AUTHOR_CONFIRM", "作者判断", "AUTHOR_JUDGMENT", ":")):
                     continue
                 for tok in re.split(r"[,;]", inner):
-                    t = tok.strip().lower()
-                    robj = refs_by_id.get(t) or refs_by_key.get(t)
+                    t_norm = normalize_ref_id_token(tok).lower()
+                    robj = refs_by_id.get(t_norm) or refs_by_id.get(tok.strip().lower()) or refs_by_key.get(tok.strip().lower())
                     if robj and robj.get("ref_id") and robj["ref_id"] not in cids:
                         cids.append(str(robj["ref_id"]))
                         sloc = str(robj.get("source_locator") or "").strip()
@@ -1524,7 +1830,7 @@ def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[st
                             locs.append(sloc)
             for cm in re.finditer(r"\\cite[a-z]*\{([^}]+)\}", s):
                 for tok in cm.group(1).split(","):
-                    robj = refs_by_key.get(tok.strip().lower())
+                    robj = refs_by_key.get(tok.strip().lower()) or refs_by_id.get(normalize_ref_id_token(tok).lower())
                     if robj and robj.get("ref_id") and robj["ref_id"] not in cids:
                         cids.append(str(robj["ref_id"]))
                         sloc = str(robj.get("source_locator") or "").strip()
@@ -1546,4 +1852,30 @@ def sync_payload_structures(payload: Dict[str, Any], manuscript: str) -> Dict[st
                     break
         if claims:
             synced["claim_citation_map"] = claims
+
+    # 4. Enrich claim_citation_map with verbatim evidence_quote + exact source locator
+    if synced.get("claim_citation_map") and ledger is not None:
+        ev_pool = _build_ref_evidence_pool(ledger, extracted_dir)
+        enriched_claims: List[Dict[str, Any]] = []
+        for cm in synced.get("claim_citation_map") or []:
+            if not isinstance(cm, dict):
+                continue
+            cm_copy = dict(cm)
+            if not cm_copy.get("evidence_quote"):
+                vquote, vloc = _match_claim_verbatim_quote(
+                    str(cm_copy.get("claim_excerpt") or ""),
+                    [str(x) for x in (cm_copy.get("citation_ids") or [])],
+                    ev_pool,
+                )
+                if vquote:
+                    cm_copy["evidence_quote"] = vquote
+                if vloc:
+                    cm_copy["evidence_locator"] = vloc
+                    slocs = list(cm_copy.get("source_locators") or [])
+                    if vloc not in slocs:
+                        slocs.append(vloc)
+                    cm_copy["source_locators"] = slocs
+            enriched_claims.append(cm_copy)
+        synced["claim_citation_map"] = enriched_claims
+
     return synced

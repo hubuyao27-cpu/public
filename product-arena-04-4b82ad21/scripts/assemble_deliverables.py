@@ -190,12 +190,39 @@ def _render_audit_md(
         for ex in excluded:
             lines.append(f"- **{ex.get('ref_id', '-')} (`{ex.get('cite_key', '-')}`)**: {ex.get('reason', 'Excluded without stated reason')}")
 
+    lines.extend([
+        "",
+        "### 1.1 Field-Level Metadata Provenance (字段级元数据原文溯源)",
+        "| Ref ID | Field | Chosen Value | Source Locator | Tier | Status | Alternates Seen |",
+        "|---|---|---|---|---|---|---|",
+    ])
+    fp_count = 0
+    for r in refs:
+        fp = r.get("field_provenance") or {}
+        for fld in ("title", "authors", "year", "venue", "doi_or_id", "volume", "issue", "pages", "abstract"):
+            meta = fp.get(fld)
+            if not isinstance(meta, dict):
+                continue
+            val_s = str(meta.get("value") or "")[:55].replace("|", "\\|").replace("\n", " ")
+            loc_s = str(meta.get("source_locator") or "-").replace("|", "\\|")
+            tier_s = str(meta.get("source_tier") or "-")
+            stat_s = str(meta.get("status") or "adopted_primary")
+            alts = meta.get("alternates") or []
+            alt_s = "; ".join(f"{str(a.get('value', ''))[:32]} @ {a.get('source_locator', '')}" for a in alts[:2]).replace("|", "\\|").replace("\n", " ") if alts else "-"
+            lines.append(f"| `{r.get('ref_id', '-')}` | `{fld}` | {val_s} | `{loc_s}` | `{tier_s}` | `{stat_s}` | {alt_s} |")
+            fp_count += 1
+    if fp_count == 0:
+        lines.append("| - | - | *No field provenance recorded* | - | - | - | - |")
+
     lines.extend(["", "## 2. Claim-to-Citation Mapping (`claim_citation_map`)"])
     for cm in payload.get("claim_citation_map") or []:
         if isinstance(cm, dict):
+            q_str = str(cm.get("evidence_quote") or "").replace("|", " ").replace("\n", " ")[:140]
+            eloc = str(cm.get("evidence_locator") or "")
+            q_suffix = f" | Quote (`{eloc}`): \"{q_str}\"" if q_str else ""
             lines.append(
                 f"- **{cm.get('claim_id', 'C')}** [`{cm.get('section', '')}` | `{cm.get('attribution_type', '')}`]: "
-                f"{cm.get('claim_excerpt', '')} -> Citations: `{cm.get('citation_ids', [])}` | Sources: `{cm.get('source_locators', [])}`"
+                f"{cm.get('claim_excerpt', '')} -> Citations: `{cm.get('citation_ids', [])}` | Sources: `{cm.get('source_locators', [])}`{q_suffix}"
             )
 
     lines.extend(["", "## 3. Research Gap Derivation Chain"])
@@ -1015,7 +1042,7 @@ def main() -> None:
     eff_style = _effective_style(payload)
     lang = str(payload.get("language") or (plan.get("signals") or {}).get("language") or "zh")
     manuscript_raw, ms_warns, ms_err = resolve_manuscript_text(payload, payload_path, args.manuscript)
-    payload = sync_payload_structures(payload, manuscript_raw)
+    payload = sync_payload_structures(payload, manuscript_raw, ledger=ledger, extracted_dir=Path(args.ledger).parent / "extracted")
     if args.checkpoint == "final" and verification and verification.get("passed") is False and payload.get("status") == "completed":
         payload = dict(payload)
         payload["status"] = "partial"
@@ -1042,6 +1069,7 @@ def main() -> None:
                 "cite_key": r.get("cite_key"),
                 "locators": [loc] if loc else [],
                 "status": r.get("verification_status"),
+                "field_provenance": r.get("field_provenance") or {},
             }
         )
     bg = payload.get("research_background") or {}
@@ -1057,7 +1085,15 @@ def main() -> None:
     for cm in payload.get("claim_citation_map") or []:
         if isinstance(cm, dict) and cm.get("source_locators"):
             sources_list.append(
-                {"id": cm.get("claim_id"), "kind": "claim_citation", "cite_key": "", "locators": list(cm.get("source_locators") or []), "status": str(cm.get("attribution_type") or "cited_fact")}
+                {
+                    "id": cm.get("claim_id"),
+                    "kind": "claim_citation",
+                    "cite_key": "",
+                    "locators": list(cm.get("source_locators") or []),
+                    "status": str(cm.get("attribution_type") or "cited_fact"),
+                    "evidence_locator": str(cm.get("evidence_locator") or ""),
+                    "evidence_quote": str(cm.get("evidence_quote") or ""),
+                }
             )
     for c in payload.get("contributions") or []:
         if isinstance(c, dict):
@@ -1083,6 +1119,7 @@ def main() -> None:
         "research_gaps": payload.get("research_gaps") or [],
         "contributions": payload.get("contributions") or [],
         "references": refs_filled,
+        "field_provenance_by_ref": {r.get("ref_id"): r.get("field_provenance") or {} for r in refs_filled if isinstance(r, dict)},
         "excluded_references": payload.get("excluded_references") or [],
         "conflicts": payload.get("conflicts") or [],
         "change_records": payload.get("change_records") or [],

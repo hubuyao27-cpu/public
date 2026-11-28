@@ -11,7 +11,7 @@ Harbor-compatible Agent Skill for **Bohrium AI Product Arena — 写作04｜参�
 
 ---
 
-## Architecture (`15` UTF-8 Text Files)
+## Architecture (`16` UTF-8 Text Files)
 
 ```text
 submission/
@@ -29,12 +29,11 @@ submission/
 │   ├── prepare_case.py               # Step 1: inspect, parse, index evidence, partial checkpoint
 │   ├── manuscript_and_sync.py        # Step 2/3 sync engine: lossless edits & numbering
 │   ├── verify_and_assemble.py        # Step 3: 10-invariant audit, previews & result.json
-│   └── self_test.py                  # 8-scenario offline verification suite
+│   └── self_test.py                  # 9-scenario offline verification suite
 └── examples/
     ├── minimal_example.md            # Illustrative example (NOT formal test output)
     ├── sample_manuscript.md
-    ├── sample_library.bib
-    └── sample_library.ris
+    └── sample_library_fixtures.md    # Embedded BibTeX & RIS fixtures (.md for Harbor parity)
 ```
 
 ---

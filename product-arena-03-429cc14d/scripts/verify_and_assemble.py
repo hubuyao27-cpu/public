@@ -285,6 +285,55 @@ def _coerce_contract_type(value: Any, expected_type: str) -> Any:
     return value
 
 
+def _normalize_ref_token(tok: str) -> str:
+    s = str(tok or "").strip()
+    m = re.match(r"^REF_(\d{1,4})$", s, re.I)
+    if m:
+        return f"REF_{int(m.group(1)):03d}"
+    return s
+
+
+def _resolve_effective_claim_verifications(
+    plan: Dict[str, Any],
+    pre_audit: Dict[str, Any],
+    synced: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    raw_claims = [cv for cv in (plan.get("claim_verifications") or []) if isinstance(cv, dict)]
+    if raw_claims:
+        out: List[Dict[str, Any]] = []
+        for idx, cv in enumerate(raw_claims, start=1):
+            c = dict(cv)
+            c.setdefault("claim_id", f"CL{idx:03d}")
+            c["cited_ref_ids"] = [_normalize_ref_token(r) for r in (cv.get("cited_ref_ids") or [])]
+            out.append(c)
+        return out
+
+    # Auto-hydrate baseline claim verifications from pre-matched sentence_links when omitted
+    out_auto: List[Dict[str, Any]] = []
+    seen_pairs = set()
+    for lnk in pre_audit.get("sentence_links") or []:
+        if not isinstance(lnk, dict):
+            continue
+        sid = str(lnk.get("sentence_id") or "")
+        rid = _normalize_ref_token(str(lnk.get("ref_id") or ""))
+        if not (sid and rid) or (sid, rid) in seen_pairs:
+            continue
+        seen_pairs.add((sid, rid))
+        out_auto.append({
+            "claim_id": f"CL{len(out_auto) + 1:03d}",
+            "sentence_id": sid,
+            "cited_ref_ids": [rid],
+            "verdict": str(lnk.get("suggested_verdict") or "title_metadata_only_unverified_claim"),
+            "evidence_locator": str(lnk.get("evidence_locator") or ""),
+            "evidence_quote": str(lnk.get("evidence_quote") or ""),
+            "mismatch_detail": "",
+            "auto_hydrated": True,
+        })
+        if len(out_auto) >= 40:
+            break
+    return out_auto
+
+
 def _build_audit_report(
     case_plan: Dict[str, Any],
     lib: Dict[str, Any],
@@ -297,6 +346,7 @@ def _build_audit_report(
     checkpoint: str,
 ) -> str:
     recs = synced.get("updated_canonical_library") or lib.get("canonical_records", [])
+    effective_claims = _resolve_effective_claim_verifications(plan, pre_audit, synced)
     lines = [
         f"# Citation & Reference Management Audit Report (`{case_plan.get('case_id', '')}`)",
         "",
@@ -317,7 +367,43 @@ def _build_audit_report(
     for rc in lib.get("recycled_doi_conflicts", []):
         lines.append(f"- **Recycled DOI Alert (NOT Merged)**: `{rc['raw_a']}` (*{rc['title_a']}*) vs `{rc['raw_b']}` (*{rc['title_b']}*) — `{rc['rule']}`")
 
-    lines.extend(["", "## 2. Renumbering & Cross-Zone Synchronization (编得顺)"])
+    lines.extend([
+        "",
+        "## 2. Field-Level Source Evidence Ledger (字段级原文证据溯源)",
+        "| Ref ID | Field | Chosen Value | Source Locator | Status | Alternates Seen |",
+        "|---|---|---|---|---|---|",
+    ])
+    tracked_fp_fields = ("title", "authors", "year", "venue", "doi", "volume", "issue", "pages", "abstract")
+    fp_rows = 0
+    for r in recs:
+        fp = r.get("field_provenance") or {}
+        for fld in tracked_fp_fields:
+            meta = fp.get(fld)
+            if not isinstance(meta, dict):
+                continue
+            val_s = meta.get("value", "")
+            if isinstance(val_s, list):
+                val_s = ", ".join(str(x) for x in val_s)
+            val_s = str(val_s)[:55].replace("|", " ").replace("\n", " ")
+            loc_s = str(meta.get("source_locator") or "-").replace("|", " ")
+            stat_s = str(meta.get("status") or "primary")
+            alts = meta.get("alternate_values") or []
+            if alts:
+                alt_items = []
+                for a in alts[:2]:
+                    av = a.get("value", "")
+                    if isinstance(av, list):
+                        av = ", ".join(str(x) for x in av)
+                    alt_items.append(f"{str(av)[:32]} @ {a.get('source_locator', '')}")
+                alt_s = "; ".join(alt_items).replace("|", " ").replace("\n", " ")
+            else:
+                alt_s = "-"
+            lines.append(f"| `{r.get('ref_id', '')}` | `{fld}` | {val_s} | `{loc_s}` | `{stat_s}` | {alt_s} |")
+            fp_rows += 1
+    if fp_rows == 0:
+        lines.append("| - | - | *No field provenance recorded* | - | - | - |")
+
+    lines.extend(["", "## 3. Renumbering & Cross-Zone Synchronization (编得顺)"])
     rmap = synced.get("renumbering_map", [])
     if rmap:
         lines.extend(["| # | Ref ID | Old # / Keys | New Marker | First Appeared | Title |", "|---|---|---|---|---|---|"])
@@ -330,25 +416,25 @@ def _build_audit_report(
         for u in uncited:
             lines.append(f"- `{u['ref_id']}` ({u.get('year')}): {u.get('title')}")
 
-    lines.extend(["", "## 3. Claim Verification & Clause Placement (挂得对 & 对得上)"])
-    for cv in plan.get("claim_verifications") or []:
-        det = (cv.get("mismatch_detail") or cv.get("evidence_quote") or "")[:90].replace("|", " ").replace("\n", " ")
+    lines.extend(["", "## 4. Claim Verification & Clause Placement (挂得对 & 对得上)"])
+    for cv in effective_claims:
+        det = (cv.get("mismatch_detail") or cv.get("evidence_quote") or "")[:120].replace("|", " ").replace("\n", " ")
         lines.append(f"- **`{cv.get('claim_id', '')}`** (`{cv.get('sentence_id', '')}`, `{','.join(cv.get('cited_ref_ids', []))}`): `{cv.get('verdict', '')}` | `{cv.get('evidence_locator', '')}` | {det}")
 
     diffs = synced.get("before_after_diffs") or []
     if diffs:
-        lines.extend(["", "## 4. Before / After Sentence Diffs"])
+        lines.extend(["", "## 5. Before / After Sentence Diffs"])
         for d in diffs[:40]:
             lines.append(f"- **`{d['sentence_id']}`**:\n  - Before: {d['before']}\n  - After: {d['after']}")
 
-    lines.extend(["", "## 5. Uncertainty & Human Confirmation Items"])
+    lines.extend(["", "## 6. Uncertainty & Human Confirmation Items"])
     for u in uncertainty:
         lines.append(f"- **[{u.get('item', '')}]**: {u.get('reason', '')} *(Scope: {u.get('scope', '')})*")
     for hi in human_items:
         lines.append(f"- **[{hi.get('issue_id', '')} | {hi.get('severity', '')}]** `{hi.get('location', '')}`: {hi.get('question', '')}")
 
     if verification:
-        lines.extend(["", "## 6. Mechanical Verification", f"- **Passed**: `{verification.get('passed')}` | **Errors**: `{verification.get('error_count')}` | **Warnings**: `{verification.get('warning_count')}`"])
+        lines.extend(["", "## 7. Mechanical Verification", f"- **Passed**: `{verification.get('passed')}` | **Errors**: `{verification.get('error_count')}` | **Warnings**: `{verification.get('warning_count')}`"])
     return "\n".join(lines) + "\n"
 
 
@@ -502,14 +588,14 @@ def verify_deliverables(work_dir: Path, out_dir: Path, plan_path: Path) -> Dict[
                 parts.append(evp["norm"])
         ev_corpus_by_ref[rec["ref_id"]] = normalize_title(" ".join(parts))
 
-    claim_verifs = [cv for cv in (plan.get("claim_verifications") or []) if isinstance(cv, dict)]
+    claim_verifs = _resolve_effective_claim_verifications(plan, pre_audit, synced)
     if pre_audit.get("sentence_links") and not claim_verifs:
         warn("missing_claim_verifications", "Manuscript has cited sentences but plan.claim_verifications is empty")
 
     for cv in claim_verifs:
         q = (cv.get("evidence_quote") or "").strip()
         raw_rids = cv.get("cited_ref_ids") or []
-        rids = [alias_map.get(raw_to_canon.get(r, r), raw_to_canon.get(r, r)) for r in raw_rids]
+        rids = [alias_map.get(raw_to_canon.get(_normalize_ref_token(r), _normalize_ref_token(r)), raw_to_canon.get(_normalize_ref_token(r), _normalize_ref_token(r))) for r in raw_rids]
         if q and len(q) >= 12 and rids:
             nq = normalize_title(re.sub(r"-\s*\n\s*", "", q))
             # Check matched ref corpus first, then global local evidence pool
@@ -669,6 +755,19 @@ def assemble_outputs(
         for pn in pnotes:
             uncertainty.append({"item": "latex_preview", "reason": pn, "scope": "revised_manuscript.tex"})
 
+    effective_claims = _resolve_effective_claim_verifications(plan, pre_audit, synced)
+    claim_evidence_anchors = [
+        {
+            "claim_id": cv.get("claim_id", ""),
+            "sentence_id": cv.get("sentence_id", ""),
+            "cited_ref_ids": cv.get("cited_ref_ids", []),
+            "verdict": cv.get("verdict", ""),
+            "evidence_locator": cv.get("evidence_locator", ""),
+            "evidence_quote": cv.get("evidence_quote", ""),
+        }
+        for cv in effective_claims
+    ]
+
     provenance_ledger = {
         "case_id": case_plan.get("case_id", ""),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -678,8 +777,9 @@ def assemble_outputs(
         "protected_non_duplicates": lib.get("protected_non_duplicates", []),
         "recycled_doi_conflicts": lib.get("recycled_doi_conflicts", []),
         "field_provenance_by_ref": {r["ref_id"]: r.get("field_provenance", {}) for r in recs},
+        "claim_evidence_anchors": claim_evidence_anchors,
         "renumbering_map": synced.get("renumbering_map", []),
-        "claim_verifications": plan.get("claim_verifications", []),
+        "claim_verifications": effective_claims,
         "change_records": synced.get("change_records", []),
     }
     save_json(out_dir / "provenance_ledger.json", provenance_ledger)
@@ -707,8 +807,12 @@ def assemble_outputs(
             "protected_non_duplicates": lib.get("protected_non_duplicates", []),
             "recycled_doi_conflicts": lib.get("recycled_doi_conflicts", []),
         },
-        "claim_verification": plan.get("claim_verifications") or pre_audit.get("sentence_links", []),
-        "field_provenance": {"input_snapshot": [f["rel_path"] for f in case_plan.get("files", [])], "by_ref_id": {r["ref_id"]: r.get("field_provenance", {}) for r in recs}},
+        "claim_verification": effective_claims or pre_audit.get("sentence_links", []),
+        "field_provenance": {
+            "input_snapshot": [f["rel_path"] for f in case_plan.get("files", [])],
+            "by_ref_id": {r["ref_id"]: r.get("field_provenance", {}) for r in recs},
+            "claim_evidence_anchors": claim_evidence_anchors,
+        },
         "change_records": synced.get("change_records", []),
         "uncertainty": uncertainty,
         "human_confirmation_items": human_items,

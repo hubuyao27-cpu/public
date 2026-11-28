@@ -285,6 +285,96 @@ def test_8_empty_corrupt_and_heterogeneous_contracts() -> None:
         assert isinstance(rj["custom_summary"], str) and isinstance(rj["reference_list"], list)
 
 
+def test_9_real_pdf_field_provenance_and_zero_rework() -> None:
+    """Scenario 9: Real PyMuPDF PDF evidence, field provenance table, [REF_1] shorthand & zero-rework claim hydration."""
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        in_d, wk_d, out_d = t / "input", t / "work", t / "output"
+        in_d.mkdir()
+        (in_d / "case.json").write_text(json.dumps({"case_id": "case_real_pdf"}), encoding="utf-8")
+        (in_d / "task.md").write_text("按 GB/T 7714-2015 顺序编码制整理引用并验证 PDF 原文证据。", encoding="utf-8")
+        (in_d / "manuscript.md").write_text(
+            "Hydrophobic microchannel Ni-N-C catalyst achieved 96.4% CO Faradaic efficiency over 150 h (Zhang & Wang, 2024).\n"
+            "分级多孔镍单原子催化剂的低温传质优势显著[待引用]。\n",
+            encoding="utf-8",
+        )
+        (in_d / "refs.bib").write_text(
+            "@misc{Zhang2024Membrane,\n"
+            "  title={Hydrophobic Microchannel Catalysts for Stable CO2 Electrolysis},\n"
+            "  author={Zhang, Lei and Wang, Min},\n"
+            "  year={2024},\n"
+            "  eprint={2401.12345},\n"
+            "  archivePrefix={arXiv}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (in_d / "refs.ris").write_text(
+            "TY  - JOUR\n"
+            "AU  - Zhang, Lei\n"
+            "AU  - Wang, Min\n"
+            "TI  - Hydrophobic Microchannel Catalysts for Stable CO2 Electrolysis\n"
+            "JO  - Applied Catalysis B: Environmental\n"
+            "PY  - 2024\n"
+            "VL  - 342\n"
+            "SP  - 123456\n"
+            "DO  - 10.1016/j.apcatb.2024.123456\n"
+            "ER  -\n",
+            encoding="utf-8",
+        )
+        ev_file = "evidence_zhang2024.pdf"
+        try:
+            try:
+                import pymupdf as fitz  # type: ignore
+            except ImportError:
+                import fitz  # type: ignore
+
+            doc = fitz.open()
+            p1 = doc.new_page()
+            p1.insert_text((72, 72), "Hydrophobic Microchannel Catalysts for Stable CO2 Electrolysis\nDOI: 10.1016/j.apcatb.2024.123456\nLei Zhang, Min Wang\n")
+            p2 = doc.new_page()
+            p2.insert_text((72, 72), "Section 3.2 Performance Summary\nThe hydrophobic microchannel Ni-N-C catalyst achieved 96.4% CO Faradaic efficiency over 150 h without salt precipitation.\n")
+            doc.save(str(in_d / ev_file))
+            doc.close()
+        except ImportError:
+            ev_file = "evidence_zhang2024.md"
+            (in_d / ev_file).write_text(
+                "# Hydrophobic Microchannel Catalysts for Stable CO2 Electrolysis\nDOI: 10.1016/j.apcatb.2024.123456\n"
+                "The hydrophobic microchannel Ni-N-C catalyst achieved 96.4% CO Faradaic efficiency over 150 h without salt precipitation.\n",
+                encoding="utf-8",
+            )
+
+        prep = _run_py("prepare_case.py", ["--input-dir", str(in_d), "--work-dir", str(wk_d), "--out-dir", str(out_d)])
+        assert prep["canonical_refs"] == 1, prep
+        skel = json.loads((wk_d / "citation_plan_skeleton.json").read_text(encoding="utf-8"))
+        assert skel["claim_verifications"], f"Expected pre-populated claim_verifications in skeleton: {skel}"
+        assert any("evidence_zhang2024" in cv.get("evidence_locator", "") and "96.4%" in cv.get("evidence_quote", "") for cv in skel["claim_verifications"]), skel["claim_verifications"]
+
+        # Intentionally omit claim_verifications & use [REF_1] shorthand to verify zero-rework auto-hydration
+        plan = {
+            "case_id": "case_real_pdf",
+            "target_style": "gbt7714_2015_numeric",
+            "in_text_format": "bracket",
+            "manuscript_edits": [
+                {
+                    "sentence_id": "S002",
+                    "action": "replace_placeholder",
+                    "revised_sentence_with_tokens": "分级多孔镍单原子催化剂的低温传质优势显著[REF_1]。",
+                    "anchor_rationale": "Grounded via REF_1 shorthand and PDF page 2 performance summary.",
+                }
+            ],
+        }
+        (wk_d / "citation_plan.json").write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        ver = _run_py("verify_and_assemble.py", ["--work-dir", str(wk_d), "--out-dir", str(out_d), "--plan", str(wk_d / "citation_plan.json")])
+        assert ver["passed"] is True, ver
+
+        rj = json.loads((out_d / "result.json").read_text(encoding="utf-8"))
+        assert rj["status"] == "completed" and "[1]" in rj["revised_manuscript"] and "[REF_1]" not in rj["revised_manuscript"]
+        assert rj["sources"].get("claim_evidence_anchors"), f"Missing claim_evidence_anchors in result.json['sources']: {rj['sources']}"
+        assert rj["sources"]["claim_evidence_anchors"][0]["evidence_quote"], rj["sources"]["claim_evidence_anchors"]
+        audit_txt = (out_d / "citation_audit_report.md").read_text(encoding="utf-8")
+        assert "Field-Level Source Evidence Ledger" in audit_txt and "refs.ris" in audit_txt and "10.1016/j.apcatb.2024.123456" in audit_txt, audit_txt
+
+
 def main() -> None:
     tests = [
         test_1_zh_gbt_numeric_full_workflow,
@@ -295,6 +385,7 @@ def main() -> None:
         test_6_claim_verification_and_anti_hallucination,
         test_7_library_only_mode,
         test_8_empty_corrupt_and_heterogeneous_contracts,
+        test_9_real_pdf_field_provenance_and_zero_rework,
     ]
     for fn in tests:
         fn()

@@ -714,6 +714,113 @@ def _extract_inline_materials(case_data: Dict[str, Any], task_text: str) -> Tupl
     return inline_ms, inline_refs
 
 
+def _cjk_bigrams_local(s: str) -> set:
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]", s))
+    if len(cjk) < 2:
+        return set(cjk)
+    return {cjk[i : i + 2] for i in range(len(cjk) - 1)}
+
+
+def _match_evidence_for_claim(sent_text: str, rec: Dict[str, Any], evidence_papers: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Match a manuscript sentence against local evidence fulltext lines or record abstract verbatim."""
+    primary_loc = str(rec.get("source_locator") or "")
+    r_doi = str(rec.get("doi") or "")
+    r_ax = str(rec.get("arxiv_id") or "")
+    r_title = str(rec.get("title") or "")
+    r_tnorm = normalize_title(r_title)
+
+    snorm = normalize_title(re.sub(r"\[[^\]]*\]|\\cite[a-z]*\{[^}]*\}", " ", sent_text))
+    s_words = {w for w in snorm.split() if len(w) >= 3}
+    s_cjk = _cjk_bigrams_local(snorm)
+    s_nums = set(re.findall(r"\d+(?:\.\d+)?%?", sent_text))
+
+    def _score_snip(snip: str) -> float:
+        nn = normalize_title(snip)
+        if len(nn) < 10:
+            return 0.0
+        w_cand = {w for w in nn.split() if len(w) >= 3}
+        c_cand = _cjk_bigrams_local(nn)
+        n_cand = set(re.findall(r"\d+(?:\.\d+)?%?", snip))
+        score = 0.0
+        if s_words and w_cand:
+            score += len(s_words & w_cand) / max(3, min(len(s_words), 10))
+        if s_cjk and c_cand:
+            score += len(s_cjk & c_cand) / max(3, min(len(s_cjk), 12))
+        if s_nums and n_cand:
+            score += 0.65 * len(s_nums & n_cand)
+        return score
+
+    matched_papers: List[Dict[str, Any]] = []
+    for evp in evidence_papers:
+        if evp.get("error"):
+            continue
+        full_norm = normalize_title(" ".join(pg.get("text", "") for pg in evp.get("pages", [])))
+        full_low = " ".join(pg.get("text", "") for pg in evp.get("pages", [])).lower()
+        if (
+            (r_doi and (r_doi == evp.get("extracted_doi") or r_doi in full_low))
+            or (r_ax and (r_ax == evp.get("extracted_arxiv") or r_ax in full_low))
+            or (r_title and evp.get("extracted_title") and title_similarity(r_title, evp["extracted_title"]) >= 0.72)
+            or (len(r_tnorm) >= 14 and r_tnorm[:28] in full_norm)
+        ):
+            matched_papers.append(evp)
+
+    best_full = {"score": -1.0, "locator": "", "quote": ""}
+    for evp in matched_papers:
+        fname = evp["file"]
+        for pg in evp.get("pages", []):
+            pnum = pg.get("page", 1)
+            raw_pg = str(pg.get("text") or "")
+            for lno, raw_ln in enumerate(raw_pg.splitlines(), start=1):
+                ln = re.sub(r"\s+", " ", raw_ln).strip()
+                if len(ln) < 18:
+                    continue
+                for seg in re.split(r"(?<=[.。;；!?！？])\s+", ln):
+                    seg = seg.strip()
+                    if len(seg) < 12:
+                        continue
+                    sc = _score_snip(seg)
+                    if sc > best_full["score"]:
+                        best_full = {"score": sc, "locator": f"{fname}:p{pnum}_L{lno}", "quote": seg[:220]}
+
+    if matched_papers and best_full["quote"]:
+        sc = best_full["score"]
+        verdict = "supported_by_local_fulltext" if sc >= 0.15 else "title_metadata_only_unverified_claim"
+        return {
+            "evidence_locator": best_full["locator"],
+            "evidence_quote": best_full["quote"] if sc >= 0.15 else "",
+            "suggested_verdict": verdict,
+            "match_score": round(max(0.0, sc), 3),
+            "source_scope": "local_fulltext",
+        }
+
+    abs_txt = re.sub(r"\s+", " ", str(rec.get("abstract") or "")).strip()
+    if len(abs_txt) >= 12:
+        best_abs = {"score": -1.0, "quote": ""}
+        for seg in re.split(r"(?<=[.。;；!?！？])\s+", abs_txt):
+            seg = seg.strip()
+            if len(seg) < 12:
+                continue
+            sc = _score_snip(seg)
+            if sc > best_abs["score"]:
+                best_abs = {"score": sc, "quote": seg[:220]}
+        if best_abs["score"] >= 0.12 and best_abs["quote"]:
+            return {
+                "evidence_locator": f"{primary_loc}#abstract" if primary_loc else "abstract",
+                "evidence_quote": best_abs["quote"],
+                "suggested_verdict": "supported_by_abstract",
+                "match_score": round(best_abs["score"], 3),
+                "source_scope": "abstract",
+            }
+
+    return {
+        "evidence_locator": primary_loc,
+        "evidence_quote": "",
+        "suggested_verdict": "title_metadata_only_unverified_claim",
+        "match_score": 0.0,
+        "source_scope": "metadata_only",
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Prepare case, parse manuscript & libraries, index evidence, and write partial checkpoint.")
     ap.add_argument("--input-dir", default="/input")
@@ -955,13 +1062,36 @@ def main() -> None:
             })
     save_json(work / "evidence_corpus.json", {"case_id": case_id, "evidence_papers": evidence_papers})
 
-    # Pre-audit sentence links & dangling citations
+    # Pre-audit sentence links & dangling citations (with pre-matched verbatim evidence anchors)
     canon_recs = lib_canon["canonical_records"]
+    canon_by_id = {r["ref_id"]: r for r in canon_recs}
+    sent_by_id = {s["sentence_id"]: s for s in ms_parsed["sentences"]}
     num_map = lib_canon["inline_num_to_canonical_map"]
     key_map = lib_canon["key_to_canonical_map"]
     sentence_links: List[Dict[str, Any]] = []
     dangling: List[Dict[str, Any]] = []
     ambiguous_ay: List[Dict[str, Any]] = []
+    ev_match_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _add_enriched_link(sid: str, s_text: str, raw_marker: str, cid: str) -> None:
+        ck = (sid, cid)
+        if ck not in ev_match_cache:
+            rec_obj = canon_by_id.get(cid)
+            if rec_obj:
+                ev_match_cache[ck] = _match_evidence_for_claim(s_text, rec_obj, evidence_papers)
+            else:
+                ev_match_cache[ck] = {"evidence_locator": "", "evidence_quote": "", "suggested_verdict": "title_metadata_only_unverified_claim", "match_score": 0.0, "source_scope": "metadata_only"}
+        em = ev_match_cache[ck]
+        sentence_links.append({
+            "sentence_id": sid,
+            "raw_marker": raw_marker,
+            "ref_id": cid,
+            "evidence_locator": em["evidence_locator"],
+            "evidence_quote": em["evidence_quote"],
+            "suggested_verdict": em["suggested_verdict"],
+            "match_score": em["match_score"],
+            "source_scope": em["source_scope"],
+        })
 
     for s in ms_parsed["sentences"]:
         for c in s["citations"]:
@@ -971,21 +1101,21 @@ def main() -> None:
                 for n in c["nums"]:
                     cid = num_map.get(str(n)) or key_map.get(str(n))
                     if cid:
-                        sentence_links.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "ref_id": cid})
+                        _add_enriched_link(s["sentence_id"], s["text"], c["raw"], cid)
                     else:
                         dangling.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "missing_token": str(n), "reason": f"Numeric marker [{n}] not found in library"})
             elif c["kind"] == "latex_cite":
                 for k in c["keys"]:
                     cid = key_map.get(k) or next((rv for km, rv in key_map.items() if km.lower() == k.lower()), None)
                     if cid:
-                        sentence_links.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "ref_id": cid})
+                        _add_enriched_link(s["sentence_id"], s["text"], c["raw"], cid)
                     else:
                         dangling.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "missing_token": k, "reason": f"LaTeX key '{k}' not found in library"})
             elif c["kind"] in ("author_year_paren", "author_year_narrative"):
                 for ay in c["author_years"]:
                     m_ids, status_ay = _match_author_year(ay, canon_recs)
                     if status_ay == "matched":
-                        sentence_links.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "ref_id": m_ids[0]})
+                        _add_enriched_link(s["sentence_id"], s["text"], c["raw"], m_ids[0])
                     elif status_ay == "ambiguous":
                         ambiguous_ay.append({"sentence_id": s["sentence_id"], "raw_marker": c["raw"], "ay_token": ay, "candidate_ref_ids": m_ids})
                     elif not (c["kind"] == "author_year_narrative" and c.get("is_bare_narrative")):
@@ -999,11 +1129,28 @@ def main() -> None:
     }
     save_json(work / "pre_audit.json", pre_audit)
 
-    # Compact digests for budget-aware Agent reading
+    # Compact digests for budget-aware Agent reading (including field-level provenance + evidence quotes)
     lib_lines = [f"# Library Digest (`{case_id}`)", f"- Canonical: {len(canon_recs)} | Duplicates removed: {lib_canon['stats']['duplicates_removed']} | Recycled DOI conflicts: {len(lib_canon['recycled_doi_conflicts'])} | Tier-3 ambiguous: {len(lib_canon['ambiguous_duplicate_candidates'])}", ""]
     for r in canon_recs:
         auth_s = ", ".join(r["authors"][:3]) + (" et al." if len(r["authors"]) > 3 else "")
         lib_lines.append(f"- **{r['ref_id']}** ({r.get('year') or 'n.d.'}, `{r['doc_type']}`): *{r['title']}* — {auth_s} | Venue: {r.get('venue') or '-'} | DOI: {r.get('doi') or '-'} | Keys: {r.get('source_keys')} | Orig#: {r.get('original_list_numbers')}")
+        fp = r.get("field_provenance") or {}
+        if fp:
+            fp_parts: List[str] = []
+            alt_parts: List[str] = []
+            for fld in ("title", "authors", "year", "venue", "doi", "volume", "pages", "abstract"):
+                meta = fp.get(fld)
+                if isinstance(meta, dict) and meta.get("source_locator"):
+                    fp_parts.append(f"{fld}<-{meta['source_locator']}")
+                    alts = meta.get("alternate_values") or []
+                    if alts:
+                        alt_desc = ", ".join(f"{str(a.get('value', ''))[:30]}@{a.get('source_locator', '')}" for a in alts[:2])
+                        alt_parts.append(f"{fld}:[{alt_desc}]")
+            if fp_parts:
+                prov_line = "  - Field provenance: " + ", ".join(fp_parts)
+                if alt_parts:
+                    prov_line += " | Field alternates: " + "; ".join(alt_parts)
+                lib_lines.append(prov_line)
         if r.get("abstract"):
             lib_lines.append(f"  - Abstract: {r['abstract'][:350]}")
         if r.get("integrity_flags") or r.get("missing_required_fields"):
@@ -1014,10 +1161,17 @@ def main() -> None:
             lib_lines.append(f"- **{ac['candidate_id']}**: {ac.get('canonical_ids', ac['raw_ids'])} | sim={ac['title_similarity']} | {ac['titles']}")
     save_text(work / "library_digest.md", "\n".join(lib_lines) + "\n")
 
+    links_by_sid: Dict[str, List[Dict[str, Any]]] = {}
+    for lnk in sentence_links:
+        links_by_sid.setdefault(lnk["sentence_id"], []).append(lnk)
+
     ms_lines = [f"# Manuscript Digest (`{case_id}`)", f"- Source: `{ms_source}` ({primary_ms_fmt}) | Sentences: {len(ms_parsed['sentences'])} | Paragraph-end dumps: {len(ms_parsed['paragraph_end_dump_flags'])} | Uncited claim candidates: {len(ms_parsed['uncited_claim_candidates'])}", ""]
     for s in ms_parsed["sentences"]:
         c_str = ", ".join(c["raw"] for c in s["citations"]) or "-"
         ms_lines.append(f"- **{s['sentence_id']}** [`{s['block_type']}` | {s['section']}]: {s['text']} *(cites: {c_str})*")
+        for sl in links_by_sid.get(s["sentence_id"], []):
+            if sl.get("evidence_quote"):
+                ms_lines.append(f"  -> [{sl['ref_id']}] ({sl['suggested_verdict']} @ {sl['evidence_locator']}): \"{sl['evidence_quote'][:140]}\"")
     if ms_parsed["paragraph_end_dump_flags"]:
         ms_lines.append("\n## Paragraph-End Citation Dumps")
         for df in ms_parsed["paragraph_end_dump_flags"]:
@@ -1033,6 +1187,25 @@ def main() -> None:
     ]
     save_text(work / "case_brief.md", "\n".join(brief_lines) + "\n")
 
+    pre_claims: List[Dict[str, Any]] = []
+    seen_cl_pairs = set()
+    for lnk in sentence_links:
+        pair = (lnk["sentence_id"], lnk["ref_id"])
+        if pair in seen_cl_pairs:
+            continue
+        seen_cl_pairs.add(pair)
+        pre_claims.append({
+            "claim_id": f"CL{len(pre_claims) + 1:03d}",
+            "sentence_id": lnk["sentence_id"],
+            "cited_ref_ids": [lnk["ref_id"]],
+            "verdict": lnk.get("suggested_verdict", "title_metadata_only_unverified_claim"),
+            "evidence_locator": lnk.get("evidence_locator", ""),
+            "evidence_quote": lnk.get("evidence_quote", ""),
+            "mismatch_detail": "",
+        })
+        if len(pre_claims) >= 40:
+            break
+
     skeleton = {
         "case_id": case_id,
         "target_style": signals["target_style"],
@@ -1041,7 +1214,7 @@ def main() -> None:
         "dedup_decisions": [],
         "metadata_resolutions": [],
         "manuscript_edits": [],
-        "claim_verifications": [],
+        "claim_verifications": pre_claims,
         "uncertainty": [],
         "human_confirmation_items": [],
         "_review_hints": {

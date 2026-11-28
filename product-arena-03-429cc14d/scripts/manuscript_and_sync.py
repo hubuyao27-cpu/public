@@ -354,14 +354,22 @@ def run_sync(work_dir: Path, plan_path: Path) -> Dict[str, Any]:
     sent_changes: List[Dict[str, Any]] = []
 
     def _register_tokens(tok_text: str) -> str:
+        # Normalize shorthand [REF_1] / [REF_001, REF_2] before canonical [[CITE:...]] registration
+        shorthand_re = re.compile(r"(?<!\[)\[\s*(REF_\d{1,4}(?:\s*[,;]\s*REF_\d{1,4})*)\s*\](?!\])", re.I)
+        tok_text = shorthand_re.sub(lambda sm: "[[CITE:" + ",".join(p.strip() for p in re.split(r"[,;]", sm.group(1)) if p.strip()) + "]]", tok_text)
+
         def _norm(m: re.Match) -> str:
             kind = m.group(1)
             raw_ids = [x.strip() for x in m.group(2).split(",") if x.strip()]
             mapped: List[str] = []
             invalid: List[str] = []
             for rid in raw_ids:
-                cand = alias_ref_map.get(raw_to_canon.get(rid, rid), raw_to_canon.get(rid, rid))
-                if cand not in rec_by_id and rid in key_map:
+                pad_m = re.match(r"^REF_(\d{1,4})$", rid, re.I)
+                rid_norm = f"REF_{int(pad_m.group(1)):03d}" if pad_m else rid
+                cand = alias_ref_map.get(raw_to_canon.get(rid_norm, rid_norm), raw_to_canon.get(rid_norm, rid_norm))
+                if cand not in rec_by_id and rid_norm in key_map:
+                    cand = alias_ref_map.get(key_map[rid_norm], key_map[rid_norm])
+                elif cand not in rec_by_id and rid in key_map:
                     cand = alias_ref_map.get(key_map[rid], key_map[rid])
                 if cand in rec_by_id:
                     if cand not in mapped:
@@ -377,6 +385,8 @@ def run_sync(work_dir: Path, plan_path: Path) -> Dict[str, Any]:
                 res_tok += format_unverified_tag(invalid, lang)
             return res_tok
         return CITE_TOKEN_RE.sub(_norm, tok_text)
+
+    shorthand_check_re = re.compile(r"(?<!\[)\[\s*REF_\d{1,4}(?:\s*[,;]\s*REF_\d{1,4})*\s*\](?!\])", re.I)
 
     tokenized_blocks: List[Dict[str, Any]] = []
     for blk in blocks:
@@ -398,7 +408,7 @@ def run_sync(work_dir: Path, plan_path: Path) -> Dict[str, Any]:
                 ed_act = str(ed.get("action") or "").lower() if ed else ""
                 if ed and ed_act == "delete":
                     continue
-                if ed and ed_rev and (CITE_TOKEN_RE.search(ed_rev) or (ed_rev != s_obj["text"] and ed_act != "keep")):
+                if ed and ed_rev and (CITE_TOKEN_RE.search(ed_rev) or shorthand_check_re.search(ed_rev) or (ed_rev != s_obj["text"] and ed_act != "keep")):
                     tok_str = _register_tokens(ed_rev)
                 else:
                     tok_str = _register_tokens(_auto_tokenize_sentence(s_obj, num_map, key_map, ay_lookup, alias_ref_map, lang))
@@ -417,7 +427,7 @@ def run_sync(work_dir: Path, plan_path: Path) -> Dict[str, Any]:
                 sent_changes.append({"change_id": f"CHG_EDIT_{len(sent_changes)+1:03d}", "target": sid, "action": "delete", "before": s_obj["text"], "after": "", "basis": ed.get("anchor_rationale", "")})
                 continue
             ed_rev = str(ed.get("revised_sentence_with_tokens") or "") if ed else ""
-            use_manual = bool(ed and ed_rev and (CITE_TOKEN_RE.search(ed_rev) or (ed_rev != s_obj["text"] and ed_act != "keep")))
+            use_manual = bool(ed and ed_rev and (CITE_TOKEN_RE.search(ed_rev) or shorthand_check_re.search(ed_rev) or (ed_rev != s_obj["text"] and ed_act != "keep")))
             if use_manual:
                 tok_str = _register_tokens(ed_rev)
                 if tok_str != s_obj["text"]:

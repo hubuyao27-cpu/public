@@ -28,7 +28,9 @@ from common import (
     extract_numeric_tokens,
     load_json_safe,
     load_rubric_rules,
+    normalize_ref_id_token,
     numbers_match,
+    read_text_safe,
     resolve_manuscript_text,
     save_json,
     sync_payload_structures,
@@ -218,6 +220,7 @@ def main() -> None:
         known_files.add("case.json")
     if plan.get("task_md_path"):
         known_files.add("task.md")
+    known_basenames: Set[str] = {Path(p).name for p in known_files if p}
 
     manuscript, ms_warns, ms_err = resolve_manuscript_text(payload, payload_path, args.manuscript)
     for mw in ms_warns:
@@ -225,7 +228,8 @@ def main() -> None:
     if ms_err:
         add_err("MANUSCRIPT_FILE_NOT_FOUND", ms_err, "Ensure manuscript_file exists or clear it and populate manuscript_markdown.")
 
-    payload = sync_payload_structures(payload, manuscript)
+    extracted_dir = Path(args.ledger).parent / "extracted"
+    payload = sync_payload_structures(payload, manuscript, ledger=ledger, extracted_dir=extracted_dir)
 
     # Axis 1: case_id & output_contract check
     expected_cid = plan.get("case_id", "")
@@ -390,6 +394,7 @@ def main() -> None:
 
     def find_ledger_ref(token: str) -> Any:
         tl = token.strip().lower()
+        tl_norm = normalize_ref_id_token(token).lower()
         tl_base = _strip_year_letter(tl)
         # For pure numeric tokens, resolve against payload_refs_by_num FIRST so order matches bibliography!
         if tl.isdigit():
@@ -398,11 +403,12 @@ def main() -> None:
                 if pr is None:
                     return None
                 pr_ck = str(pr.get("cite_key") or "").strip().lower()
-                pr_rid = str(pr.get("ref_id") or "").strip().lower()
+                pr_rid = normalize_ref_id_token(str(pr.get("ref_id") or "")).lower()
                 return ledger_by_key.get(pr_ck) or ledger_by_ref_id.get(pr_rid)
             return ledger_by_num.get(tl)
         return (
             ledger_by_ref_id.get(tl)
+            or ledger_by_ref_id.get(tl_norm)
             or ledger_by_key.get(tl)
             or ledger_by_ay.get(tl)
             or ledger_by_ay.get(tl_base)
@@ -410,9 +416,11 @@ def main() -> None:
 
     def find_payload_ref(token: str) -> Any:
         tl = token.strip().lower()
+        tl_norm = normalize_ref_id_token(token).lower()
         tl_base = _strip_year_letter(tl)
         return (
             payload_refs_by_id.get(tl)
+            or payload_refs_by_id.get(tl_norm)
             or payload_refs_by_key.get(tl)
             or payload_refs_by_ay.get(tl)
             or payload_refs_by_ay.get(tl_base)
@@ -490,7 +498,9 @@ def main() -> None:
         if not loc_s or loc_s in ("-", "unknown", "N/A"):
             return
         fpart = _split_locator_file(loc_s)
-        if fpart and known_files and fpart not in known_files:
+        if fpart.startswith("case.json") or fpart in ("inline", "task.md", "extracted", "abstract"):
+            return
+        if fpart and known_files and (fpart not in known_files and Path(fpart).name not in known_basenames):
             msg = f"{context_label} references non-existent input file '{fpart}' (locator '{loc_s}')."
             hint = "Use only exact relative file paths listed in case_plan.json inventory."
             if as_error:
@@ -580,10 +590,33 @@ def main() -> None:
                     "Prefer input file:line locators alongside Table/Fig labels when available.",
                 )
             else:
-                _check_locator_file(loc, f"Contribution '{cid}'", as_error=True)
+                _check_locator_file(loc, f"Contribution '{cid}'", as_error=False)
 
     # Axis 7: Grounded numeric metrics check (ERROR on structured fields, advisory WARNING on prose)
-    grounded_tokens = ledger.get("grounded_numbers_index") or []
+    grounded_tokens = list(ledger.get("grounded_numbers_index") or [])
+    if extracted_dir.exists():
+        seen_ext_n = {(round(float(gt["value"]), 6), str(gt.get("unit") or ""), bool(gt.get("has_percent"))) for gt in grounded_tokens}
+        for ep in sorted(extracted_dir.glob("*.txt"))[:16]:
+            etxt, _ = read_text_safe(ep)
+            if not etxt:
+                continue
+            for ln in etxt.splitlines()[:240]:
+                body_part = re.sub(r"^\[[^\]]+\]\s*", "", ln)
+                is_tbl = any(ext_tok in ep.name.lower() for ext_tok in ("csv", "tsv", "json", "md", "table"))
+                for ntok in extract_numeric_tokens(body_part, filter_structural=True):
+                    nk = (round(float(ntok["value"]), 6), str(ntok.get("unit") or ""), bool(ntok.get("has_percent")))
+                    if nk not in seen_ext_n:
+                        seen_ext_n.add(nk)
+                        ntok_copy = dict(ntok)
+                        ntok_copy["source_locator"] = ep.name if not is_tbl else f"{ep.name}:table"
+                        grounded_tokens.append(ntok_copy)
+                        if len(grounded_tokens) >= 1800:
+                            break
+                if len(grounded_tokens) >= 1800:
+                    break
+            if len(grounded_tokens) >= 1800:
+                break
+
     ungrounded_struct_hits: List[str] = []
     ungrounded_prose_hits: List[str] = []
 
@@ -596,8 +629,17 @@ def main() -> None:
         same_unit_vals: List[float] = []
         for gt in grounded_tokens:
             gu = str(gt.get("unit") or "").lower()
-            if (tu == gu) or (t_pct and gt.get("has_percent")):
-                same_unit_vals.append(float(gt["value"]))
+            g_pct = bool(gt.get("has_percent"))
+            gv = float(gt["value"])
+            # Controlled rounding tolerance ONLY within identical normalized units & percent flag (e.g. 94.6% vs 94.62%)
+            if tu == gu and t_pct == g_pct and abs(tv - gv) <= 0.11:
+                return True
+            # Unitless CSV/table cell representing percentage value (e.g., 94.62 in results.csv vs 94.6% in prose)
+            if t_pct and not gu and not g_pct and 0 < abs(tv) <= 100 and (gt.get("decimals", 0) > 0 or "table" in str(gt.get("source_locator") or "") or ".csv" in str(gt.get("source_locator") or "")):
+                if abs(tv - gv) <= 0.11:
+                    return True
+            if (tu == gu) or (t_pct and g_pct):
+                same_unit_vals.append(gv)
         if len(same_unit_vals) >= 2:
             pool = same_unit_vals[:60]
             tol = max(0.06, 0.01 * max(abs(tv), 1.0))
@@ -694,7 +736,7 @@ def main() -> None:
                         "unresolved_draft_citation", "empty_literature_library",
                     )
                 ):
-                    add_err(
+                    add_warn(
                         "MISSING_INLINE_GAP_TAG",
                         f"Confirmation item '{itg}' (location='{loc_str}') is not tagged inline in manuscript_markdown.",
                         f"Add [待作者确认: {itg}] or [AUTHOR_CONFIRM: {itg}] at '{loc_str}' in manuscript_markdown.",

@@ -1,17 +1,16 @@
 # Minimal Illustrative Example (`academic-citation-manager`)
 
-> **Note**: This is an illustrative example using `examples/sample_manuscript.md`, `examples/sample_library.bib`, and `examples/sample_library.ris` to demonstrate interface contracts — **not** a formal competition case output.
+> **Note**: This is an illustrative example using `examples/sample_manuscript.md` and the BibTeX/RIS blocks in `examples/sample_library_fixtures.md` to demonstrate interface contracts — **not** a formal competition case output.
 
 ## 1. Sample Input
 - Manuscript: `examples/sample_manuscript.md` (contains a paragraph-end citation cluster `[1-2]`, a missing citation placeholder `[待引用]`, and a dangling reference `[99]`)
-- Reference libraries: `examples/sample_library.bib` + `examples/sample_library.ris` (contains an arXiv preprint + NeurIPS published duplicate of *Attention Is All You Need* plus a distinct 2023 catalyst paper)
+- Reference libraries: BibTeX and RIS fixtures stored in `examples/sample_library_fixtures.md` (contains an arXiv preprint + NeurIPS published duplicate of *Attention Is All You Need* plus a distinct 2023 catalyst paper)
 
 ## 2. Invocation Steps
 ```bash
 mkdir -p /tmp/demo_in /tmp/demo_work /tmp/demo_out
 cp examples/sample_manuscript.md /tmp/demo_in/manuscript.md
-cp examples/sample_library.bib /tmp/demo_in/refs.bib
-cp examples/sample_library.ris /tmp/demo_in/refs.ris
+# Extract the fenced bibtex and ris blocks from examples/sample_library_fixtures.md into /tmp/demo_in/refs.bib and /tmp/demo_in/refs.ris
 echo '{"case_id": "demo_01"}' > /tmp/demo_in/case.json
 echo '请按 GB/T 7714-2015 顺序编码制（上标方括号）整理引用。' > /tmp/demo_in/task.md
 

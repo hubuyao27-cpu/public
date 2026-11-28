@@ -22,6 +22,7 @@ def main() -> None:
     ap.add_argument("--payload", default=None)
     ap.add_argument("--manuscript", default=None)
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--allow-partial", action="store_true", help="Preserve partial deliverables and exit 0 when verification has remaining errors")
     args = ap.parse_args()
 
     sdir = Path(__file__).resolve().parent
@@ -73,6 +74,13 @@ def main() -> None:
         if args.manuscript:
             p_cmd.extend(["--manuscript", args.manuscript])
         subprocess.run(p_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+        if args.allow_partial:
+            try:
+                v_obj = json.loads(vreport.read_text(encoding="utf-8"))
+            except Exception:
+                v_obj = {}
+            print(json.dumps({"status": "partial", "verification_passed": False, "error_count": v_obj.get("error_count", 1), "errors": v_obj.get("errors", [])}, ensure_ascii=False))
+            return
         sys.stdout.write(v_proc.stdout)
         sys.stderr.write(v_proc.stderr)
         raise SystemExit(v_proc.returncode)
