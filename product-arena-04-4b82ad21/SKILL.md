@@ -47,23 +47,18 @@ Runs `inspect_case -> ingest_materials -> assemble_deliverables (--checkpoint pa
 - Produces `/app/work/case_plan.json`, `/app/work/source_ledger.json`, `/app/work/evidence_digest.md`, pre-populated `/app/work/section_payload_skeleton.json`, lossless `[locator]`-tagged files under `/app/work/extracted/`, and an early `/app/output/result.json`.
 - **Short-Circuit**: If `references_catalog` and `own_paper_evidence` are both empty (or all files failed parsing/decryption), do **not** fabricate citations or metrics — refine `section_payload.json` from the skeleton with `status: "insufficient_material"` and run Step 3.
 
-### Step 2: Inspect Digest / Targeted Queries & Author Prose + Payload
-1. Read `/app/work/evidence_digest.md` and `/app/work/section_payload_skeleton.json`.
-2. For full-paper PDFs or long notes, query exact `[locator]` lines for limitations, methods, or table metrics instead of dumping entire documents:
-   ```bash
-   python3 -B "$SKILL_DIR/scripts/query_sources.py" \
-     --extracted-dir /app/work/extracted --section Limitations --limit 25
-   ```
-3. Write publication-ready prose cleanly to `/app/work/manuscript.md` (with `## Introduction`, `## Related Work` + `###` route subsections + concluding bridge paragraph, `## Research Gaps`, `## Contributions`) and save `/app/work/section_payload.json` (`"manuscript_file": "/app/work/manuscript.md"` plus **explicit** `research_background`, `related_work_groups[]` with concrete `applicability_conditions` & `limitations`, `research_gaps[]`, and `contributions[]` with concrete `scope_qualification`):
+### Step 2: Read Digest & Author Prose + Payload
+1. Read `/app/work/evidence_digest.md` and `/app/work/section_payload_skeleton.json` (inspect raw source files or `/app/work/extracted/` only when verbatim quotes/details are needed).
+2. Write publication-ready prose cleanly to `/app/work/manuscript.md` (with `## Introduction`, `## Related Work` + `###` route subsections + concluding bridge paragraph, `## Research Gaps`, `## Contributions`) and save `/app/work/section_payload.json` (`"manuscript_file": "/app/work/manuscript.md"` plus explicit `research_background`, `related_work_groups[]`, `research_gaps[]`, and `contributions[]`):
    - **Uniform Internal Anchors**: Cite works in prose as **`[R01]` / `[R1]` / `[R01, R02]`** — `assemble_deliverables.py` orders numeric bibliographies (`gbt7714`/`ieee_numeric`/`nature_numeric`) by **first appearance in prose** and renders `[R01]` uniformly into `[1]`, `[1], [2]`, `(Author, Year)`, or `\cite{key}` across `.md`, `.docx`, `.tex`, and `result.json`.
-   - **Honest Inline Markers**: Tag synthetic inferences `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing/conflicting items `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]`.
-   - **Lossless Auto-Hydration**: `references[]` (with `field_provenance`), `conflicts[]`, `comparison_matrix[]`, `author_confirmation_items[]`, and `claim_citation_map[]` (with verbatim `evidence_quote` + `[file:pX_LY]` locators) deterministically auto-hydrate from `source_ledger.json`, `/app/work/extracted/`, and `related_work_groups[]` when omitted — focus your tokens on crisp prose and concrete `related_work_groups[]`, `research_gaps[]`, and `contributions[]`.
+   - **Honest Inline Markers**: Tag synthetic inferences `[作者判断]` / `[AUTHOR_JUDGMENT]`, and missing/conflicting items `[待作者确认: GAP-XX]` / `[AUTHOR_CONFIRM: GAP-XX]` matched 1-to-1 in `author_confirmation_items[]`.
+   - **Lossless Auto-Hydration**: `references[]` (with `field_provenance`), `conflicts[]`, `comparison_matrix[]`, `author_confirmation_items[]`, and `claim_citation_map[]` (with verbatim `evidence_quote` + `[file:pX_LY]` locators) deterministically auto-hydrate from `source_ledger.json`, `/app/work/extracted/`, and `related_work_groups[]` when omitted — focus tokens on high-craft writing and concrete `related_work_groups[]`, `research_gaps[]`, and `contributions[]`.
    - **Custom Contracts**: Populate `contract_overrides` only for custom `output_contract` fields not mapped automatically by semantic roles.
 
-### Step 3: One-Command Verify & Non-Destructive Final Assembly
+### Step 3: One-Command Verify & Final Assembly
 ```bash
 python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
   --work-dir /app/work --out-dir /app/output
 ```
-- If `verify_intro_rw.py` passes, it writes final verified deliverables (`result.json`, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md` with Field-Level Metadata Provenance + claim quotes, `provenance_map.json`, plus `.tex`/`.bib`/`.docx`/diagram previews only when explicitly requested).
-- **Bounded Self-Correction Rule**: If `verify_intro_rw.py` flags blocking errors (`error_count > 0`), `finalize_workspace.py` **preserves your authored manuscript** under an honest `status: "partial"` checkpoint; inspect `/app/work/verification_report.json` and perform **at most 2 repair passes**. If blockers remain due to missing or conflicting user inputs, run `finalize_workspace.py --work-dir /app/work --out-dir /app/output --allow-partial` so an honest `partial` output is finalized cleanly within budget.
+- When `verify_intro_rw.py` passes (`error_count == 0`), it writes all final verified deliverables (`result.json` with `status: "completed"`, `introduction_and_related_work.md`, `related_work_matrix.md/.csv`, `evidence_and_citation_audit.md` with Field-Level Metadata Provenance + verbatim claim quotes, `provenance_map.json`, plus `.tex`/`.bib`/`.docx`/diagram previews when requested).
+- If `verify_intro_rw.py` flags any blocking errors (`error_count > 0`), inspect `/app/work/verification_report.json`, fix the cited errors in `/app/work/manuscript.md` or `/app/work/section_payload.json`, and re-run `finalize_workspace.py` until `error_count == 0` (at most 2 repair passes).

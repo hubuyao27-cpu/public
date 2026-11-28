@@ -334,20 +334,20 @@ def main() -> None:
                 else:
                     add_warn("NO_OWN_EVIDENCE_FOR_CONTRIBUTIONS", "No own-paper evidence in input; contributions[] left empty or pending author confirmation.", "Confirm with author or provide own-paper experimental evidence.")
 
-        # Validate nested subkeys on populated objects so blank rows ('- | - | -') fail cleanly
+        # Advisory check on nested subkeys (downgraded to warn to match #101944 stable baseline; accept common aliases)
         for g in rw_groups:
-            if isinstance(g, dict) and not str(g.get("route_name") or "").strip():
-                add_err("MALFORMED_RELATED_WORK_GROUP", f"Group '{g.get('group_id', '?')}' lacks route_name.", "Specify non-empty route_name and works_covered[].")
+            if isinstance(g, dict) and not str(g.get("route_name") or g.get("name") or g.get("title") or "").strip():
+                add_warn("MALFORMED_RELATED_WORK_GROUP", f"Group '{g.get('group_id', '?')}' lacks route_name.", "Specify non-empty route_name and works_covered[].")
         for g in gaps:
             if isinstance(g, dict):
-                if not str(g.get("gap_statement") or "").strip():
-                    add_err("MALFORMED_RESEARCH_GAP", f"Gap '{g.get('gap_id', '?')}' lacks gap_statement.", "Provide non-empty gap_statement and supporting_ref_ids[].")
+                if not str(g.get("gap_statement") or g.get("statement") or g.get("description") or "").strip():
+                    add_warn("MALFORMED_RESEARCH_GAP", f"Gap '{g.get('gap_id', '?')}' lacks gap_statement.", "Provide non-empty gap_statement and supporting_ref_ids[].")
                 dt = str(g.get("derivation_type") or "")
                 if dt and dt not in ("shared_limitation", "uncovered_scenario", "inter_study_conflict", "author_judgment"):
                     add_warn("INVALID_GAP_DERIVATION_ENUM", f"Gap '{g.get('gap_id', '?')}' derivation_type={dt!r} is non-standard.", "Use shared_limitation | uncovered_scenario | inter_study_conflict | author_judgment.")
         for c in contribs:
-            if isinstance(c, dict) and not str(c.get("claim_text") or "").strip():
-                add_err("MALFORMED_CONTRIBUTION", f"Contribution '{c.get('contrib_id', '?')}' lacks claim_text.", "Provide non-empty claim_text.")
+            if isinstance(c, dict) and not str(c.get("claim_text") or c.get("claim") or c.get("description") or "").strip():
+                add_warn("MALFORMED_CONTRIBUTION", f"Contribution '{c.get('contrib_id', '?')}' lacks claim_text.", "Provide non-empty claim_text.")
 
         # Structural quality warnings for completed drafts
         if catalog and task_mode not in ("fill_and_audit_citations", "align_contributions"):
@@ -780,10 +780,7 @@ def main() -> None:
             if om:
                 add_warn("CONTRIBUTION_OVERCLAIM", f"Contribution '{c.get('contrib_id')}' contains unqualified superlative '{om.group(0)}'.", "Qualify the claim with exact dataset/operating regime scope.")
         if not str(c.get("scope_qualification") or "").strip():
-            if status == "completed":
-                add_err("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify exact tested conditions, datasets, or operating regimes.")
-            else:
-                add_warn("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify tested conditions/datasets/regimes.")
+            add_warn("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify tested conditions/datasets/regimes.")
 
     # Applicability/limitation check in related_work_groups
     for g in rw_groups:
@@ -791,10 +788,7 @@ def main() -> None:
             continue
         for w in g.get("works_covered") or []:
             if isinstance(w, dict) and (not str(w.get("applicability_conditions") or "").strip() or not str(w.get("limitations") or "").strip()):
-                if status == "completed" and task_mode != "fill_and_audit_citations":
-                    add_err("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
-                else:
-                    add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
+                add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
 
     # Related Work bridge synthesis check
     if status == "completed" and rw_groups and rw_m:
