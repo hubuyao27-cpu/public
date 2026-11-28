@@ -1178,12 +1178,19 @@ def main() -> None:
             ms_lines.append(f"- **{df['block_id']}** ({df['section']}): {df['reason']} (prior: {df['prior_sentence_ids']}, final: {df['final_sentence_id']})")
     save_text(work / "manuscript_digest.md", "\n".join(ms_lines) + "\n")
 
+    placeholder_sids = [s["sentence_id"] for s in ms_parsed["sentences"] if any(c["kind"] == "placeholder" for c in s["citations"])]
     brief_lines = [
         f"# Case Brief (`{case_id}`)",
         f"- **Target Style**: `{signals['target_style']}` (`{signals['style_confidence']}`) | **In-Text Format**: `{signals['in_text_format']}` | **Output Formats**: `{signals['requested_output_formats']}`",
         f"- **Required `output_contract` keys**: `{contract_parsed['required_keys']}`",
         f"- **Dangling citations**: {len(dangling)} | **Ambiguous Author-Year**: {len(ambiguous_ay)} | **Recycled DOI conflicts**: {len(lib_canon['recycled_doi_conflicts'])}",
         f"- **Evidence files indexed**: {[e['file'] for e in evidence_papers]}",
+        "",
+        "## Actionable Fix Checklist",
+        f"- **Placeholder sentences needing `manuscript_edits`**: `{placeholder_sids}`",
+        f"- **Paragraph-end dump blocks to split**: `{[df['block_id'] for df in ms_parsed['paragraph_end_dump_flags']]}`",
+        f"- **Dangling citation sentences**: `{[(d['sentence_id'], d['raw_marker']) for d in dangling]}`",
+        f"- **Tier-3 ambiguous duplicates needing `dedup_decisions`**: `{[ac['candidate_id'] for ac in lib_canon['ambiguous_duplicate_candidates']]}`",
     ]
     save_text(work / "case_brief.md", "\n".join(brief_lines) + "\n")
 

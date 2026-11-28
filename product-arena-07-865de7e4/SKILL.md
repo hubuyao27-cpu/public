@@ -65,7 +65,7 @@ python3 -B "$SKILL_DIR/scripts/compile_and_diagnose.py" \
 3. Read `/app/work/compile_summary.md`. Fix **root causes first** (via `$SKILL_DIR/resources/error_taxonomy.json`) and re-run until `status == "compiled_clean"` (0 errors, 0 undefined refs/cites, 0 missing glyphs, `Overfull \hbox < 10pt`) or a real blocker is confirmed. Inspect `previews/page-*.png` visually when image viewing is available.
 
 ### Step 3: Verify 6 Axes & Assemble Final `/app/output/`
-Optionally author `/app/work/deliverable_payload.json` (per `$SKILL_DIR/resources/payload_schema.json`) to add `contract_overrides`, detailed `summary`, or custom `change_records[]` — `verify_and_assemble.py` also auto-hydrates `sources[]`, `author_confirmation_items[]` (from `% [SRC:]` / `% [AUTHOR_CONFIRM: GAP-XX]`), `auto_change_records.json`, and `before_after_diff` automatically:
+Optionally author `/app/work/deliverable_payload.json` (per `$SKILL_DIR/resources/payload_schema.json`) to add `contract_overrides`, detailed `summary`, or custom `change_records[]` — `verify_and_assemble.py` automatically hydrates `sources[]` (with verbatim `source_quote`s & Field-Level Source Evidence table from `% [SRC:]` and `source_facts`), `author_confirmation_items[]` (from `% [AUTHOR_CONFIRM: GAP-XX]`), `auto_change_records.json`, and `before_after_diff`:
 ```bash
 python3 -B "$SKILL_DIR/scripts/verify_and_assemble.py" \
   --tex /app/work/src/<MAIN_TEX> \

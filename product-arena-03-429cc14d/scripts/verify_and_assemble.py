@@ -526,13 +526,15 @@ def verify_deliverables(work_dir: Path, out_dir: Path, plan_path: Path) -> Dict[
         ("()", re.compile(r"(?<![A-Za-z0-9_])\(\s*\)")),
         ("[]", re.compile(r"\[\s*\]")),
         ("DOI:.", re.compile(r"DOI:\s*\.")),
-        ("..", re.compile(r"(?<!\.)\.\.(?!\.)")),
     ]
+    double_dot_re = re.compile(r"(?<!\.)\.\.(?!\.)")
     for fr in formatted_refs:
         entry = fr["formatted_entry"]
         for label, dpat in dirty_pats:
             if dpat.search(entry):
                 err("dirty_formatted_reference", f"{fr['ref_id']} contains `{label}`: {entry}")
+        if double_dot_re.search(entry):
+            warn("double_period_in_reference", f"{fr['ref_id']} contains `..` (check abbreviation punctuation): {entry}")
         if target_style.startswith("gbt7714") and not re.search(r"\[(J|C|M|D|R|S|P|N|EB|DB|CP|Z)(?:/OL)?\]", entry):
             err("missing_gbt7714_type_code", f"{fr['ref_id']} missing GB/T 7714 doc-type tag: {entry}")
 

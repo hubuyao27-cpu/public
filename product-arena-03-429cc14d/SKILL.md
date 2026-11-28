@@ -63,7 +63,7 @@ python3 -B "$SKILL_DIR/scripts/verify_and_assemble.py" \
   --out-dir /app/output \
   --plan /app/work/citation_plan.json
 ```
-Inspect the printed verification report. **Bounded Self-Correction Rule**: if `error_count > 0`, perform **at most 2 repair passes** on `/app/work/citation_plan.json` and re-run Step 3; if input defects still prevent full resolution, run `verify_and_assemble.py ... --allow-partial` so an honest `partial` `/app/output/result.json` is preserved without exhausting turn budget. Confirm `/app/output/` contains `result.json`, `revised_manuscript.md` (+ `.docx`/`.tex` and previews when applicable), `references_formatted.md`, `references_clean.{bib,ris,csl.json}`, `references_table.csv`, `citation_audit_report.md` (including Field-Level Source Evidence Ledger), and `provenance_ledger.json`.
+Inspect the printed verification report. If `error_count > 0`, fix the flagged defects in `/app/work/citation_plan.json` and re-run Step 3 until `"passed": true` so `result.json` finishes with `status: "completed"`. Confirm `/app/output/` contains `result.json`, `revised_manuscript.md` (+ `.docx`/`.tex` and previews when applicable), `references_formatted.md`, `references_clean.{bib,ris,csl.json}`, `references_table.csv`, `citation_audit_report.md` (including Field-Level Source Evidence Ledger), and `provenance_ledger.json`.
 
 ---
 

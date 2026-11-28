@@ -176,6 +176,35 @@ def hydrate_payload(
         if isinstance(acr, dict) and acr.get("description") not in existing_cr_descs:
             p["change_records"].append(acr)
 
+    # Build verbatim lookup from audit.source_facts and original /input files for field-level source quotes
+    sf_quote_by_loc = {str(sf.get("locator") or ""): str(sf.get("text") or "")[:200] for sf in (audit.get("source_facts") or []) if isinstance(sf, dict) and sf.get("locator")}
+    in_root_str = str(case_plan.get("input_dir") or "")
+    in_root_p = Path(in_root_str) if in_root_str else None
+    file_lines_cache: Dict[str, List[str]] = {}
+
+    def _lookup_source_quote(sloc: str) -> str:
+        if not sloc:
+            return ""
+        if sloc in sf_quote_by_loc:
+            return sf_quote_by_loc[sloc]
+        lm = re.match(r"^([^:#]+):L?(\d+)$", sloc.strip())
+        if lm and in_root_p and in_root_p.is_dir():
+            fname, lnum = lm.group(1).strip(), int(lm.group(2))
+            if fname not in file_lines_cache:
+                cand = in_root_p / fname
+                if not cand.is_file():
+                    hits = list(in_root_p.rglob(Path(fname).name))
+                    cand = hits[0] if hits else cand
+                if cand.is_file():
+                    ftxt, ferr = read_text_safe(cand)
+                    file_lines_cache[fname] = ftxt.splitlines() if not ferr else []
+                else:
+                    file_lines_cache[fname] = []
+            flines = file_lines_cache.get(fname) or []
+            if 1 <= lnum <= len(flines):
+                return flines[lnum - 1].strip()[:200]
+        return ""
+
     # Mine inline % [SRC: ...] and % [AUTHOR_CONFIRM: GAP-XX ...] from delivered .tex files
     existing_src_locs = {str(s.get("source_locator") or "") for s in p["sources"]}
     existing_gap_ids = {str(g.get("gap_id") or "") for g in p["author_confirmation_items"] if g.get("gap_id")}
@@ -192,7 +221,14 @@ def hydrate_payload(
                 sloc = sm.group(1).strip()
                 if sloc not in existing_src_locs:
                     existing_src_locs.add(sloc)
-                    p["sources"].append({"id": f"SRC-MINED-{len(p['sources'])+1:02d}", "fact_or_target": line.split("%")[0].strip()[:120] or sloc, "source_locator": sloc, "target_locator": f"{rel}:L{lno}", "verification_status": "verified"})
+                    p["sources"].append({
+                        "id": f"SRC-MINED-{len(p['sources'])+1:02d}",
+                        "fact_or_target": line.split("%")[0].strip()[:120] or sloc,
+                        "source_locator": sloc,
+                        "target_locator": f"{rel}:L{lno}",
+                        "source_quote": _lookup_source_quote(sloc),
+                        "verification_status": "verified",
+                    })
             for gm in GAP_TAG_RE.finditer(line):
                 gid = gm.group(1).strip()
                 gdesc = (gm.group(2) or "").strip() or f"Confirmation requested in {rel}:L{lno}"
@@ -203,7 +239,26 @@ def hydrate_payload(
     # Fallback source attribution from audit.source_facts if sources[] is still empty
     if not p["sources"] and audit.get("source_facts"):
         for i, sf in enumerate(audit["source_facts"][:15], start=1):
-            p["sources"].append({"id": f"SRC-{i:02d}", "fact_or_target": sf["text"][:100], "source_locator": sf["locator"], "verification_status": "verified"})
+            p["sources"].append({
+                "id": f"SRC-{i:02d}",
+                "fact_or_target": sf["text"][:100],
+                "source_locator": sf["locator"],
+                "source_quote": sf["text"][:200],
+                "verification_status": "verified",
+            })
+    else:
+        for s_it in p["sources"]:
+            if isinstance(s_it, dict) and not s_it.get("source_quote") and s_it.get("source_locator"):
+                sq = _lookup_source_quote(str(s_it["source_locator"]))
+                if sq:
+                    s_it["source_quote"] = sq
+
+    if p["status"] != "completed" and not p["uncertainty"]:
+        fb_notes = (compile_report or {}).get("fallback_notes") or []
+        for idx_u, note in enumerate(fb_notes[:5], start=1):
+            p["uncertainty"].append({"id": f"UNC-AUTO-{idx_u:02d}", "description": str(note)})
+        if not p["uncertainty"]:
+            p["uncertainty"].append({"id": "UNC-AUTO-01", "description": f"Deliverable finished with status='{p['status']}' due to incomplete inputs or unresolved compilation blockers."})
 
     if not p.get("template_compliance"):
         tpl = (case_plan.get("signals", {}).get("target_templates") or ["article"])[0]
@@ -487,9 +542,24 @@ def _assemble_final(
             f"- Pages: {pa.get('page_count', 0)} | Previews: {len(rendered_previews_rel)} | Embedded Fonts: {len(pa.get('embedded_fonts', []))}",
             "",
         ])
+    if payload.get("sources"):
+        rep_lines.extend([
+            "## Fact & Field-Level Source Evidence",
+            "| ID | Fact / Target | TeX Locator | Source Locator | Verbatim Source Quote |",
+            "|---|---|---|---|---|",
+        ])
+        for s_it in payload["sources"]:
+            if not isinstance(s_it, dict):
+                continue
+            sid_s = str(s_it.get("id") or "-").replace("|", " ")
+            ft_s = str(s_it.get("fact_or_target") or "-")[:60].replace("|", " ").replace("\n", " ")
+            tl_s = str(s_it.get("target_locator") or "-").replace("|", " ")
+            sl_s = str(s_it.get("source_locator") or "-").replace("|", " ")
+            sq_s = str(s_it.get("source_quote") or "-")[:90].replace("|", " ").replace("\n", " ")
+            rep_lines.append(f"| `{sid_s}` | {ft_s} | `{tl_s}` | `{sl_s}` | {sq_s} |")
+        rep_lines.append("")
     for title, key, fmt in (
         ("## Change Records", "change_records", lambda x: f"- `{x.get('file')}` [{x.get('change_type')}]: {x.get('description')}"),
-        ("## Fact & Source Mapping", "sources", lambda x: f"- `{x.get('fact_or_target')}` <- `{x.get('source_locator')}`"),
         ("## Author Confirmation Items", "author_confirmation_items", lambda x: f"- **[{x.get('gap_id')}]** `{x.get('target_file')}`: {x.get('question')}"),
         ("## Uncertainties", "uncertainty", lambda x: f"- **[{x.get('id', 'UNC')}]**: {x.get('description')}"),
     ):
