@@ -780,7 +780,10 @@ def main() -> None:
             if om:
                 add_warn("CONTRIBUTION_OVERCLAIM", f"Contribution '{c.get('contrib_id')}' contains unqualified superlative '{om.group(0)}'.", "Qualify the claim with exact dataset/operating regime scope.")
         if not str(c.get("scope_qualification") or "").strip():
-            add_warn("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify tested conditions/datasets/regimes.")
+            if status == "completed":
+                add_err("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify exact tested conditions, datasets, or operating regimes.")
+            else:
+                add_warn("MISSING_SCOPE_QUALIFICATION", f"Contribution '{c.get('contrib_id')}' lacks scope_qualification.", "Specify tested conditions/datasets/regimes.")
 
     # Applicability/limitation check in related_work_groups
     for g in rw_groups:
@@ -788,7 +791,10 @@ def main() -> None:
             continue
         for w in g.get("works_covered") or []:
             if isinstance(w, dict) and (not str(w.get("applicability_conditions") or "").strip() or not str(w.get("limitations") or "").strip()):
-                add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
+                if status == "completed" and task_mode != "fill_and_audit_citations":
+                    add_err("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
+                else:
+                    add_warn("MISSING_WORK_LIMITATION", f"Related work '{w.get('ref_id')}' in group '{g.get('group_id')}' omits applicability_conditions or limitations.", "State both applicable regime and concrete limitation.")
 
     # Related Work bridge synthesis check
     if status == "completed" and rw_groups and rw_m:

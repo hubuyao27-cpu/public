@@ -176,6 +176,26 @@ def main() -> None:
             "language": "en",
             "citation_style": "ieee_numeric",
             "manuscript_file": str(work2 / "manuscript.md"),
+            "research_background": {
+                "domain_lineage": "Nanoporous Ni electrocatalysts for CO2 reduction",
+                "concrete_problem": "Pore flooding and carbonate buildup above 350 mA/cm2",
+                "technical_constraints": ["Flooding >350 mA/cm2"],
+                "why_now": "Industrial CO2RR requires >450 mA/cm2",
+                "evidence_locators": [f"{pdf_name}:p2_L2"],
+                "citation_ids": ["R1"],
+            },
+            "related_work_groups": [
+                {
+                    "group_id": "RG1",
+                    "route_name": "Nanoporous Electrode Engineering",
+                    "grouping_axis": "Electrode porosity",
+                    "comparison_dimensions": ["Selectivity", "Current limit", "Limitations"],
+                    "works_covered": [
+                        {"ref_id": "R1", "core_conclusion": "High CO selectivity", "applicability_conditions": "<=350 mA/cm2", "limitations": "Pore flooding and carbonate buildup", "source_locator": f"{pdf_name}:p2_L2"}
+                    ],
+                    "route_tradeoff_summary": "High activity but floods above 350 mA/cm2.",
+                }
+            ],
             "research_gaps": [
                 {"gap_id": "GAP-S1", "gap_statement": "Flooding limits high-current electrolysis above 350 mA/cm2.", "derivation_type": "shared_limitation", "supporting_ref_ids": ["R1"], "supporting_evidence_locators": [f"{pdf_name}:p2_L2"], "how_this_work_addresses": "HollowNi hydrophobic walls", "attribution": "literature_derived"}
             ],

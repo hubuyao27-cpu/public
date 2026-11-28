@@ -984,6 +984,24 @@ def main() -> None:
                     dlines.append(f"  - *Field provenance*: {', '.join(fp_items)}")
             if r.get("abstract_or_notes"):
                 dlines.append(f"  - *Notes/Abstract*: {r['abstract_or_notes'][:620]}")
+            # Pre-extract high-signal Method / Metric / Limitation lines with exact [file:locator] for 1-pass authoring
+            hi_hits: List[str] = []
+            seen_hi = set()
+            r_locs = [str(x).split(":", 1)[0].split("#", 1)[0] for x in (r.get("source_locators") or [])]
+            for lsn in literature_snippets:
+                if lsn.get("file") in r_locs or any(r.get("cite_key") and r["cite_key"].lower() in str(pl).lower() for pl in lsn.get("preview_lines", [])):
+                    for pl in lsn.get("preview_lines", []):
+                        pls = str(pl)
+                        if any(kw in pls.lower() for kw in ("limitation", "fail", "bottleneck", "drawback", "however", "yet", "局限", "不足", "瓶颈", "限制", "%", "ma/cm2", "ms", "accuracy", "achieve")):
+                            if pls not in seen_hi:
+                                seen_hi.add(pls)
+                                hi_hits.append(pls[:180])
+                            if len(hi_hits) >= 3:
+                                break
+                if len(hi_hits) >= 3:
+                    break
+            if hi_hits:
+                dlines.append(f"  - *Key Method/Metric/Limitation*: {' || '.join(hi_hits)}")
     else:
         dlines.append("- *NONE FOUND — do NOT fabricate references.*")
 
