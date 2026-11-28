@@ -14,48 +14,45 @@ description: >
 
 Transform messy drafts, broken TeX projects, or multi-format research inputs into **compilable, template-compliant, editable, source-traceable, and reproducibly built LaTeX deliverables**.
 
-## Core Design Guarantees
-1. **编译得通 (Root-Cause Convergence & Honest Fallback)**: Pinpoint exact `file:line` root causes instead of getting fooled by cascading EOF/undefined-CS noise; execute deterministic multi-pass compilation (`engine -> bibtex/biber -> engine*`, up to 5 passes) until `.aux`/`.toc`/`.out` hashes stabilize and PDF previews audit cleanly (`0` errors, `0` undefined refs/cites, `0` missing glyphs, `0` literal `??`/`[?]`). When `pdflatex` hits UTF-8/CJK errors, missing Linux CJK fonts, or missing optional `.sty` files, `compile_and_diagnose.py` runs non-destructive auto-fallback diagnostics to surface verified installed fonts and fallback PDF/PNG previews without faking `compiled_clean`.
-2. **改得对 (Fidelity & Template Compliance)**: Preserve every source number, unit, equation symbol, and citation with `100%` traceability; enforce `amsmath`, upright units, `booktabs` tables (never hide overflow with `\resizebox`), `\label` after `\caption`, and mandatory journal/conference metadata (`template_profiles.json`).
-3. **交得可用 (Clean Editable Sources & Verifiable Diffs)**: Deliver structured, modular `.tex`/`.bib` files alongside compiled `.pdf`, fresh `previews/page-*.png`, itemized `compile_diagnostics` (warnings, `undefined_references`, `undefined_citations`, `overfull_hboxes`, missing glyphs), and automatic `before_after_diff` inside `/app/output/result.json` and `compilation_and_provenance_report.md`.
-4. **复现得了 (Reproducible Build Provenance)**: Probe live compilers & system CJK fonts (`fc-list`) before choosing XeLaTeX/Fandol/Noto fonts, and emit executable `build.sh` plus `reproducibility_manifest.json`.
+## Core Guarantees
+1. **编译得通 (Root-Cause Convergence & Honest Fallback)**: Pinpoint exact `file:line` root causes instead of cascading EOF noise; run deterministic multi-pass compilation (`engine -> bibtex/biber -> engine*`, up to 5 passes) until `.aux`/`.toc`/`.out` hashes stabilize (`0` errors, `0` undefined refs/cites, `0` missing glyphs, `0` literal `??`/`[?]`). Non-destructive fallback diagnostics test `xelatex`/verified CJK fonts without faking `compiled_clean`.
+2. **改得对 (Fidelity & Template Compliance)**: Preserve every source number, unit, symbol, and citation; enforce `amsmath`, `booktabs` tables (never `\resizebox`/`\scalebox`), `\label` after `\caption`, and mandatory template metadata (`resources/template_profiles.json`).
+3. **交得可用 (Clean Editable Sources & Verifiable Diffs)**: Deliver modular `.tex`/`.bib` sources alongside compiled `.pdf`, `previews/page-*.png`, `compile_diagnostics`, and `before_after_diff` inside `/app/output/result.json`.
+4. **复现得了 (Reproducible Build Provenance)**: Probe live compilers & `fc-list` CJK fonts before selecting fonts/engines; emit executable `build.sh` and `reproducibility_manifest.json` (with PDF SHA-256 and embedded fonts).
 
 ---
 
-## Runtime Paths & Budget Discipline (64 Requests / 900s)
-Resolve `$SKILL_DIR` cleanly before calling scripts (works under Harbor `/skills/weekly-skill`, `/app/submission`, or local checkouts):
+## Runtime Paths & Skill Resolution
 ```bash
 SKILL_DIR="${SKILL_DIR:-}"
 for d in "$SKILL_DIR" "/skills/weekly-skill" "/app/submission" "."; do
-  [ -n "$d" ] && [ -f "$d/scripts/prepare_workspace.py" ] && SKILL_DIR="$d" && break
+  [ -n "$d" ] && [ -f "$d/scripts/prepare_and_audit.py" ] && SKILL_DIR="$d" && break
 done
 mkdir -p /app/work/src /app/work/build /app/work/previews /app/output
 ```
-- **Inputs**: `/input/case.json`, `/input/task.md` (or `./task.md`), and real files under `/input/` (plus any inline `case.json` `.tex`/`.bib`/`manuscript`/`draft`/`references` fields, materialized automatically into `/app/work/src/` and `/app/work/baseline_src/`). Never assume facts from labels or filenames.
-- **Workspace**: `/app/work/src/` holds editable sources (never compile inside read-only `/input`, and NEVER leave backup/scratch `.tex` copies like `main_old.tex` inside `/app/work/src/` because `verify_deliverable.py` and `assemble_deliverables.py` scan every `.tex` under `/app/work/src/`).
-- **Outputs**: `/app/output/` (`result.json` with `case_id`, every `output_contract` field, `compile_diagnostics`, and `before_after_diff`; editable `.tex`/`.bib` and all figures including `.pdf` vector figures; `build.sh`; `reproducibility_manifest.json`; compiled `.pdf`; `previews/page-*.png`; `compilation_and_provenance_report.md`).
+- **Workspace rule**: Never compile inside read-only `/input`. Edit only inside `/app/work/src/`, and **never** leave backup copies like `main_old.tex` inside `/app/work/src/` (all `.tex` under `/app/work/src/` are scanned and delivered).
 
 ---
 
-## Streamlined 4-Step Execution Workflow
+## Streamlined 3-Step Execution Workflow
 
-### Step 1: One-Command Preparation, Source Staging, Static Audit & Partial Checkpoint
-Run `prepare_workspace.py` (executes `inspect_case.py` -> stages `/input` & inline files into `/app/work/src/` -> `analyze_latex.py` -> `assemble_deliverables.py --checkpoint partial` in a single request):
+### Step 1: Prepare, Stage, Safe-Autofix & Early Partial Checkpoint
 ```bash
-python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
+python3 -B "$SKILL_DIR/scripts/prepare_and_audit.py" \
   --input-dir /input \
   --work-dir /app/work \
-  --out-dir /app/output
+  --out-dir /app/output \
+  --apply-safe-fixes
 ```
-Read `/app/work/case_plan.json` and `/app/work/latex_digest.md` (plus `/input/task.md`) to confirm `case_id`, all `output_contract` fields, `signals.primary_mode`, `candidate_entry_tex`, `missing_referenced_files`, `access_warnings`, **available CJK fonts** (`environment.cjk_fonts`), static root-cause bugs (unclosed `{`, `\begin/\end` mismatches, package conflicts, `\label` before `\caption`, missing `.bib` keys/figures, `\resizebox` hacks), and grounded non-TeX source facts.
-- **Exception Short-Circuit**: If `/input/` has `0` readable files or a missing mandatory publisher `.cls` / unrecoverable access error, consult `$SKILL_DIR/resources/failure_modes_and_edge_cases.md` and emit an honest `"partial"` or `"unable_to_determine"` deliverable rather than fabricating missing classes or data.
+Read `/app/work/case_plan.json` and `/app/work/latex_digest.md` (plus `/input/task.md`). This single command inspects `/input` (and inline `case.json` fields), probes TeX/CJK fonts, stages sources into `/app/work/src`, applies safe mechanical pre-fixes (BOM removal, `\label`-after-`\caption`, OS-missing CJK font replacement, BibTeX `&`/`%` escaping), detects tabular/math/citation/class bugs, extracts grounded source numbers + `booktabs` CSV snippets, and saves an early partial `/app/output/result.json`.
+- **Exception Short-Circuit**: If `stats.readable_files == 0` or a mandatory publisher `.cls` is genuinely missing, consult `$SKILL_DIR/resources/failure_modes_and_edge_cases.md`, write `/app/work/deliverable_payload.json` with honest `"status": "partial"` (or `"unable_to_determine"`) + `uncertainty[]`, and jump to Step 3 with `--skip-compile`.
 
-### Step 2: Author/Repair Editable Sources & Multi-Pass Compile Loop
-1. Select `<MAIN_TEX>` inside `/app/work/src/`: use `candidate_entry_tex[0]` when present (if multiple entry `.tex` exist, pick the root manuscript named in `/input/task.md`; if `0` `.tex` files exist in a `draft_to_latex` task, create `/app/work/src/main.tex`). Edit or author clean `.tex`/`.bib` files inside `/app/work/src/` following `$SKILL_DIR/resources/latex_quality_checklist.md` and `$SKILL_DIR/resources/template_profiles.json`.
-   - Annotate non-trivial data/edits concisely via `% [SRC: file:line]` and missing/conflicting items via `% [AUTHOR_CONFIRM: GAP-XX description]`.
-   - For CJK documents, use `xelatex` and check `case_plan.json["environment"]["fandol_available"]` and `["cjk_fonts"]`: use `\documentclass[UTF8,fontset=fandol]{ctexart}` ONLY when `fandol_available` is `true`; otherwise use `\documentclass[UTF8,fontset=none]{ctexart}` + `\setCJKmainfont{<verified font from cjk_fonts>}` (e.g., `Noto Serif CJK SC`).
-   - Never wrap tables in `\resizebox` or `\scalebox`; fix wide tables structurally (`tabularx`, `p{width}`, `\small`, `\tabcolsep`) so `Overfull \hbox` stays `< 10.0pt`.
-2. Run deterministic multi-pass compilation, log diagnosis, auto-fallback check, PDF audit, and clean PNG preview rendering (pass `--project-root /app/work/src` whenever `<MAIN_TEX>` lives in a subdirectory like `paper/main.tex`; optional flags: `--engine auto|pdflatex|xelatex|lualatex`, `--bib auto|bibtex|biber|none`, `--max-passes 5`):
+### Step 2: Author/Repair `.tex`/`.bib` in `/app/work/src/` & Compile Loop
+1. Select `<MAIN_TEX>` (`candidate_entry_tex[0]` or `main.tex` for `draft_to_latex`) and edit `.tex`/`.bib` following `$SKILL_DIR/resources/latex_quality_checklist.md` and `$SKILL_DIR/resources/template_profiles.json`.
+   - Annotate non-trivial data inline with `% [SRC: file:line]` and missing/conflicting items with `% [AUTHOR_CONFIRM: GAP-XX description]`.
+   - For CJK documents: use `xelatex`; use `fontset=fandol` ONLY if `case_plan.json["environment"]["fandol_available"]` is `true`, otherwise `fontset=none` + `\setCJKmainfont{<verified font from environment.cjk_fonts>}`.
+   - Fix wide tables structurally (`tabularx`, `p{width}`, `\small`, `\tabcolsep`) — never wrap `tabular` in `\resizebox`/`\scalebox`.
+2. Compile and diagnose:
 ```bash
 python3 -B "$SKILL_DIR/scripts/compile_and_diagnose.py" \
   --tex /app/work/src/<MAIN_TEX> \
@@ -65,33 +62,23 @@ python3 -B "$SKILL_DIR/scripts/compile_and_diagnose.py" \
   --out-report /app/work/compile_report.json \
   --out-summary /app/work/compile_summary.md
 ```
-3. Read `/app/work/compile_summary.md`. Fix **root causes first** in `/app/work/src/` (consulting `$SKILL_DIR/resources/error_taxonomy.json` and any `Fallback & Recovery Notes` with verified installed CJK fonts) and re-run `compile_and_diagnose.py` until `status == "compiled_clean"`, `0` errors, `0` undefined references/citations, `0` missing glyphs, `0` `??`/`[?]` markers, and `Overfull \hbox` `< 10.0pt` (or an honest unresolvable blocker is confirmed).
-4. Visually inspect rendered `/app/work/previews/page-*.png` if image viewing is available to confirm zero clipped tables or blank pages.
+3. Read `/app/work/compile_summary.md`. Fix **root causes first** (via `$SKILL_DIR/resources/error_taxonomy.json`) and re-run until `status == "compiled_clean"` (0 errors, 0 undefined refs/cites, 0 missing glyphs, `Overfull \hbox < 10pt`) or a real blocker is confirmed. Inspect `previews/page-*.png` visually when image viewing is available.
 
-### Step 3: Author Grounded `/app/work/deliverable_payload.json`
-Write `/app/work/deliverable_payload.json` conforming to `$SKILL_DIR/resources/payload_schema.json` (every list field MUST be an array of JSON objects, never raw strings), honestly recording:
-- `case_id`, `status` (`completed` | `partial` | `unable_to_determine`), `summary`, `primary_tex_path` (relative to `/app/work/src/`, e.g., `main.tex` or `paper/main.tex`), `output_files[]` (array of `{"path", "role"}` objects; auto-merged with copied sources/PDF/previews), `template_compliance` (use exact case-sensitive `template_name` keys from `template_profiles.json`: `IEEEtran`, `acmart`, `elsarticle`, `llncs`, `sn-jnl`, `neurips`, `icml`, `ctexart`, `ctexbook`, `revtex4-2`, `beamer`, `article`);
-- `sources[]` mapping delivered numbers/equations/tables/citations back to exact `/input` locators;
-- `change_records[]` with before/after descriptions and engineering rationale for every substantive fix;
-- `author_confirmation_items[]` 1-to-1 with every `% [AUTHOR_CONFIRM: GAP-XX ...]` tag in `.tex`;
-- `uncertainty[]`, concrete `limitations[]`, and `contract_overrides` for any custom `output_contract` keys.
-
-### Step 4: One-Command Compile, 6-Axis Verification & Final Deliverable Assembly
+### Step 3: Verify 6 Axes & Assemble Final `/app/output/`
+Optionally author `/app/work/deliverable_payload.json` (per `$SKILL_DIR/resources/payload_schema.json`) to add `contract_overrides`, detailed `summary`, or custom `change_records[]` — `verify_and_assemble.py` also auto-hydrates `sources[]`, `author_confirmation_items[]` (from `% [SRC:]` / `% [AUTHOR_CONFIRM: GAP-XX]`), `auto_change_records.json`, and `before_after_diff` automatically:
 ```bash
-python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+python3 -B "$SKILL_DIR/scripts/verify_and_assemble.py" \
   --tex /app/work/src/<MAIN_TEX> \
   --project-root /app/work/src \
   --payload /app/work/deliverable_payload.json \
   --work-dir /app/work \
   --out-dir /app/output
 ```
-*(For honest blocked/unrecoverable cases with 0 usable files or missing mandatory `.cls`, pass `--skip-compile` — `--tex` becomes optional and stale `compile_report.json` is ignored. Supports `--engine`, `--bib`, `--max-passes 5`, `--timeout 300`, and skips redundant recompilation if `/app/work/src` is unchanged since a clean Step 2 run.)*
-This runs `compile_and_diagnose.py` -> `verify_deliverable.py` -> `assemble_deliverables.py --checkpoint final`, guaranteeing `/app/output/` contains `result.json` (with `case_id`, all `output_contract` keys, `compile_diagnostics`, and `before_after_diff`), editable `.tex`/`.bib`/figures, `build.sh`, `reproducibility_manifest.json`, compiled `.pdf`, `previews/page-*.png`, and `compilation_and_provenance_report.md`.
-- If exit code is non-zero (`error_count > 0`), inspect `/app/work/verification_report.json`, fix reported `.tex`/`.bib`/payload defects, and re-run `finalize_workspace.py` until `"passed": true`. *(All individual stage scripts remain directly callable if needed.)*
+*(Pass `--skip-compile` for honest blocked/uncompilable cases; redundant recompiles are skipped automatically if `/app/work/src` is unchanged since Step 2.)*
+If exit code is non-zero, read `/app/work/verification_report.json`, fix the flagged `.tex`/`.bib`/payload items, and re-run until `"passed": true`.
 
 ---
 
 ## Strict Honesty Rules
-- **Never** invent BibTeX metadata, DOIs, numeric measurements, or missing `.cls`/`.png` binaries.
-- **Never** mask wide-table overflow with `\resizebox`/`\scalebox` or suppress fatal errors/fallback previews into fake `"completed"` / `"compiled_clean"` status.
-- Always map every missing/conflicting fact to `author_confirmation_items[]` and `uncertainty[]`.
+- **Never** invent BibTeX entries, DOIs, numeric measurements, or missing `.cls`/`.png` binaries.
+- **Never** mask wide tables with `\resizebox`/`\scalebox` or report `"completed"`/`"compiled_clean"` when errors, missing glyphs, or fallback-only previews remain.

@@ -9,7 +9,7 @@
       "severity": "fatal",
       "cascading_followups": ["ERR-EXTRA-RBRACE", "ERR-ENV-MISMATCH", "ERR-PERMISSION-IO"],
       "root_cause": "An opening '{' or delimited macro argument was never closed before the end of a paragraph or file.",
-      "fix_recipe": "Run analyze_latex.py brace-stack detector to jump directly to the unclosed opening '{' line rather than fixing at EOF.",
+      "fix_recipe": "Run prepare_and_audit.py brace-stack detector to jump directly to the unclosed opening '{' line rather than fixing at EOF.",
       "fallback": "If external macro breaks across paragraphs, replace \\par/blank line inside short-arg command or supply missing '}'."
     },
     {
@@ -259,7 +259,7 @@
       "severity": "fatal",
       "cascading_followups": ["ERR-EMERGENCY-STOP"],
       "root_cause": "Circular \\input/\\include loop, recursive macro expansion, or extreme TikZ/pgfplots coordinate.",
-      "fix_recipe": "Check analyze_latex.py include-graph cycle detector and fix infinite recursion.",
+      "fix_recipe": "Check prepare_and_audit.py include-graph cycle detector and fix infinite recursion.",
       "fallback": "Use externalized/pre-rendered PDF figures for ultra-heavy TikZ if memory exhausted."
     },
     {

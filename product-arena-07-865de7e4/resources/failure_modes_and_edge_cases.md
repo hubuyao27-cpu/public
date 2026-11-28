@@ -23,13 +23,13 @@ When executing LaTeX writing, migration, or compilation tasks under strict Harbo
 
 ## 3. Cascading Syntax Errors
 - One missing `}` or unclosed `\begin{...}` on line 42 often triggers 20+ false errors (`Undefined control sequence`, `Extra }`, `Emergency stop`) at line 250.
-- **Rule**: Never patch downstream cascade lines first! Run `analyze_latex.py` (bracket/environment stack pinpoints the unclosed opener) and `compile_and_diagnose.py` (clusters downstream errors to root cause). Fix the earliest root cause, then recompile.
+- **Rule**: Never patch downstream cascade lines first! Run `prepare_and_audit.py` (bracket/environment stack pinpoints the unclosed opener) and `compile_and_diagnose.py` (clusters downstream errors to root cause). Fix the earliest root cause, then recompile.
 
 ## 4. Circular `\input` / `\include` or Wrong Entry `.tex`
 - If `/input/` contains `main.tex`, `chap1.tex`, `appendix.tex`:
-  - `analyze_latex.py` builds the include graph and identifies files containing `\documentclass` and `\begin{document}` as entry points.
+  - `prepare_and_audit.py` builds the include graph and identifies files containing `\documentclass` and `\begin{document}` as entry points.
   - Never try to compile `chap1.tex` directly unless it uses `subfiles`.
-  - If a circular `\input` exists (`a.tex -> b.tex -> a.tex`), `analyze_latex.py` detects the cycle immediately so you break it before exceeding TeX memory.
+  - If a circular `\input` exists (`a.tex -> b.tex -> a.tex`), `prepare_and_audit.py` detects the cycle immediately so you break it before exceeding TeX memory.
 
 ## 5. Missing Figures (`File 'fig1.png' not found`)
 - First search `/input/` case-insensitively (`fig1.pdf`, `figures/fig1.png`, etc.) and update `\graphicspath` or path spelling.
@@ -43,5 +43,5 @@ When executing LaTeX writing, migration, or compilation tasks under strict Harbo
 - **Encrypted / scanned / unreadable PDFs or permission errors**: report `"status": "unable_to_determine"` (or `"partial"` if other readable files exist) with exact OS/PDF error messages in `uncertainty[]`.
 
 ## 7. Budget & Early Checkpoint Rule (64 requests / 900s)
-- Run `prepare_workspace.py` in Step 1 so `/app/output/result.json` always exists as an early partial checkpoint even under timeout pressure.
-- Keep `compile_and_diagnose.py` bounded (`--max-passes 5`, per-command timeout `60s`, wrapper timeout `300s`) so a broken infinite loop never hangs the container.
+- Run `prepare_and_audit.py` in Step 1 so `/app/output/result.json` always exists as an early partial checkpoint even under timeout pressure.
+- Keep `compile_and_diagnose.py` bounded (`--max-passes 5`, per-command timeout `60s`).

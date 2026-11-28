@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "DeliverablePayload",
-  "description": "Structured authoring/repair payload consumed by verify_deliverable.py and assemble_deliverables.py.",
+  "description": "Structured authoring/repair payload consumed by verify_and_assemble.py (missing fields are auto-hydrated from .tex inline [SRC:]/[AUTHOR_CONFIRM:] tags, auto_change_records.json, and compile_report.json).",
   "type": "object",
   "required": [
     "case_id",

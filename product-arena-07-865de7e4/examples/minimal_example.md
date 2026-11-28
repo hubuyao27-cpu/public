@@ -1,7 +1,7 @@
 # Minimal Illustrative Usage Example
 
 > **[ILLUSTRATIVE EXAMPLE — NOT A FORMAL BENCHMARK CASE]**
-> This walkthrough demonstrates the exact invocation interface, intermediate diagnostics, repaired `.tex`/`.bib`, and final `result.json` structure using a synthetic sample project.
+> This walkthrough demonstrates the streamlined 3-step invocation interface, intermediate diagnostics, repaired `.tex`/`.bib`, and final `result.json` structure using a synthetic sample project.
 
 ---
 
@@ -60,14 +60,14 @@ Ni-N-C & 300 & 94.2 \\
 
 ---
 
-## 2. Streamlined Invocation (Step 1)
+## 2. Step 1: Prepare, Stage, Safe-Autofix & Partial Checkpoint
 
 ```bash
 export SKILL_DIR=/skills/weekly-skill
 mkdir -p /app/work/src /app/work/build /app/work/previews /app/output
 
-python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
-  --input-dir /input --work-dir /app/work --out-dir /app/output
+python3 -B "$SKILL_DIR/scripts/prepare_and_audit.py" \
+  --input-dir /input --work-dir /app/work --out-dir /app/output --apply-safe-fixes
 ```
 
 ### Illustrative Output Excerpt from `/app/work/latex_digest.md`
@@ -83,7 +83,7 @@ python3 -B "$SKILL_DIR/scripts/prepare_workspace.py" \
 
 ---
 
-## 3. Repaired `/app/work/src/main.tex` (Excerpt)
+## 3. Step 2: Repaired `/app/work/src/main.tex` & Multi-Pass Compilation
 
 ```latex
 \documentclass[conference]{IEEEtran}
@@ -120,12 +120,19 @@ Ni-N-C & 300 & 94.2 \\
 \end{document}
 ```
 
+```bash
+python3 -B "$SKILL_DIR/scripts/compile_and_diagnose.py" \
+  --tex /app/work/src/main.tex --project-root /app/work/src \
+  --work-dir /app/work/build --preview-dir /app/work/previews \
+  --out-report /app/work/compile_report.json --out-summary /app/work/compile_summary.md
+```
+
 ---
 
-## 4. Illustrative Verification & Final Output (`result.json`)
+## 4. Step 3: Auto-Hydrated Verification & Final Output (`result.json`)
 
 ```bash
-python3 -B "$SKILL_DIR/scripts/finalize_workspace.py" \
+python3 -B "$SKILL_DIR/scripts/verify_and_assemble.py" \
   --tex /app/work/src/main.tex --project-root /app/work/src \
   --payload /app/work/deliverable_payload.json \
   --work-dir /app/work --out-dir /app/output
